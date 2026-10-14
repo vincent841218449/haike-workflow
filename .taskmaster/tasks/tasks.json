@@ -212,13 +212,25 @@
         "priority": "high",
         "subtasks": [],
         "updatedAt": "2026-10-14T09:52:53.617Z"
+      },
+      {
+        "id": "18",
+        "title": "将 GPT 赞助试用迁至统一海客 Key，并暂停生图",
+        "description": "当前14754工作目录接入云端 haike/text。客户暂时不收费，保存实际Token，采购成本记未知。保留已完成迁移任务17。",
+        "details": "原子按账户/平台每日50次配额；稳定原调用意图可恢复，未知响应不新增供应商提交；最多12张已归属代表帧、总6MB。云端已备份并部署20261014-unified-gpt-v1，生图暂停。",
+        "testStrategy": "云端90项回归、实际目录41项核心回归、真实视觉分镜gj_5ed101ffcf5492a2a01b5c85（1157/1018 Token、收费0、成本未知、3镜、覆盖6.56秒）、前端构建与页面验收。",
+        "status": "done",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": [],
+        "updatedAt": "2026-10-14T11:04:20.118Z"
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-10-14T09:52:53.617Z",
-      "taskCount": 17,
-      "completedCount": 15,
+      "lastModified": "2026-10-14T11:04:20.118Z",
+      "taskCount": 18,
+      "completedCount": 16,
       "tags": [
         "master"
       ]

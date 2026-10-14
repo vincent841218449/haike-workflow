@@ -90,6 +90,7 @@ def clean_input(db, user_id, model, value, info=None):
         ):
             raise Problem(422, "input_invalid", "对话参数不正确")
         images = 0
+        image_bytes = 0
         for message in messages:
             if (
                 not isinstance(message, dict)
@@ -100,7 +101,7 @@ def clean_input(db, user_id, model, value, info=None):
             content = message["content"]
             if isinstance(content, str):
                 continue
-            if not isinstance(content, list) or not 1 <= len(content) <= 10:
+            if not isinstance(content, list) or not 1 <= len(content) <= 32:
                 raise Problem(
                     422, "input_invalid", "支持文本，或 text/image_file 内容数组"
                 )
@@ -121,14 +122,16 @@ def clean_input(db, user_id, model, value, info=None):
                     raise Problem(
                         422, "input_invalid", "视觉消息需要当前账户上传的图片编号"
                     )
-                if not db.execute(
-                    "SELECT id FROM gateway_files WHERE id=? AND user_id=? AND kind='image'",
+                image = db.execute(
+                    "SELECT id,size FROM gateway_files WHERE id=? AND user_id=? AND kind='image'",
                     (part["file_id"], user_id),
-                ).fetchone():
+                ).fetchone()
+                if not image:
                     raise Problem(404, "file_missing", "图片不存在或不属于当前账户")
                 images += 1
-        if images > 4:
-            raise Problem(422, "input_invalid", "单次视觉调用最多 4 张图片")
+                image_bytes += image["size"]
+        if images > 12 or image_bytes > 6 * 1024 * 1024:
+            raise Problem(422, "input_invalid", "单次视觉调用最多12张代表帧、总计6MB")
         size = len(canonical(messages).encode())
         if size > 60000:
             raise Problem(422, "input_invalid", "对话文本过长")
@@ -317,7 +320,7 @@ def billing_detail(snapshot, usage, job, admin=False):
             "amount_micros": str(amount) if amount is not None else None,
         }
         if admin:
-            line["unit_cost_micros"] = rule["costs"][meter]
+            line["unit_cost_micros"] = None if providers.sponsored.enabled(rule) else rule["costs"][meter]
         lines.append(line)
         if subtotal is not None:
             exact_total += subtotal
@@ -331,6 +334,7 @@ def billing_detail(snapshot, usage, job, admin=False):
         else 0
     )
     return {
+        "billing_policy": "sponsored" if providers.sponsored.enabled(rule) else "markup",
         "multiplier": rule["multiplier"],
         "lines": lines,
         "fee_micros": rule["fee_micros"],
@@ -391,7 +395,7 @@ def public_job(db, job, admin=False):
         "result": json.loads(job["result_json"]) if job["result_json"] else None,
         "error": job["error"],
         "simulation": False,
-        "cost_status": "receipt_confirmed" if job["status"] == "succeeded" and info.get("billing_mode") == "wallet_receipt" else "estimated",
+        "cost_status": "unknown" if providers.sponsored.enabled(snapshot["rule"]) else "receipt_confirmed" if job["status"] == "succeeded" and info.get("billing_mode") == "wallet_receipt" else "estimated",
         "media_artifact_available": bool(job["result_json"])
         and info["capability"] in {"tts", "avatar"},
     }
@@ -566,6 +570,8 @@ def accept(store, vault, user, quote_id, maximum, intent, idem):
                 now(),
             ),
         )
+        if providers.sponsored.enabled(snapshot["rule"]):
+            providers.sponsored.record(db, user["id"], job_id)
         db.execute(
             "UPDATE gateway_quotes SET accepted_job_id=? WHERE id=?", (job_id, quote_id)
         )

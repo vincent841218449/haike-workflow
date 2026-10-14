@@ -48,7 +48,8 @@ def status(studio):
     c = configuration(studio)
     model = c.get("image_model", IMAGE_MODEL)
     verified = not c.get("image_paused", False) and c.get("image_verified") is True and model in IMAGE_MODELS and c.get("image_verified_for") == image_identity(c)
-    return {"configured": bool(c.get("api_key")), "chat_model": CHAT_MODEL, "image_model": model,
+    unified = c.get("chat_route", "gateway") != "direct"
+    return {"configured": bool(studio.configuration().get("api_key") if unified else c.get("api_key")), "chat_model": CHAT_MODEL, "chat_route": "gateway" if unified else "direct", "image_model": model,
             "billing": "sponsored", "customer_charge_micros": "0", "procurement_price": None,
             "douyin_authorized": c.get("douyin_commercial_authorized") is True,
             "douyin_login_confirmed": c.get("douyin_login_confirmed") is True,
@@ -125,6 +126,12 @@ class TrialRelay:
         from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
         from urllib.error import HTTPError
         path = self.folder / (hashlib.sha256(stage.encode()).hexdigest() + ".json")
+        c = configuration(self.studio)
+        if not image and self.transport is None and c.get("chat_route", "gateway") != "direct":
+            from backlot.studio_chat_gateway import call
+            return call(self, path, stage, payload, _LOCK)
+        if image and c.get("image_paused", False):
+            raise WorkError("生图能力已暂停，请使用用户素材或网络素材")
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with _LOCK:
             if path.exists():

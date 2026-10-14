@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 
+from . import sponsored
 from .store import Problem, audit, canonical, now, uid
 
 
@@ -354,7 +355,7 @@ def seed(store):
 
 def normalize(model, rule, info=None):
     info = info or MODELS.get(model)
-    if not info or set(rule) != {
+    if not info or set(rule) - {"billing_policy"} != {
         "costs",
         "multiplier",
         "fee_micros",
@@ -374,6 +375,13 @@ def normalize(model, rule, info=None):
         if set(rule["costs"]) != set(info["meters"]) or rule["fee_micros"] != "0":
             raise ValueError()
         if info.get("billing_mode") == "wallet_receipt" and rule["costs"] != {"supplier_micros": "1000000"}:
+            raise ValueError()
+        if "billing_policy" in rule and not (
+            sponsored.enabled(rule) and info["capability"] == "chat"
+            and all(value == "0" for value in rule["costs"].values())
+        ):
+            raise ValueError()
+        if info["capability"] == "chat" and all(Decimal(value) == 0 for value in rule["costs"].values()) and not sponsored.enabled(rule):
             raise ValueError()
         for value in [*rule["costs"].values(), rule["fee_micros"]]:
             if (
@@ -407,6 +415,8 @@ def calculate(model, rule, usage, info=None):
         if type(value) is not int or not 0 <= value <= 10**10:
             raise Problem(422, "usage_invalid", "用量回执不正确")
         cost += Decimal(rule["costs"][meter]) * value / included
+    if sponsored.enabled(rule):
+        return None, 0  # Customer charge known; procurement price remains unknown.
     sale = cost * Decimal(rule["multiplier"]) + int(rule["fee_micros"])
     return int(cost.to_integral_value(rounding=ROUND_CEILING)), int(
         sale.to_integral_value(rounding=ROUND_CEILING)
@@ -419,6 +429,8 @@ def price_public(model, row, info=None):
     meters = info["meters"]
     primary = next(iter(meters))
     return {
+        "billing_policy": "sponsored" if rule and sponsored.enabled(rule) else "markup",
+        "trial_limits": {"user_daily": sponsored.USER_DAILY, "platform_daily": sponsored.GLOBAL_DAILY} if rule and sponsored.enabled(rule) else None,
         "version": row["version"] if row else 0,
         "unit": UNITS[primary],
         "included_units": meters[primary],
@@ -490,7 +502,7 @@ def catalogue(store, vault, admin=False):
                 "model": model,
                 **price_public(model, row, info),
                 "status": status,
-                "description": "按公开售价结算；结果未知时冻结额度并等待核对",
+                "description": "平台赞助试用，用户收费为零，记录 Token；采购成本待核对，每账户/平台每日各限50次" if row and sponsored.enabled(json.loads(row["rule"])) else "按公开售价结算；结果未知时冻结额度并等待核对",
                 "simulation": False,
                 "credential_configured": bool(configured),
                 "media_artifact_available": info["capability"] in {"tts", "avatar"},
