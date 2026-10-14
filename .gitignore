@@ -13,8 +13,10 @@ gcp-*.json
 /copy_skill/copy_skill-main/config/content_intelligence.local.json
 # Environments and generated state
 .venv/
+.venv-windows/
 venv/
 node_modules/
+node_modules-windows/
 /Haike_video/remotion-composer/node_modules
 __pycache__/
 *.py[cod]
@@ -64,3 +66,7 @@ backups/
 *.p12
 *.pfx
 /Haike_video/backlot/ui/avatar-generator/
+# Installation inventory belongs to the copied runtime, not the source release.
+/PACKAGE-MANIFEST.json
+/PACKAGE-SOURCE.json
+/RUNTIME-INVENTORY.json

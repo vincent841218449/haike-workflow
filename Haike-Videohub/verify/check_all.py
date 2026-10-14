@@ -319,7 +319,11 @@ def _check_external(report: Report, root: Path) -> None:
     chrome_candidates = [
         Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
         Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
     ]
+    for name in ("google-chrome", "chromium", "chromium-browser"):
+        if executable := shutil.which(name):
+            chrome_candidates.append(Path(executable))
     chrome = next((c for c in chrome_candidates if c.is_file()), None)
     if chrome:
         report.ok("B.chrome", f"找到: {chrome}")
@@ -341,7 +345,7 @@ def _check_external(report: Report, root: Path) -> None:
                 "B.mediacrawler.git",
                 "无 .git 元数据 —— 版本不可追溯。建议从上游重新 clone（见 deps/B-external.md）",
             )
-        venv_py = mc_root / ".venv" / "Scripts" / "python.exe"
+        venv_py = mc_root / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
         if venv_py.is_file():
             report.ok("B.mediacrawler.venv", "venv 已建 ✓")
         else:
@@ -370,17 +374,21 @@ def _check_configs(report: Report, root: Path) -> None:
     else:
         try:
             cfg = _load_json(cfg_path)
+            local_path = cfg_path.with_name("content_intelligence.local.json")
+            local = _load_json(local_path) if local_path.exists() else {}
+            if not isinstance(local, dict):
+                raise ValueError("本地覆写配置根节点必须是对象")
         except Exception as exc:                       # noqa: BLE001
             report.fail("config.copyskill", f"不可解析: {exc}")
             return
-        mc = cfg.get("media_crawler") or {}
+        mc = {**(cfg.get("media_crawler") or {}), **(local.get("media_crawler") or {})}
         for field in ("root", "python", "chrome_path"):
             if not mc.get(field):
                 report.warn(f"config.mc.{field}", "未配置")
                 continue
             val = str(mc[field])
             is_win_abs = len(val) > 2 and val[1] == ":"
-            if is_win_abs:
+            if is_win_abs or Path(val).is_absolute():
                 exists = Path(val).exists()
                 if field == "root":
                     ok = (Path(val) / "main.py").is_file()

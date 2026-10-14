@@ -15,6 +15,8 @@
 
 ## Windows 源码安装
 
+Mac 本机已迁入当前工作目录，启动、Git管理和迁移验证见 [Mac入口](README-MAC.md)。
+
 准备 64 位 Python 3.12、Node.js 22+、Git、uv 和兼容 MSVC 14.4x 的 Visual C++ x64 运行库，确保 `python`、`node`、`npm`、`uv` 在 PATH。安装需要联网获取 Python/npm 依赖、FFmpeg 和渲染浏览器。平台采集/发布另需系统 Chrome。原生 OCR/ASR 若报告 DLL 错误，按采集模块 native_runtime.py 的说明配置匹配的运行库；本源码不捆绑本机 DLL。
 
 ```powershell

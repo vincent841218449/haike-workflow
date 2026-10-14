@@ -200,12 +200,24 @@
         "priority": "high",
         "subtasks": [],
         "updatedAt": "2026-10-14T08:39:22.778Z"
+      },
+      {
+        "id": "17",
+        "title": "迁移数字人口播工作台至当前工作目录并沿用 GitHub 管理",
+        "description": "整合原源码 checkout 的 Git 历史和未提交源码，以及 14754 安装副本的本地运行环境和用户数据。",
+        "details": "依赖顺序：1. 保存来源和现有源码快照；2. 修复 Mac 启动器、忽略规则和本地路径；3. 验证源码检查、跨模块契约和浏览器页面；4. 在原私有 haike-workflow 仓库推送迁移分支。原目录保留，迁移后接管原 14754 服务；不调用付费生成或发布。",
+        "testStrategy": "检查新 cwd 和服务身份、健康接口、模板/作品/配置接口及浏览器交互；验证本地秘密/环境/数据库均被 Git 忽略；沿用原有测试验证被迁移的未提交源码。",
+        "status": "in-progress",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": [],
+        "updatedAt": "2026-10-14T09:33:48.679Z"
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-10-14T08:39:22.782Z",
-      "taskCount": 16,
+      "lastModified": "2026-10-14T09:33:48.679Z",
+      "taskCount": 17,
       "completedCount": 14,
       "tags": [
         "master"
