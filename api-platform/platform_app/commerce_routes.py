@@ -275,10 +275,10 @@ def router(store, vault, portal_user, admin_user, api_user, idem_key, registrati
         rule = providers.normalize(body.model, proposal, info)
         cost, sale = providers.calculate(body.model, rule, body.usage, info)
         return {
-            "cost_micros": str(cost),
+            "cost_micros": str(cost) if cost is not None else None,
             "sale_micros": str(sale),
-            "profit_micros": str(sale - cost),
-            "gross_margin": str(Decimal(sale - cost) / sale) if sale else "0",
+            "profit_micros": str(sale - cost) if cost is not None else None,
+            "gross_margin": None if cost is None else str(Decimal(sale - cost) / sale) if sale else "0",
         }
 
     @routes.post("/admin/v1/gateway-prices")

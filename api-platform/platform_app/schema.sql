@@ -125,6 +125,11 @@ CREATE TABLE IF NOT EXISTS gateway_jobs (
  UNIQUE(user_id,intent_id)
 );
 CREATE INDEX IF NOT EXISTS gateway_user_time ON gateway_jobs(user_id,created_at);
+CREATE TABLE IF NOT EXISTS gateway_trial_calls (
+ job_id TEXT PRIMARY KEY REFERENCES gateway_jobs(id),
+ user_id TEXT NOT NULL REFERENCES users(id), day TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gateway_trial_day_user ON gateway_trial_calls(day,user_id);
 CREATE TABLE IF NOT EXISTS gateway_files (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), kind TEXT NOT NULL,
  size INTEGER NOT NULL, duration_seconds INTEGER, total_frames INTEGER, created_at TEXT NOT NULL
