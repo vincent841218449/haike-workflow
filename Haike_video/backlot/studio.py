@@ -109,7 +109,8 @@ class Studio:
         except Exception:
             raise WorkError("连接失败：请核对网关地址、Key和服务状态；原配置保持不变") from None
         c["checked_at"] = timestamp(); atomic_private(self.config_path, c)
-        return {"settings": self.settings(), "summary": summary, "capabilities": capabilities}
+        from backlot.studio_asr import status
+        return {"settings": self.settings(), "summary": summary, "capabilities": capabilities, "local_asr": status(self)}
 
     def template(self, template_id):
         item = next((t for t in TEMPLATES if t["id"] == template_id), None)
@@ -139,7 +140,7 @@ class Studio:
                      "template_version": template["version"], "title": title, "text": text, "layout": layout,
                      "input": data.get("input") or {}, "updated_at": timestamp(), "status": "draft"}
             if not isinstance(value["input"], dict): raise WorkError("制作内容格式无效")
-            allowed = {"headlines", "details", "conclusion", "materials", "bgm"} if template["kind"] == "graphic" else {"soundMode", "voiceId", "rate", "subtitles", "audio", "portrait"}
+            allowed = {"headlines", "details", "conclusion", "materials", "bgm"} if template["kind"] == "graphic" else {"soundMode", "voiceId", "rate", "subtitles", "audio", "portrait", "ai", "motion"}
             if template["id"] == "avatar-motion-adu-v1":
                 allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode"}
             if set(value["input"]) - allowed: raise WorkError("制作内容包含不支持的字段；API Key只能保存在API设置")

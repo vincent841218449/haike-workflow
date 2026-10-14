@@ -95,6 +95,24 @@ class Adapter:
             raise Rejected()
         config.update(inputs.get("_provider_config", {}))
         if provider == "openai" or provider.startswith("channel/"):
+            if info["capability"] == "image":
+                result = http(
+                    config["base_url"].rstrip("/") + "/images/generations",
+                    {"Authorization": "Bearer " + config["api_key"], "Content-Type": "application/json"},
+                    {"model": config.get("image_model", info["target_model"]), "prompt": inputs["prompt"],
+                     "n": 1, "size": "1024x1536", "quality": "medium"},
+                )
+                usage = result.get("usage", {})
+                images = result.get("data", [])
+                if not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict):
+                    raise Uncertain()
+                item = images[0]
+                media = {"image_base64": item["b64_json"]} if isinstance(item.get("b64_json"), str) else {"image_url": safe_url(item.get("url"))}
+                media.update(generated=True, source=config.get("image_model", info["target_model"]), size="1024x1536", quality="medium")
+                if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens", "output_tokens")):
+                    raise ReceiptMissing(str(result.get("id", "")), media)
+                return {"usage": {k: usage[k] for k in ("input_tokens", "output_tokens")}, "result": media,
+                        "upstream_id": str(result.get("id", result.get("created", "")))}
             messages = json.loads(json.dumps(inputs["messages"]))
             for message in messages:
                 if isinstance(message["content"], list):
@@ -122,7 +140,7 @@ class Adapter:
                     "Content-Type": "application/json",
                 },
                 {
-                    "model": config.get("text_model", "gpt-5.6-terra"),
+                    "model": config.get("text_model", info["target_model"]),
                     "messages": messages,
                     "max_completion_tokens": inputs["max_output_tokens"],
                     "stream": False,
@@ -273,7 +291,7 @@ class Adapter:
             path = "/videos/search" if inputs["media"] == "videos" else "/v1/search"
             response = http(
                 "https://api.pexels.com" + path + "?" + query,
-                {"Authorization": config["api_key"]},
+                {"Authorization": config["api_key"], "User-Agent": "HaikeVideo/1.0", "Accept": "application/json"},
             )
             records = response.get(
                 "videos" if inputs["media"] == "videos" else "photos", []
@@ -387,10 +405,16 @@ class Adapter:
             ]
             if not videos:
                 raise Uncertain()
+            receipt = None
+            if info.get("billing_mode") == "wallet_receipt":
+                from .runninghub_billing import receipt_cost
+                try: receipt = receipt_cost(data.get("usage"))
+                except (ValueError, TypeError):
+                    raise ReceiptMissing(upstream_id, {"video_url": safe_url(videos[0])}) from None
             return {
-                "usage": {"tasks": 1},
-                "result": {"video_url": safe_url(videos[0])},
+                "usage": {"supplier_micros": int(receipt["cost_micros"])} if receipt else {"tasks": 1},
+                "result": {"video_url": safe_url(videos[0]), **({"supplier_billing": receipt} if receipt else {})},
                 "upstream_id": upstream_id,
-                "meter_basis": "每个成功工作流任务；供应商实际费用待核对",
+                "meter_basis": "RunningHub实际钱包人民币回执 × 1.5；报价余额释放" if receipt else "每个成功工作流任务；供应商实际费用待核对",
             }
         raise Rejected()

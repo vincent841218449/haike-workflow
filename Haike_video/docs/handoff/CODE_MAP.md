@@ -9,11 +9,13 @@
 - 路由：/graphic、/avatar、/projects、/calendar、/settings。旧工具GET跳新页；旧独立UI已归档移除。workbench.*保留历史项目维护。
 - 图文：studio_render.py复用scripts/template_video/build_923.py和_paths.py，参数化safe_v2/9秒/三景、资产指纹、文字边界和FFmpeg完整解码。
 - 口播：studio_avatar.py统一Key报价/预算/持久付费意图/ASR时钟；studio_composition.py和templates/studio-avatar-v1参数化三模板。旧模板3基线不修改。
+- AI分镜/素材：studio_storyboard.py赞助中转/严格原文与真实句级时钟/用户→抖音→Pexels→插画/恢复；configure_studio_ai.py后台私有配置。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用组件；tests/backlot/test_studio_storyboard.py。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue.py/production_queue_worker.py；studio_graphic、studio_avatar、studio_motion处理器，所有产物登记作品台账。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
+- 新字幕：studio_asr.py/脚本studio_asr_worker.py，configure_studio_asr.py验收已有离线模型，冻结引擎/音频SHA并保留原网关任务；test_studio_asr.py。网关runninghub_billing.py区分钱包/币回执，wallet_receipt按实扣×1.5。
 - 产品/清理/边界：根docs/PRODUCT_STUDIO_V2.md；视觉QA：prototypes/haike-avatar-generator/design-qa.md及qa/studio-v2。
 
 ## 保留的原制作依赖
