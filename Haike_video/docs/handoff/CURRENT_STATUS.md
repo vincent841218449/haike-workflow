@@ -9,7 +9,7 @@
 - 口播：四项输入→自动分镜→限额入队→/tasks。模板入口常驻，基础/动效预览选用后保存并保留输入，无强制模板/中间确认；字段定位、批量素材、默认选音和已有录音免TTS保留。根docs/PRODUCT_AVATAR_SIMPLE_UI.md。
 - 创作任务列表筛选/真实步骤/版本预览/下载/审核/排期在/tasks完成；冻结文案与产物版本，已排期取正式回执。根docs/PRODUCT_CREATION_TASKS.md。7个系统声已接本机v3 Flash，显式开关/本机凭据/费用上限/意图恢复，旧默认声走原网关；不扣云端余额。根docs/PRODUCT_VOICE_LIBRARY.md。
 - 动效：/avatar?mode=motion，ADu固定f52490bd/3.14.0-rc.1，11风格/54竖屏组、10风格/47横屏组、九横屏TPL。真实时钟/素材→不可变计划→原队列→待审视频+工程；49历史包保留，候选组未逐组人工验收。
-- 统一口播：素材→gpt-6-luna→Whisper时钟→原队列。任务页可多选抖音授权池，AI核验画面决定分镜采用，awaiting_human等确认；96后台/12前端过，当前PQ-79efcde5f5c8bff40a2b待勾选。赞助0/采购未知/每账户平台日50次；根docs/PRODUCT_AI_STORYBOARD.md。
+- 统一口播：素材→gpt-6-luna→Whisper时钟→原队列。用户声明抖音候选默认有使用权，自动核验画面选材，无逐条确认；98后台/11前端过，PQ-79efcde5f5c8bff40a2b原队列继续。赞助0/采购未知/每日50次；根docs/PRODUCT_AI_STORYBOARD.md。
 - Key：云端/v2后台0600。CosyVoice实扣0.0012；腾讯历史未知冻0.001729。RunningHub钱包实扣×1.5已上线；7秒报价上限0.84，原158秒回执成本0.264/售价0.396。Pexels零价检索/下载解码通过；新字幕Whisper词级/旧任务原ASR；生图暂停。根docs/tasks/2026-10-14-relay-live-verification.md。
 - 日历：未来北京时间、单条或不同作品每天/每周排期、CAS/重复阻断/批量原子保存、最终版+资料+授权+账号门、未知提交恢复原键、回执取消。CreatorHub调度器真实执行；本机休眠/关服务影响执行。
 - 旧页面/构建已归档，历史素材、作品与凭据保留；恢复清单见.haike-archives/studio-v2-20261013/manifest.json。
@@ -39,4 +39,4 @@
 2. 使用已上线实扣计价/Pexels服务，核对腾讯旧未知回执；历史报价不变，未知请求不重提。
 3. 登录发布账号、完善发布资料后确认实际排期；云端全天候调度尚未部署。
 4. 原遗留OpenCV/ASR旧测试、长直播/歌舞真值等未在本轮改动，保留于旧状态记录。
-5. GPT视觉分镜早前云端验收见PRODUCT_AI_STORYBOARD.md。生图暂停，抖音授权待审。新机预装Whisper依赖/模型，不分发供应商Key。
+5. GPT视觉分镜早前云端验收见PRODUCT_AI_STORYBOARD.md。生图暂停，当前抖音自动选材任务跟进中。新机预装Whisper依赖/模型，不分发供应商Key。

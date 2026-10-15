@@ -23,7 +23,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Use one「选择模板」dialog for basic3 and ADu styles, preserving script, voice/audio, portrait and uploaded materials. The professional manual editor remains an optional deeper entry.
 - User materials have must/prefer/reference intent and an explicit usage/AI-analysis rights checkbox. AI previews are content suggestions, with no invented seconds. Final timing uses original ASR sentence timestamps; display subtitle wrapping must not become the storyboard clock.
 - New gpt-6-luna / gpt-image-2 features are currently merchant-sponsored trials, with customer charge0 and unknown procurement cost. Keep supplier credentials exclusively in ignored backend configuration; do not package them for customers. Native TTS/avatar/ASR keep their separate commercial quotes and caps.
-- Douyin/MediaCrawler precedes Pexels. In creation tasks, users select and authorize up to 10 candidate videos; AI checks actual representative frames against all scene goals and decides adoption. Keep consent visible beside the continue button. Awaiting selection uses the native awaiting_human state and resumes the same job; network failures preserve the recovery point. Details: ../../docs/PRODUCT_AI_STORYBOARD.md.
+- Douyin/MediaCrawler precedes Pexels. The user declares Douyin candidate usage rights by default (2026-10-15): automatically acquire and analyze candidates without a per-video selection or rights prompt. AI checks actual representative frames against scene goals and decides adoption; login/network failures preserve the recovery point and original job. Details: ../../docs/PRODUCT_AI_STORYBOARD.md.
 
 ## Accepted voice library flow (2026-10-14)
 

@@ -335,17 +335,10 @@ class Sources:
         config = crawler_config(self.studio, self.relay.folder / "douyin")
         from douyin_intelligence.sources.douyin import DouyinSource
         source = DouyinSource()
-        authorized = set(c.get("douyin_authorized_video_ids", []))
-        decision_path = self.relay.folder.parent / "source-decisions.json"
-        if decision_path.exists(): authorized.update(json.loads(decision_path.read_text()).get("authorized_video_ids", []))
         candidate_path = self.relay.folder / (scene["id"] + "-candidates.json")
         previous = json.loads(candidate_path.read_text()).get("items", []) if candidate_path.exists() else []
-        pool = {item['id']:item for p in sorted(self.relay.folder.glob('scene-*-candidates.json'))
-                for item in json.loads(p.read_text()).get('items',[]) if item.get('id') in authorized and item.get('title')}
-        if pool:
-            return self.selected_douyin(scene, list(pool.values()), source, config)
         if previous:
-            raise WorkError("请选择有权使用的抖音素材，确认后由AI分析是否采用及适合的分镜", "human_required")
+            return self.selected_douyin(scene, previous[:3], source, config)
         query = scene["query"].split("|")[0].strip()
         # Signed media URLs are memory-only. A resumed selection needs fresh
         # collection files, rather than the already-sanitized previous rows.
@@ -353,36 +346,34 @@ class Sources:
         if r.status == "failed":
             raise WorkError("抖音未返回有效采集数据，可能登录失效或网络异常；请核对后恢复，不自动进入插画", "unavailable")
         if not r.candidates: return None
-        # Discovery is not a content license. Do not silently copy third-party videos.
-        for item in r.candidates:
-            if item.video_id in authorized and source.resolve_media_url(item):
-                from backlot.studio_avatar import download_result
-                path = self.relay.folder / (scene["id"] + "-douyin.mp4")
-                download_result(source.resolve_media_url(item), path, referer=source.download_referer)
-                if not self.review(scene,path,"douyin-"+item.video_id): continue
-                return self.own(path, "video", {"source": "douyin", "source_url": item.source_url, "author": item.author, "rights": "operator-authorized"})
-        atomic_private(self.relay.folder / (scene["id"] + "-candidates.json"), {"items": [{"id": i.video_id, "title": i.title, "source_url": i.source_url, "author": i.author} for i in r.candidates[:10]]})
-        raise WorkError("请选择有权使用的抖音素材，确认后由AI分析是否采用及适合的分镜", "human_required")
+        items = [{"id": i.video_id, "title": i.title, "source_url": i.source_url, "author": i.author} for i in r.candidates[:10]]
+        # The operator declares candidate usage rights by default. AI still checks
+        # actual frames; retain source provenance without a per-video UI gate.
+        atomic_private(candidate_path, {"items": items, "rights": "operator-declared-default"})
+        return self.selected_douyin(scene, items[:3], source, config, fresh=r.candidates)
 
-    def selected_douyin(self, scene, selected, source, config):
-        """The user's approved pool is available to every scene; AI chooses usage."""
+    def selected_douyin(self, scene, selected, source, config, fresh=None):
+        """Review bounded search candidates, caching media and AI scene decisions."""
         from backlot.studio_avatar import download_result
         for item in selected:
             key = hashlib.sha256(item['id'].encode()).hexdigest()[:20]
             path = self.relay.folder / ('douyin-selected-' + key + '.mp4')
             if not path.exists():
-                result = source.search([item['title'][:200]], 10, config=config, run_id=scene['id'] + '-' + uuid4().hex[:12])
-                if result.status == 'failed':
-                    raise WorkError("已选抖音素材暂时无法读取，请检查登录和网络，核对后恢复原任务", "unavailable")
-                candidate = next((v for v in result.candidates if v.video_id == item['id'] and source.resolve_media_url(v)), None)
+                if fresh is None:
+                    result = source.search([item['title'][:200]], 10, config=config, run_id=scene['id'] + '-' + uuid4().hex[:12])
+                    if result.status == 'failed':
+                        raise WorkError("抖音素材暂时无法读取，请检查登录和网络，核对后恢复原任务", "unavailable")
+                    candidates = result.candidates
+                else:
+                    candidates = fresh
+                candidate = next((v for v in candidates if v.video_id == item['id'] and source.resolve_media_url(v)), None)
                 if not candidate:
                     continue
                 download_result(source.resolve_media_url(candidate), path, referer=source.download_referer)
             if self.review_selected_douyin(scene, path, item):
                 return self.own(path, 'video', {'source':'douyin', 'source_url':item.get('source_url'),
-                    'author':item.get('author'), 'rights':'operator-authorized', 'selection':'AI核验实际画面后采用'})
-        # No suitable approved material is a selection result, not a new rights
-        # request. The existing resolver may now try its free stock source.
+                    'author':item.get('author'), 'rights':'operator-declared-default', 'selection':'AI核验实际画面后采用'})
+        # Rejected candidates fall through to the existing free stock source.
         return None
 
     def review_selected_douyin(self, scene, path, item):
