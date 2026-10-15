@@ -148,6 +148,37 @@ def test_user_asset_bypasses_all_network_sources():
     assert asset['id']=='local' and asset['provenance']['source']=='user'
 
 
+@pytest.mark.parametrize('observation', [{}, {'output_observation': 'no_output_files'}])
+@pytest.mark.parametrize('source_status', ['empty', 'failed'])
+def test_douyin_resume_searches_selected_title_in_a_fresh_collection(data, tmp_path, monkeypatch, observation, source_status):
+    from pathlib import Path
+    from backlot.studio_storyboard import Sources
+    s, d, _, _ = data
+    folder = tmp_path / 'render' / 'ai-requests'; folder.mkdir(parents=True)
+    atomic_private(folder.parent / 'source-decisions.json', {'authorized_video_ids': ['selected']})
+    atomic_private(folder / 'scene-1-candidates.json', {'items': [{'id': 'selected', 'title': '已确认的商务视频'}]})
+    calls = []
+    class FakeSource:
+        def search(self, keywords, budget, **kwargs):
+            calls.append((keywords, kwargs['run_id']))
+            return SimpleNamespace(status=source_status, report=observation, candidates=[])
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / 'copy_skill/copy_skill-main/src'))
+    monkeypatch.setattr('douyin_intelligence.sources.douyin.DouyinSource', FakeSource)
+    monkeypatch.setattr('backlot.studio_storyboard.configuration', lambda _: {'douyin_commercial_authorized': True, 'douyin_login_confirmed': True})
+    monkeypatch.setattr('backlot.studio_storyboard.crawler_config', lambda *_: {})
+    source = Sources(s, d, SimpleNamespace(folder=folder), None)
+    scene = {'id': 'scene-1', 'query': '泛化查询 | generic search'}
+    if source_status == 'failed':
+        with pytest.raises(WorkError, match='核对后恢复'):
+            source.douyin(scene)
+        assert len(calls) == 1
+        return
+    assert source.douyin(scene) is None
+    assert source.douyin(scene) is None
+    assert [call[0] for call in calls] == [['已确认的商务视频'], ['已确认的商务视频']]
+    assert calls[0][1] != calls[1][1]
+
+
 def test_image_cap_and_explicit_opt_in():
     bad=lambda _: (_ for _ in ()).throw(AssertionError('unwanted generation'))
     sources=SimpleNamespace(douyin=lambda _:None,pexels=lambda _:None,illustration=bad)

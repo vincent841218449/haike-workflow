@@ -12,6 +12,8 @@
 
 接口：`GET /api/studio/tasks?type=all&status=all&limit=30&offset=0`，`GET /api/studio/tasks/{id}`。操作沿用 `/api/production-queue/jobs/{id}/{action}`。
 
+2026-10-15本地修复：该恢复接口已接入studio_avatar、studio_graphic、studio_motion；继续原任务时保留冻结草稿、预算、调用意图及原任务编号，不再误走旧全片预览限制。不可恢复和结果未知的任务仍由原队列门阻断。六个HTTP正反例及相关76项回归通过；实际4188按钮已恢复原数字人任务，已生成配音保留。
+
 ## 本地与服务边界
 
 按用户要求，本轮仅本地运行，未部署或修改广州服务器。正式统一Key保存在本机服务端，4188读取现有网关的真实数字人能力及报价。独立测试账户、假供应商、假余额没有迁入正式配置。新版音色库接口尚未发布，本地兼容范围见 [音色库](PRODUCT_VOICE_LIBRARY.md)。

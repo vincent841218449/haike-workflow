@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from uuid import uuid4
 
 from backlot.studio import atomic_private, timestamp
 from backlot.work_catalog import WorkError, sha
@@ -333,15 +334,21 @@ class Sources:
         if not c.get("douyin_login_confirmed"): raise WorkError("需要登录抖音后继续素材采集；可明确选择跳过抖音使用Pexels", "unavailable")
         config = crawler_config(self.studio, self.relay.folder / "douyin")
         from douyin_intelligence.sources.douyin import DouyinSource
-        source = DouyinSource()
-        r = source.search([scene["query"].split("|")[0].strip()], 10, config=config, run_id=scene["id"])
-        if r.status == "failed" or r.report.get("output_observation") == "no_output_files":
-            raise WorkError("抖音未返回有效采集数据，可能登录失效或网络异常；请核对后恢复，不自动进入插画", "unavailable")
-        if not r.candidates: return None
-        # Discovery is not a content license. Do not silently copy third-party videos.
         authorized = set(c.get("douyin_authorized_video_ids", []))
         decision_path = self.relay.folder.parent / "source-decisions.json"
         if decision_path.exists(): authorized.update(json.loads(decision_path.read_text()).get("authorized_video_ids", []))
+        candidate_path = self.relay.folder / (scene["id"] + "-candidates.json")
+        previous = json.loads(candidate_path.read_text()).get("items", []) if candidate_path.exists() else []
+        selected = next((item for item in previous if item.get("id") in authorized and item.get("title")), None)
+        query = selected["title"][:200] if selected else scene["query"].split("|")[0].strip()
+        source = DouyinSource()
+        # Signed media URLs are memory-only. A resumed selection needs fresh
+        # collection files, rather than the already-sanitized previous rows.
+        r = source.search([query], 10, config=config, run_id=scene["id"] + "-" + uuid4().hex[:12])
+        if r.status == "failed":
+            raise WorkError("抖音未返回有效采集数据，可能登录失效或网络异常；请核对后恢复，不自动进入插画", "unavailable")
+        if not r.candidates: return None
+        # Discovery is not a content license. Do not silently copy third-party videos.
         for item in r.candidates:
             if item.video_id in authorized and source.resolve_media_url(item):
                 from backlot.studio_avatar import download_result

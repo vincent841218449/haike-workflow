@@ -81,3 +81,22 @@ def test_runninghub_verified_bucket_resolves_fake_dns_without_trusting_other_hos
     with pytest.raises(WorkError,match='本地网络'):
         studio_avatar.public_media_address('rh-comfyui01.tos-cn-beijing.volces.com.evil.example',443)
     assert len(requests)==1
+
+
+@pytest.mark.parametrize('host',['www.douyin.com','v5-hl-zenl-ov.zjcdn.com'])
+def test_douyin_entry_requires_verified_public_dns_and_rejects_lookalikes(monkeypatch,host):
+    monkeypatch.setattr(studio_avatar.socket,'getaddrinfo',lambda *_args,**_kw:[(2,1,6,'',('198.18.0.9',443))])
+    requests=[]
+    class Opener:
+        def open(self,request,timeout):
+            requests.append(request)
+            return io.BytesIO(b'{"Status":0,"Answer":[{"type":1,"data":"8.8.8.8"}]}')
+    monkeypatch.setattr(studio_avatar,'build_opener',lambda *_:Opener())
+    assert studio_avatar.public_media_address(host,443)=='8.8.8.8'
+    with pytest.raises(WorkError,match='本地网络'):
+        studio_avatar.public_media_address(host+'.evil.example',443)
+    assert len(requests)==1
+    monkeypatch.setattr(studio_avatar.socket,'getaddrinfo',lambda *_args,**_kw:[(2,1,6,'',('127.0.0.1',443))])
+    with pytest.raises(WorkError,match='本地网络'):
+        studio_avatar.public_media_address(host,443)
+    assert len(requests)==1

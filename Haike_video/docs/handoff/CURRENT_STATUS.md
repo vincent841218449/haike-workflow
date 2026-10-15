@@ -9,7 +9,7 @@
 - 口播：四项输入→自动分镜→限额入队→/tasks，无强制模板/中间弹窗。就绪/字段定位、批量素材、默认选音、重复保存刷新已完善；保留原报价恢复/三版式/已有录音免TTS。根docs/PRODUCT_AVATAR_SIMPLE_UI.md。
 - 创作任务复用原队列，持久步骤/历史/分页/筛选/恢复/成片直达，未知阶段不伪造百分比。系统音色精选7个百炼v3 Flash，官方示例免费试听/选音/草稿；旧个人声保持v3.5。正式网关未接通时阻断指定音色制作，不回默认。整个项目先本地测试，上线另行授权；根docs/PRODUCT_VOICE_LIBRARY.md。
 - 动效：/avatar?mode=motion，ADu固定f52490bd/3.14.0-rc.1，11风格/54竖屏组、10风格/47横屏组、九横屏TPL。真实时钟/素材→不可变计划→原队列→待审视频+工程；49历史包保留，候选组未逐组人工验收。
-- 统一口播：素材must/prefer/reference→统一Key的gpt-6-luna→Whisper时钟/原文绑定→素材路由→父队列。赞助收费0/采购未知/Token账单，每账户/平台每日50次；持久意图、素材SHA、抖音登录/授权/跳过门保留。根docs/PRODUCT_AI_STORYBOARD.md。
+- 统一口播：素材must/prefer/reference→统一Key的gpt-6-luna→Whisper时钟/原文绑定→素材路由→原父队列恢复。赞助收费0/采购未知/Token账单，每账户/平台每日50次；持久意图、素材SHA、抖音登录/授权/跳过门保留。根docs/PRODUCT_AI_STORYBOARD.md。
 - Key：云端/v2后台0600。CosyVoice实扣0.0012；腾讯历史未知冻0.001729。RunningHub钱包实扣×1.5已上线；7秒报价上限0.84，原158秒回执成本0.264/售价0.396。Pexels零价检索/下载解码通过；新字幕Whisper词级/旧任务原ASR；生图暂停。根docs/tasks/2026-10-14-relay-live-verification.md。
 - 日历：未来北京时间、单条或不同作品每天/每周排期、CAS/重复阻断/批量原子保存、最终版+资料+授权+账号门、未知提交恢复原键、回执取消。CreatorHub调度器真实执行；本机休眠/关服务影响执行。
 - 旧页面/构建已归档，历史素材、作品与凭据保留；恢复清单见.haike-archives/studio-v2-20261013/manifest.json。

@@ -162,7 +162,11 @@ def public_media_address(host, port):
     if ips and all(ip.is_global for ip in ips): return str(ips[0])
     # A local TUN fake-DNS address is not an origin address. For known public
     # media hosts only, verify public DNS over HTTPS and pin the actual socket.
-    known = re.fullmatch(r"dashscope-result-[a-z0-9-]+\.oss-[a-z0-9-]+\.aliyuncs\.com", host) or host in {"videos.pexels.com", "images.pexels.com", "rh-comfyui01.tos-cn-beijing.volces.com"}
+    known = (
+        re.fullmatch(r"dashscope-result-[a-z0-9-]+\.oss-[a-z0-9-]+\.aliyuncs\.com", host)
+        or re.fullmatch(r"v[0-9]+(?:-[a-z0-9]+)+\.zjcdn\.com", host)
+        or host in {"videos.pexels.com", "images.pexels.com", "rh-comfyui01.tos-cn-beijing.volces.com", "www.douyin.com"}
+    )
     benchmark = ipaddress.ip_network("198.18.0.0/15")
     if not known or not ips or not all(ip.version == 4 and ip in benchmark for ip in ips):
         raise WorkError("供应商媒体地址不能指向本地网络")

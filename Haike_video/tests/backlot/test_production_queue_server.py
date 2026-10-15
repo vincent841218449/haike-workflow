@@ -132,6 +132,24 @@ def test_global_queue_actions_validate_state(queue_client) -> None:
     assert invalid.status_code == 409
 
 
+@pytest.mark.parametrize('kind', ['studio_avatar', 'studio_graphic', 'studio_motion'])
+@pytest.mark.parametrize('retryable', [True, False])
+def test_studio_retry_preserves_original_frozen_request_and_safety_gate(queue_client, kind, retryable):
+    client, _ = queue_client
+    queue = client.app.state.production_queue
+    frozen = {'draft': {'revision': 3}, 'max_charge_micros': 10000000}
+    task = queue.submit(project_id='plain', kind=kind, source='workbench', priority='normal',
+                        parent_job_id='studio-3', frozen_request=frozen)
+    queue.claim_next('test-worker')
+    queue.finish(task['job_id'], 'test-worker', status='failed', stage='可恢复的本地步骤', retryable=retryable)
+    response = client.post(f"/api/production-queue/jobs/{task['job_id']}/retry", json={})
+    assert response.status_code == (200 if retryable else 409), response.text
+    persisted = queue.get(task['job_id'], include_private=True)
+    assert persisted['status'] == ('queued' if retryable else 'failed')
+    assert persisted['parent_job_id'] == 'studio-3'
+    assert persisted['frozen_request'] == frozen
+
+
 def test_published_remix_failed_version_can_retry_via_shared_api(queue_client):
     from backlot.production_queue_worker import ProductionQueueWorker
     client, projects = queue_client

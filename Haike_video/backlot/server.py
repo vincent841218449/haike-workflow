@@ -1547,7 +1547,7 @@ def create_app() -> FastAPI:
                         str(job["parent_job_id"]),
                         {},
                     )
-                elif job["kind"] not in {"published_remix", "material_commentary"}:
+                elif job["kind"] not in {"published_remix", "material_commentary", "studio_avatar", "studio_graphic", "studio_motion"}:
                     raise ProductionQueueConflict("全片预览失败请重新建立任务，不能复用旧任务编号")
             operation = getattr(queue, action)
             result = await asyncio.to_thread(operation, job_id)
