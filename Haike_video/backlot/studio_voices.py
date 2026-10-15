@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
-from backlot.studio import timestamp, sdk_type
+from backlot.studio import timestamp, sdk_type, gateway_connection_message
 from backlot.studio_avatar import key_identity
 from backlot.work_catalog import WorkError
 
@@ -20,7 +20,7 @@ def catalogue(studio):
         # Offer that explicit default only when the library route is absent.
         if getattr(error, "status", None) == 404:
             return _legacy_catalogue(studio)
-        raise WorkError("音色库暂不可用，请先连接海客Key，并确认网关已更新音色库服务") from error
+        raise WorkError(gateway_connection_message(error, "音色库暂不可用，请先连接海客Key，并确认网关已更新音色库服务")) from None
     for voice in value.get("items", []):
         if not isinstance(voice.get("id"), str) or not re.fullmatch(r"voice_[a-z0-9_]{1,64}", voice["id"]):
             raise WorkError("音色库返回了无效的音色标识，请联系管理员核对")

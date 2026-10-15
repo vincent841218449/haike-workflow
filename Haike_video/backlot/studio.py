@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import ssl
 import sys
 import threading
 from contextlib import contextmanager, nullcontext
@@ -14,6 +15,15 @@ from uuid import uuid4
 
 from backlot.work_catalog import WorkError, WorkCatalog
 _CALENDAR_LOCK = threading.RLock()
+
+
+def gateway_connection_message(error, fallback):
+    reason = getattr(error, "reason", error)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        issue = "已过期" if getattr(reason, "verify_code", None) == 10 else "校验失败"
+        return f"现有API服务的HTTPS证书{issue}，暂时无法连接。文案和素材仍可保存；请管理员恢复证书后继续制作。"
+    return fallback
+
 
 TEMPLATES = [
     {"id": "avatar-motion-adu-v1", "kind": "avatar", "name": "ADu 动效口播", "ratio": "9:16 / 16:9", "width": 1080, "height": 1920,

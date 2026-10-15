@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
-from backlot.studio import Studio, TEMPLATES
+from backlot.studio import Studio, TEMPLATES, gateway_connection_message
 from backlot.work_api import catalog, call
 from backlot.work_catalog import WorkError
 from backlot import work_publish
@@ -333,7 +333,8 @@ async def account(request: Request):
             sdk = studio(request).client()
             from backlot.studio_asr import status
             return {"summary": sdk.request("/account/summary"), "capabilities": sdk.request("/capabilities"), "local_asr": status(studio(request))}
-        except Exception: raise WorkError("无法读取账户，请到API设置检查连接") from None
+        except Exception as error:
+            raise WorkError(gateway_connection_message(error, "无法读取账户，请到API设置检查连接"), "unavailable") from None
     return await asyncio.to_thread(call, read)
 
 
