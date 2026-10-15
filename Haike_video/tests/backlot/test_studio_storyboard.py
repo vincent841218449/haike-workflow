@@ -287,6 +287,31 @@ def test_trial_daily_limits_are_durable(data,tmp_path):
     assert not list(r.folder.glob('*.json'))
 
 
+def test_candidate_metadata_does_not_consume_ai_request_quota(data,tmp_path):
+    s,_,_,_=data
+    relay=TrialRelay(s,tmp_path/'requests',transport=lambda *_:{'choices':[{'message':{'content':'ok'}}]})
+    for i in range(12):atomic_private(relay.folder/f'scene-{i}-candidates.json',{'items':[]})
+    assert relay.call('one-actual-call',{'messages':[]})['choices']
+
+
+def test_cached_visual_review_reuses_only_matching_plan_media_and_scene(data,tmp_path,monkeypatch):
+    from backlot.studio_storyboard import Sources
+    from backlot.work_catalog import sha
+    s,d,_,_=data
+    folder=tmp_path/'render/ai-requests';folder.mkdir(parents=True)
+    atomic_private(folder.parent/'storyboard.json',{'draft_fingerprint':'original'})
+    path=folder/'one.mp4';path.write_bytes(b'reviewed-video')
+    atomic_private(folder.parent/'pexels-material-review.json',{'one':{'review_policy':2,'sha256':sha(path),
+        'draft_fingerprint':'original','filename':path.name,'suitable_scene_ids':['scene-2'],
+        'provenance':{'source':'pexels','source_url':'https://example.test/one'}}})
+    source=Sources(s,d,SimpleNamespace(folder=folder),None)
+    monkeypatch.setattr(source,'own',lambda path,kind,provenance:{'id':'same-media','provenance':provenance})
+    assert source.cached_material({'id':'scene-2'},'pexels')['id']=='same-media'
+    assert source.cached_material({'id':'scene-1'},'pexels') is None
+    path.write_bytes(b'changed')
+    assert source.cached_material({'id':'scene-2'},'pexels') is None
+
+
 @pytest.mark.parametrize('change',[{'image_model':'gpt-image-1.5'}, {'api_key':'another-private-value'}, {'base_url':'https://another.example/v1'}])
 def test_probe_cannot_enable_a_different_model_or_destination(data,change):
     s,d,_,_=data

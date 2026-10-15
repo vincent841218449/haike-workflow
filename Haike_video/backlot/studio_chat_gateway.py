@@ -27,7 +27,7 @@ def call(relay, path, stage, payload, lock):
             if receipt["identity"] != identity(relay.studio):
                 raise WorkError("原AI意图绑定的账户或网关已变化，请恢复原海客Key后查询")
         else:
-            if len(list(relay.folder.glob("*.json"))) >= 12:
+            if len(relay.request_paths()) >= 12:
                 raise WorkError("本次AI调用已达12次上限，已完成素材保留")
             receipt = {"stage": stage, "model": "gpt-6-luna", "fingerprint": fingerprint,
                        "status": "prepared", "image": False, "gateway": True,
