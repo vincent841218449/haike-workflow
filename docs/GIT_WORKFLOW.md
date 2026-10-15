@@ -4,7 +4,7 @@
 
 | 目录 | 管理对象 |
 |---|---|
-| `Haike_video/` | 14754视频工作台、原生队列、图文与数字人口播、动效适配 |
+| `Haike_video/` | 4188视频工作台、原生队列、图文与数字人口播、动效适配 |
 | `prototypes/haike-avatar-generator/` | 工作台React界面源码及前端测试 |
 | `api-platform/` | 收费中转站、账户、充值、兑换码、定价、账单、云端部署模板 |
 | `creatorhub/` | 发布、账号连接及调度 |

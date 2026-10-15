@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(1024, 65535)][int]$Port = 14754,
+    [ValidateSet(4188)][int]$Port = 4188,
     [switch]$NoBrowser
 )
 $ErrorActionPreference = 'Stop'

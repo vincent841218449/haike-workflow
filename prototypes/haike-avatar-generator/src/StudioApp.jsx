@@ -4,6 +4,8 @@ import { Sidebar } from './Sidebar.jsx';
 import { App as Avatar } from './App.jsx';
 import { Graphic } from './Graphic.jsx';
 import { Settings } from './Settings.jsx';
+import { Resources } from './VoiceLibrary.jsx';
+import { CreationTasks } from './CreationTasks.jsx';
 import { Button, Dialog, EmptyState, Heading, Notice } from './ui.jsx';
 import { api, upload } from './studio-api.js';
 import './studio.css';
@@ -21,6 +23,7 @@ function Projects() {
   async function load(){try{const [d,w,q]=await Promise.all([api('/api/studio/drafts'),api('/api/works?candidates=true'),api('/api/production-queue')]);setDrafts(d);setWorks(Array.isArray(w)?w:(w.works||[]));setJobs(q.tasks.filter(j=>j.kind.startsWith('studio_')));}catch(e){setError(e.message);}}
   async function retryJob(j){setSaving(true);try{await api(`/api/production-queue/jobs/${j.job_id}/retry`,{});setMessage('已恢复原任务，会复用已完成的付费调用和本地产物。');load();}catch(e){setError(e.message);}finally{setSaving(false);}}
   useEffect(()=>{load();},[]);
+  useEffect(()=>{const id=new URLSearchParams(location.search).get('work');if(id)inspect({work_id:id});},[]);
   async function inspect(w){try{const detail=await api(`/api/works/${w.work_id}`);setViewVersion(detail.versions.at(-1)?.version_id||'');setSelected(detail);}catch(e){setError(e.message);}}
   async function confirm(){setSaving(true);setError('');try{const w=await api(`/api/works/${selected.work_id}/confirm`,{revision:selected.revision,version_id:viewVersion,evidence:'用户在海客工作台观看并确认最终成片'});setSelected(w);setMessage('当前观看版本已确认，请准备发布资料后安排日历。');load();}catch(e){setError(e.message);}finally{setSaving(false);}}
   async function chooseCover(e){const f=e.target.files?.[0];e.target.value='';if(!f)return;setSaving(true);setError('');try{const r=await fetch(`/api/studio/works/${selected.work_id}/cover-upload`,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});const v=await r.json();if(!r.ok)throw new Error(v.detail||'封面未能上传');setFields(old=>({...old,cover_path:v.path}));}catch(e){setError(e.message);}finally{setSaving(false);}}
@@ -67,4 +70,4 @@ function Calendar() {
   </main>;
 }
 
-export function StudioApp(){const view=location.pathname;return <><Sidebar/>{view==='/settings'?<Settings/>:view==='/calendar'?<Calendar/>:view==='/projects'?<Projects/>:view==='/avatar'||view.startsWith('/ui/avatar-generator/')?<Avatar/>:<Graphic/>}</>;}
+export function StudioApp(){const view=location.pathname;return <><Sidebar/>{view==='/tasks'?<CreationTasks/>:view==='/resources'?<Resources/>:view==='/settings'?<Settings/>:view==='/calendar'?<Calendar/>:view==='/projects'?<Projects/>:view==='/avatar'||view.startsWith('/ui/avatar-generator/')?<Avatar/>:<Graphic/>}</>;}

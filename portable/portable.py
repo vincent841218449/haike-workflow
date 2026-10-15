@@ -235,10 +235,13 @@ def own_identity(port: int, kind: str, nonce: str | None = None):
 
 
 def choose_port(requested: int, kind: str, excluded: set[int]):
+    if kind == "backlot" and requested != 4188:
+        raise RuntimeError("工作台入口统一为4188，请使用本项目启动器")
     state = read_json(ROOT / ".portable/services.json", {})
     recorded = [item.get("port") for item in state.get("services", []) if item.get("kind") == kind]
-    candidates = list(dict.fromkeys([p for p in recorded if isinstance(p, int) and 1024 <= p <= 65535]
-                                    + list(range(requested, min(requested + 101, 65536)))))
+    candidates = [4188] if kind == "backlot" else list(dict.fromkeys(
+        [p for p in recorded if isinstance(p, int) and 1024 <= p <= 65535]
+        + list(range(requested, min(requested + 101, 65536)))))
     for port in candidates:
         if port in excluded:
             continue
@@ -256,7 +259,7 @@ def choose_port(requested: int, kind: str, excluded: set[int]):
     raise RuntimeError(f"{requested} 附近无可用端口，请指定其他端口；未停止其他程序")
 
 
-def start(port: int = 14754, publisher: bool = False, publisher_port: int = 8000, no_browser: bool = False) -> dict:
+def start(port: int = 4188, publisher: bool = False, publisher_port: int = 8000, no_browser: bool = False) -> dict:
     started = time.monotonic()
     prepared = prepare()
     diagnosed = diagnose()
@@ -349,7 +352,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="海客视频离线运行包；所有准备均在本地完成")
     parser.add_argument("action", choices=("prepare", "diagnose", "start", "_serve"))
     parser.add_argument("--full", action="store_true", help="完整 SHA256 文件校验")
-    parser.add_argument("--port", type=int, default=14754)
+    parser.add_argument("--port", type=int, default=4188)
     parser.add_argument("--publisher", action="store_true")
     parser.add_argument("--publisher-port", type=int, default=8000)
     parser.add_argument("--no-browser", action="store_true")

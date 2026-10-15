@@ -29,3 +29,10 @@ test("未知模板和超长文案不默默替换或截断", () => {
   assert.equal(validateInputs({ ...ready(), text: "字".repeat(5001) }, []).field, "text");
   assert.equal(validateInputs({ ...ready(), text: "字".repeat(5000) }, []), null);
 });
+test('素材可选；上传后统一确认使用权即可自动制作',()=>{
+  assert.equal(validateInputs({...ready(),ai:{enabled:true,materials:[]}},[]),null);
+  const ai={enabled:true,materials:[{id:'a',rights_confirmed:false}]};
+  assert.equal(validateInputs({...ready(),ai},[]).field,'materials');
+  ai.materials[0].rights_confirmed=true;
+  assert.equal(validateInputs({...ready(),ai},[]),null);
+});

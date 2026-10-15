@@ -92,7 +92,7 @@ def validate_graphic(studio, draft):
     draw_plates(studio.private / "studio-preflight" / draft["id"], draft)
 
 
-def run_graphic(project_dir, request):
+def run_graphic(project_dir, request, *, on_progress=None):
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     project_dir = Path(project_dir)
     studio = Studio(project_dir.parent)
@@ -105,6 +105,7 @@ def run_graphic(project_dir, request):
     parts = []
     sources = []
     for i, material in enumerate(draft["input"]["materials"]):
+        if on_progress: on_progress(f"合成图文第{i + 1}/3景", i, 5)
         path = studio.asset(material["id"], draft["id"])
         sources.append({"id": material["id"], "role": f"scene-{i + 1}", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         part = output_dir / f"scene-{i}.mp4"
@@ -116,6 +117,7 @@ def run_graphic(project_dir, request):
         r = subprocess.run(args, capture_output=True, timeout=180)
         if r.returncode: raise WorkError("图文场景合成失败，已完成素材已保留")
         parts.append(part)
+    if on_progress: on_progress("合成音轨与完整视频", 3, 5)
     listing = output_dir / "concat.txt"
     listing.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")
     output = output_dir / "graphic-preview.mp4"
@@ -129,6 +131,7 @@ def run_graphic(project_dir, request):
     args += ["-map", "0:v", "-map", "1:a", "-t", "9", "-c:v", "copy", "-c:a", "aac", str(output)]
     result = subprocess.run(args, capture_output=True, timeout=120)
     if result.returncode: raise WorkError("音轨合成失败，场景已保留")
+    if on_progress: on_progress("核验成片画幅、时长与完整解码", 4, 5)
     info = media_probe(output)
     decode = subprocess.run([ffmpeg, "-v", "error", "-i", str(output), "-f", "null", "-"], capture_output=True, timeout=90)
     if decode.returncode or abs(info["duration"] - 9) > .1 or info["video"]["width"] != 1080 or info["video"]["height"] != 1920:
@@ -139,4 +142,5 @@ def run_graphic(project_dir, request):
               "draft_id": draft["id"], "draft_revision": draft["revision"], "layout": draft["layout"], "sources": sources}
     atomic_private(output_dir / "render-request.json", {"draft": draft, "sources": sources})
     atomic_private(output_dir / "qa.json", report)
+    if on_progress: on_progress("图文成片核验完成，正在登记作品", 5, 5)
     return {"status": "completed", "stage": "合成完成，等待观看和来源审核", "result": {"output_path": str(output), "qa_status": "pending", "template_id": draft["template_id"]}}

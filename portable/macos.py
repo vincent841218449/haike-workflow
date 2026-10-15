@@ -18,6 +18,7 @@ import portable as bundle
 
 ROOT = bundle.ROOT
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+DEFAULT_PORT = 4188
 
 
 def browser_path() -> Path:
@@ -116,9 +117,11 @@ def diagnose() -> dict:
 
 
 def choose_port(requested: int, kind: str, excluded: set[int]):
+    if kind == 'backlot' and requested != DEFAULT_PORT:
+        raise RuntimeError('工作台入口统一为4188，请使用本项目启动器')
     state = bundle.read_json(ROOT / '.portable/services.json', {})
     recorded = [s['port'] for s in state.get('services', []) if s.get('kind') == kind]
-    candidates = list(dict.fromkeys(recorded + list(range(requested, min(requested+101, 65536)))))
+    candidates = [DEFAULT_PORT] if kind == 'backlot' else list(dict.fromkeys(recorded + list(range(requested, min(requested+101, 65536)))))
     for port in candidates:
         if port in excluded:
             continue
@@ -133,7 +136,7 @@ def choose_port(requested: int, kind: str, excluded: set[int]):
             return port, None
         except OSError:
             continue
-    raise RuntimeError(f'{requested} 附近没有可用端口')
+    raise RuntimeError(f'{requested} 端口已被其他服务占用，请释放该端口后重试；未启动其他端口')
 
 
 def start(port: int, publisher: bool, publisher_port: int, no_browser: bool) -> dict:
@@ -206,7 +209,7 @@ def stop() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description='海客工作流 Mac 本地启动器')
     parser.add_argument('action', choices=['prepare', 'diagnose', 'start', 'stop', '_serve'])
-    parser.add_argument('--port', type=int, default=14754)
+    parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--publisher-port', type=int, default=8000)
     parser.add_argument('--publisher', action='store_true')
     parser.add_argument('--no-browser', action='store_true')

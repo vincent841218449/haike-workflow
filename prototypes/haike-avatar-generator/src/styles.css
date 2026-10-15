@@ -92,4 +92,17 @@ textarea {width:100%;resize:vertical;border:1px solid #d8dce3;border-radius:8px;
 .modal-body {padding:18px}.modal-footer {padding:14px 18px}.modal-footer>.button {flex:1;padding-inline:12px}
 .modal-actions {bottom:-18px}.summary-list dt {width:85px}.summary-list>div {gap:12px}
 }
+.avatar-form {border:0;padding:0;margin:0;min-width:0}
+.avatar-form:disabled {opacity:.7}
+.portrait-empty {width:66px;height:74px;display:grid;place-items:center;background:var(--surface-alt,#f6f6f3);border:1px dashed var(--line);border-radius:8px;color:var(--muted);flex-shrink:0}
+.avatar-materials>.helper {margin:8px 0 12px}
+.material-upload {width:100%;justify-content:center;border-style:dashed;min-height:48px}
+.material-upload>span {margin-left:auto;color:var(--muted);font-size:12px}
+.compact-material-list {display:grid;gap:8px;margin:12px 0}
+.compact-material {display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:7px;min-width:0}
+.compact-material>img {width:42px;height:36px;object-fit:cover;border-radius:4px}
+.compact-material>span {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.avatar-materials .checkbox-row {font-size:12px;align-items:start}
+.settings-fields>details>summary {cursor:pointer;font-size:13px;color:var(--muted)}
+.avatar-editor .action-note>span {display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px}
 @media(prefers-reduced-motion:reduce) {* {scroll-behavior:auto!important;animation:none!important;transition:none!important}}

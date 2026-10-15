@@ -62,6 +62,15 @@ def validate_voice(value):
         raise WorkError("腾讯精品配音已移除，请重新选择 CosyVoice，或上传已有音频")
     if value.get("soundMode") == "voice" and value.get("voiceId") != "haike/cosyvoice":
         raise WorkError("请选择网关提供的 CosyVoice 配音，或上传已有音频")
+    if value.get("soundMode") == "voice" and value.get("toneId") is not None and (not isinstance(value["toneId"], str) or not re.fullmatch(r"voice_[a-z0-9_]{1,64}", value["toneId"])):
+        raise WorkError("请选择音色库中的有效音色")
+
+
+def tts_input(draft):
+    value = {"text": draft["text"]}
+    if draft["input"].get("toneId") and draft["input"]["toneId"] != "voice_gateway_default":
+        value["voice_id"] = draft["input"]["toneId"]
+    return value
 
 
 def validate(studio, draft):
@@ -107,7 +116,7 @@ def quote(studio, draft):
         quotes["avatar"] = sdk.quote("haike/avatar", {"audio_file": prepared["audio_file"], "image_file": prepared["image_file"]}, draft["id"])
         if (draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")) and asr["provider"] == "gateway": quotes["asr"] = sdk.quote("haike/tencent-asr", {"audio_file": prepared["audio_file"]}, draft["id"])
     else:
-        quotes["tts"] = sdk.quote(draft["input"]["voiceId"], {"text": draft["text"]}, draft["id"])
+        quotes["tts"] = sdk.quote(draft["input"]["voiceId"], tts_input(draft), draft["id"])
         # Availability is checked before any TTS charge. Its exact avatar quote needs the real audio.
         models = {m.get("id") or m.get("model") for m in sdk.request("/capabilities").get("items", [])}
         needs_asr = draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")
@@ -246,7 +255,7 @@ def clock_captions(result, duration):
             for s in result["segments"] for w in s["words"]]
 
 
-def run_avatar(project_dir, request, sdk=None):
+def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     studio = Studio(Path(project_dir).parent)
     if request["key_identity"] != key_identity(studio): raise WorkError("API Key已改变；恢复付费任务前请恢复原账户连接")
     sdk = sdk or studio.client()
@@ -255,6 +264,15 @@ def run_avatar(project_dir, request, sdk=None):
     state_path = output_dir / "gateway-state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {"stages": {}, "prepared": request["prepared"]}
     def save(): atomic_private(state_path, state)
+    steps_done = 0
+    draft_input = request["draft"]["input"]
+    needs_clock = bool(draft_input.get("subtitles", True) or draft_input.get("ai", {}).get("enabled"))
+    needs_ai = bool(draft_input.get("ai", {}).get("enabled"))
+    steps_total = 4 + int(needs_clock) + int(needs_ai)
+    def publish_progress(stage, advance=False):
+        nonlocal steps_done
+        if advance: steps_done += 1
+        if on_progress: on_progress(stage, steps_done, steps_total)
     def paid(stage, model, inputs):
         if stage not in state["stages"]:
             q = request["quotes"].get(stage) or sdk.quote(model, inputs, request["draft"]["id"])
@@ -275,6 +293,7 @@ def run_avatar(project_dir, request, sdk=None):
             raise WorkError("原模型任务仍在处理或结果待核对，请恢复此任务；不会新建付费调用", "unavailable")
         return job["result"]
     try:
+        publish_progress("准备配音与原始音轨")
         p = state["prepared"]; draft = request["draft"]
         asr = request.get("asr", {"provider": "gateway"})
         if asr["provider"] == "local-whisper":
@@ -284,15 +303,17 @@ def run_avatar(project_dir, request, sdk=None):
         if not p.get("audio_path"):
             raw = output_dir / "tts-source.wav"
             if not raw.exists():
-                result = paid("tts", draft["input"]["voiceId"], {"text": draft["text"]})
+                result = paid("tts", draft["input"]["voiceId"], tts_input(draft))
                 if result.get("audio_base64"): raw.write_bytes(base64.b64decode(result["audio_base64"], validate=True))
                 else: download_result(result["audio_url"], raw)
             audio = output_dir / "narration.wav"
             duration = prepare_audio(raw, audio, draft["input"].get("rate", 1))
             p.update(audio_path=str(audio), duration=duration, audio_file=sdk.upload(audio, "audio")["id"]); save()
+        publish_progress("原始音轨已就绪", True)
         cues = []
         clock_cues = []
         if draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled"):
+            publish_progress("识别真实声音与字幕时间轴")
             if asr["provider"] == "local-whisper":
                 from backlot.studio_asr import transcribe
                 result = transcribe(studio, asr, Path(p["audio_path"]), output_dir, p["duration"])
@@ -300,20 +321,34 @@ def run_avatar(project_dir, request, sdk=None):
                 result = paid("asr", "haike/tencent-asr", {"audio_file": p["audio_file"]})
             cues = captions(result, p["duration"])
             clock_cues = clock_captions(result, p["duration"])
+            publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
+        if needs_ai: publish_progress("理解分镜并匹配用户与网络素材")
         storyboard = produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
+        if needs_ai: publish_progress("分镜与素材已就绪", True)
         video = output_dir / "avatar-source.mp4"
+        publish_progress("数字人生成与结果下载")
         if not video.exists():
             result = paid("avatar", "haike/avatar", {"audio_file": p["audio_file"], "image_file": p["image_file"]})
             download_result(result["video_url"], video)
+        publish_progress("数字人画面已就绪", True)
         from backlot.studio_composition import compose_avatar
         if draft["input"].get("motion"):
             from backlot.studio_storyboard import compose_motion
-            return compose_motion(studio, draft, output_dir, video, Path(p["audio_path"]), clock_cues, storyboard, caption_cues=cues if asr["provider"] == "local-whisper" else None)
+            publish_progress("渲染动效画面、字幕与配乐")
+            result = compose_motion(studio, draft, output_dir, video, Path(p["audio_path"]), clock_cues, storyboard, caption_cues=cues if asr["provider"] == "local-whisper" else None)
+            if result.get("status") == "completed":
+                publish_progress("动效画面已合成", True)
+                publish_progress("成片核验完成，正在登记作品", True)
+            return result
+        publish_progress("合成人物、画面、字幕与音轨")
         output = compose_avatar(output_dir, draft, video, Path(p["audio_path"]), p["duration"], cues if draft["input"].get("subtitles", True) else [], storyboard=storyboard) if storyboard else compose_avatar(output_dir, draft, video, Path(p["audio_path"]), p["duration"], cues)
+        publish_progress("口播画面已合成", True)
         report = {"template_id": draft["template_id"], "adapter_version": 1, "sources": [{"path": str(video), "sha256": sha(video)}, {"path": p["audio_path"], "sha256": sha(p["audio_path"])}],
                   "caption_timing": "Whisper word-level" if cues and asr["provider"] == "local-whisper" else "ASR sentence-level" if cues else "off", "provider_jobs": [s["job"]["id"] for s in state["stages"].values()], "human_review": "pending"}
         atomic_private(output_dir / "qa.json", report)
+        # This callback runs only after composition's media checks and the QA receipt exist.
+        if on_progress: on_progress("成片核验完成，正在登记作品", steps_done + 1, steps_total)
         return {"status": "completed", "stage": "数字人口播已合成，等待观看审核", "result": {"output_path": str(output), "qa_status": "pending", "provider_jobs": report["provider_jobs"]}}
     except WorkError as exc:
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioAvatar", "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}

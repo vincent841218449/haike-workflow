@@ -21,5 +21,5 @@
 
 当前自有私有仓库为vincent841218449/haike-workflow，origin指向它，原hrbj18仓库仅为upstream。main为交付基线、dev为集成分支；后续修改从dev建立feat/fix分支，检查所属模块、记录明确提交，通过PR审阅和已授权推送管理迭代。流程见docs/GIT_WORKFLOW.md。
 
-当前14754工作台与8000发布面板从本checkout启动；原源码和安装目录保留用于回退。修改本checkout源码，前端用scripts/build-studio.py构建，再重启本目录管理的服务。编译目录、运行环境和私有数据被忽略；Mac路径写入content_intelligence.local.json。Git提交与云端部署分开；云端账本和主密钥独立备份，代码回退不自动恢复资金数据库。
+当前4188工作台与8000发布面板从本checkout启动；原源码和安装目录保留用于回退。修改本checkout源码，前端用scripts/build-studio.py构建，再重启本目录管理的服务。编译目录、运行环境和私有数据被忽略；Mac路径写入content_intelligence.local.json。Git提交与云端部署分开；云端账本和主密钥独立备份，代码回退不自动恢复资金数据库。
 
