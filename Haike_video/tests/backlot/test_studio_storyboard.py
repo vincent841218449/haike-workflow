@@ -32,6 +32,49 @@ def test_server_binds_contiguous_real_clock(data):
     assert 'test-private-value' not in json.dumps(status(s))
 
 
+def test_storyboard_binds_original_text_to_asr_instead_of_model_character_counts(data, tmp_path):
+    from backlot.studio_storyboard import make_plan
+    s, d, cues, body = data
+    body['scenes'][0]['script_end'] = 99
+    body['scenes'][1].update(script_start=100, script_end=200)
+    response = {'choices': [{'message': {'content': json.dumps(body)}}]}
+    calls = []
+    relay = SimpleNamespace(folder=tmp_path, call=lambda *args: calls.append(args) or response)
+    plan = make_plan(s, d, cues, 3.2, relay)
+    assert ''.join(scene['text'] for scene in plan['scenes']) == d['text']
+    assert [(scene['script_start'], scene['script_end']) for scene in plan['scenes']] == [(0, 4), (4, 8)]
+    assert [(scene['start'], scene['end']) for scene in plan['scenes']] == [(0, 1.7), (1.7, 3.2)]
+    assert len(calls) == 1
+
+
+def test_storyboard_does_not_hide_invalid_cue_ranges_as_json_parse_errors(data, tmp_path):
+    from backlot.studio_storyboard import make_plan
+    s, d, cues, body = data
+    body['scenes'][1]['from_cue'] = 0
+    relay = SimpleNamespace(folder=tmp_path, call=lambda *_: {'choices': [{'message': {'content': json.dumps(body)}}]})
+    with pytest.raises(WorkError, match='连续覆盖'):
+        make_plan(s, d, cues, 3.2, relay)
+
+
+def test_script_binding_preserves_punctuation_and_newlines(data):
+    from backlot.studio_storyboard import bind_script_ranges
+    _, d, cues, body = data
+    d['text'] = '第一句。\n第二句。'
+    cues[0]['text'] = '第一句'
+    cues[1]['text'] = ' 第二句'
+    scenes = validate_plan(bind_script_ranges(body, d, cues), d, cues, 3.2)
+    assert [scene['text'] for scene in scenes] == ['第一句。\n', '第二句。']
+
+
+def test_script_binding_blocks_a_boundary_without_a_source_anchor(data):
+    from backlot.studio_storyboard import bind_script_ranges
+    _, d, cues, body = data
+    cues = [cues[0], {'text': '错', 'startMs': 1700, 'endMs': 1800}, {'text': '二句', 'startMs': 1800, 'endMs': 3100}]
+    body['scenes'][1]['to_cue'] = 2
+    with pytest.raises(WorkError, match='安全对齐'):
+        bind_script_ranges(body, d, cues)
+
+
 def test_storyboard_uses_asr_sentence_clock_not_caption_wrap_interpolation():
     from backlot.studio_avatar import captions
     result={'segments':[{'start':.25,'end':4.9,'text':'这是一句超过十八个字的长口播用于确认真实句级时钟没有被按字数拆开。'}]}
