@@ -294,6 +294,28 @@ def test_candidate_metadata_does_not_consume_ai_request_quota(data,tmp_path):
     assert relay.call('one-actual-call',{'messages':[]})['choices']
 
 
+@pytest.mark.parametrize('extra',[0,7,True,1.5])
+def test_ai_recovery_allowance_is_bounded_and_bound_to_original_plan(data,tmp_path,extra):
+    s,_,_,_=data;relay=TrialRelay(s,tmp_path/'render/requests')
+    atomic_private(relay.folder.parent/'storyboard.json',{'draft_fingerprint':'original'})
+    assert relay.request_limit()==12
+    atomic_private(relay.folder.parent/'ai-recovery-budget.json',{'draft_fingerprint':'original','extra_requests':extra,'reason':'local repair'})
+    with pytest.raises(WorkError,match='恢复额度'):relay.request_limit()
+
+
+def test_ai_recovery_allowance_does_not_reset_or_hide_consumed_requests(data,tmp_path):
+    s,_,_,_=data;relay=TrialRelay(s,tmp_path/'render/requests',transport=lambda *_:{'choices':[{'message':{'content':'ok'}}]})
+    atomic_private(relay.folder.parent/'storyboard.json',{'draft_fingerprint':'original'})
+    for i in range(12):relay.call('existing-'+str(i),{'messages':[]})
+    with pytest.raises(WorkError,match='次数上限'):relay.call('new',{'messages':[]})
+    atomic_private(relay.folder.parent/'ai-recovery-budget.json',{'draft_fingerprint':'original','extra_requests':1,'reason':'local repair'})
+    relay.call('new',{'messages':[]})
+    assert len(relay.request_paths())==13
+    with pytest.raises(WorkError,match='次数上限'):relay.call('beyond',{'messages':[]})
+    atomic_private(relay.folder.parent/'storyboard.json',{'draft_fingerprint':'different'})
+    with pytest.raises(WorkError,match='恢复额度'):relay.request_limit()
+
+
 def test_cached_visual_review_reuses_only_matching_plan_media_and_scene(data,tmp_path,monkeypatch):
     from backlot.studio_storyboard import Sources
     from backlot.work_catalog import sha

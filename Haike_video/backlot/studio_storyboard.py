@@ -113,6 +113,16 @@ class TrialRelay:
         # Candidate lists share this folder but are not AI calls.
         return [p for p in self.folder.glob('*.json') if re.fullmatch(r'[0-9a-f]{64}\.json',p.name)]
 
+    def request_limit(self):
+        recovery = self.folder.parent / 'ai-recovery-budget.json'
+        if not recovery.exists(): return 12
+        value = json.loads(recovery.read_text())
+        plan = json.loads((self.folder.parent / 'storyboard.json').read_text())
+        extra = value.get('extra_requests')
+        if type(extra) is not int or not 1 <= extra <= 6 or not value.get('reason') or not value.get('draft_fingerprint') or value['draft_fingerprint'] != plan.get('draft_fingerprint'):
+            raise WorkError('本地AI恢复额度与原任务不符，请核对恢复记录')
+        return 12 + extra
+
     def image_model_for_stage(self, stage):
         # Freeze across every scene, so an operator switch affects new jobs only.
         route = self.folder / "image-routing.safe"
@@ -144,7 +154,7 @@ class TrialRelay:
                 if receipt["fingerprint"] != fingerprint: raise WorkError("原AI任务内容已冻结，不能在恢复时替换参数")
                 if receipt["status"] == "succeeded": return receipt["result"]
                 raise WorkError("AI原请求结果待核对，未重复提交。请由管理员核对中转记录", "unavailable")
-            if len(self.request_paths()) >= 12: raise WorkError("本次AI调用已达12次上限，已完成素材保留")
+            if len(self.request_paths()) >= self.request_limit(): raise WorkError("本次AI调用已达次数上限，已完成素材保留")
             if image and sum(json.loads(p.read_text()).get("image", False) for p in self.request_paths()) >= 2:
                 raise WorkError("本次插画生成已达两张上限")
             # A private daily counter is persisted before submission, including uncertain calls.
