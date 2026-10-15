@@ -107,3 +107,11 @@ def test_unreceipted_or_changed_video_cannot_be_stamped_as_current_native_output
     assert m.verified_candidate(candidate,tmp_path,report,ref)
     candidate.write_bytes(b'different-video')
     assert not m.verified_candidate(candidate,tmp_path,report,ref)
+
+
+def test_long_timeline_review_samples_every_scene_including_the_final_ones():
+    ranges=[(i*4,(i+1)*4) for i in range(30)]
+    times=m.preview_times(ranges,120)
+    assert len(times)<=40
+    assert all((a+b)/2 in times for a,b in ranges)
+    assert 0 in times and round(120-1/60,3) in times

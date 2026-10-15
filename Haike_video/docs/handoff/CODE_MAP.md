@@ -13,7 +13,7 @@
 - AI分镜/素材：studio_storyboard.py原文/词级时钟/路由；studio_chat_gateway.py统一Key免费报价/持久意图/恢复。云端sponsored.py原子账户/平台次数配额，Token账单成本未知；生图暂停。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用；test_studio_{storyboard,chat_gateway}.py。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue.py/production_queue_worker.py；studio_graphic、studio_avatar、studio_motion处理器，所有产物登记作品台账。
-- 模板锁定：studio_template_registry.py冻结真实来源；studio_motion_director.py原文语义/证据→studio_preflight.py→原生执行，studio_motion_qa.py核对计划/镜头/成片。studio_motiongit{,_native}.py执行官方.motion双工作流，自写04-A仅兼容旧请求。studio_presentation.py记录所选/实际身份；studio_creation.py复用费用与阶段，work_api.py工程下载绑定精确成片版本。根docs/tasks/2026-10-15-adu-native-integration.md。
+- 模板锁定：studio_template_registry.py冻结来源；studio_motion_director.py语义/证据→studio_preflight.py→原生执行，studio_motion_qa.py核对成片。studio_motiongit{,_native}.py官方.motion双工作流；studio_media_layout.py按素材角色放大/保全证据。自写04-A仅兼容旧请求。studio_presentation.py核对实际身份；studio_creation.py复用费用/阶段，work_api.py工程下载绑定完成版本。根docs/tasks/2026-10-15-adu-native-integration.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
