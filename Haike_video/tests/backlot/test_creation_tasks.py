@@ -164,3 +164,50 @@ def test_task_summary_uses_submission_snapshot_after_draft_changes(setup):
     assert data['task']['excerpt'] == '提交时的原文'
     assert data['task']['ratio'] == '3:4'
     assert 'not-in-public-response' not in json.dumps(data)
+
+
+def waiting_materials(setup):
+    from backlot.studio import atomic_private
+    studio, draft, queue, client = setup
+    job = queue.submit(project_id=draft['id'],kind='studio_avatar',source='workbench',priority='normal',
+        parent_job_id='studio-1',frozen_request={'draft':draft,'original_paid_intent':'keep-this-intent'})
+    queue.claim_next('worker')
+    queue.update_stage(job['job_id'],'worker','分镜素材准备',completed=2,total=7)
+    queue.finish(job['job_id'],'worker',status='awaiting_human',stage='请选择有权使用的抖音素材，AI分析是否采用',
+        safe_resume_point='studio_avatar_material_rights')
+    folder = studio.projects_root / draft['id'] / 'renders/studio-1/ai-requests'
+    atomic_private(folder / 'scene-1-candidates.json',{'items':[{'id':'first','title':'第一份'},{'id':'second','title':'第二份'}]})
+    atomic_private(folder / 'scene-2-candidates.json',{'items':[{'id':'first','title':'第一份'}]})
+    return job,folder
+
+
+def test_task_material_multiselect_confirms_scope_then_resumes_same_job(setup):
+    studio,_,queue,client = setup
+    job,folder = waiting_materials(setup)
+    data = client.get('/api/studio/tasks?status=needs_action').json()
+    assert data['counts']['needs_action'] == 1 and data['counts']['failed'] == 0
+    assert data['tasks'][0]['status_label'] == '等待确认素材'
+    assert data['tasks'][0]['actions']['retry'] is False
+    detail=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert detail['progress']['percent']==29 and detail['progress']['completed']==2
+    url = '/api/studio/ai/jobs/' + job['job_id']
+    assert len(client.get(url+'/douyin-candidates').json()['items']) == 2
+    for selection,rights in [([],True),(['first','first'],True),(['foreign'],True),(['first'],False)]:
+        assert client.post(url+'/authorize-douyin',json={'video_ids':selection,'rights_confirmed':rights}).status_code == 422
+    assert queue.get(job['job_id'])['status'] == 'awaiting_human'
+    response = client.post(url+'/authorize-douyin',json={'video_ids':['first','second'],'rights_confirmed':True})
+    assert response.status_code == 200 and response.json()['job_id'] == job['job_id']
+    assert queue.get(job['job_id'])['status'] == 'queued'
+    assert queue.get(job['job_id'],include_private=True)['frozen_request']['original_paid_intent'] == 'keep-this-intent'
+    decisions = json.loads((folder.parent/'source-decisions.json').read_text())
+    assert decisions['authorized_video_ids'] == ['first','second'] and decisions['selection_mode'] == 'ai-reviewed'
+    assert client.post(url+'/authorize-douyin',json={'video_ids':['first'],'rights_confirmed':True}).status_code == 409
+
+
+def test_legacy_single_selection_remains_compatible_and_other_human_gates_stay_closed(setup):
+    _,_,queue,client = setup
+    job,_ = waiting_materials(setup)
+    assert client.post('/api/studio/ai/jobs/'+job['job_id']+'/authorize-douyin',json={'video_id':'second','rights_confirmed':True}).status_code == 200
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='awaiting_human',stage='其他人工审核',safe_resume_point='unrelated_gate')
+    with pytest.raises(ProductionQueueConflict): queue.retry(job['job_id'])

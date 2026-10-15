@@ -274,7 +274,7 @@ def skip_douyin(job_id: str, request: Request, data: dict = Body(...)):
     from backlot.server import _ensure_production_queue
     from backlot.studio import atomic_private, timestamp
     q = _ensure_production_queue(request.app); job = call(q.get, job_id, include_private=True)
-    if job["kind"] != "studio_avatar" or job["status"] != "failed": raise HTTPException(409, "只能恢复暂停的口播任务")
+    if job["kind"] != "studio_avatar" or job["status"] not in {"failed", "awaiting_human"}: raise HTTPException(409, "只能恢复暂停的口播任务")
     d = job["frozen_request"]["draft"]
     path = studio(request).projects_root / d["id"] / "renders" / ("studio-" + str(d["revision"])) / "source-decisions.json"
     atomic_private(path, {"skip_douyin": True, "confirmed_at": timestamp(), "reason": "用户明确跳过抖音，恢复原任务"})
@@ -308,7 +308,7 @@ def douyin_candidates(job_id: str, request: Request):
     if job["kind"]!="studio_avatar": raise HTTPException(422,"请选择口播任务")
     d=job["frozen_request"]["draft"]
     folder=studio(request).projects_root/d["id"]/"renders"/("studio-"+str(d["revision"]))/"ai-requests"
-    items=[x for p in folder.glob("scene-*-candidates.json") for x in json.loads(p.read_text()).get("items",[])]
+    items=list({x['id']:x for p in sorted(folder.glob("scene-*-candidates.json")) for x in json.loads(p.read_text()).get("items",[])}.values())
     return {"items":items}
 
 
@@ -317,15 +317,19 @@ def authorize_douyin(job_id: str, request: Request, data: dict = Body(...)):
     import json
     from backlot.studio import atomic_private, timestamp
     mutation(request)
-    if set(data)!={"video_id","rights_confirmed"} or data["rights_confirmed"] is not True: raise HTTPException(422,"请确认拥有此视频的使用权")
+    if set(data) not in ({"video_id","rights_confirmed"}, {"video_ids","rights_confirmed"}) or data["rights_confirmed"] is not True:
+        raise HTTPException(422,"请确认拥有所选视频的使用权")
+    selected = data.get("video_ids", [data.get("video_id")])
+    if not isinstance(selected,list) or not 1 <= len(selected) <= 10 or any(not isinstance(v,str) for v in selected) or len(set(selected)) != len(selected):
+        raise HTTPException(422,"请选择1至10份不重复的候选素材")
     candidates=douyin_candidates(job_id,request)["items"]
-    if data["video_id"] not in {c["id"] for c in candidates}: raise HTTPException(422,"视频不在本次候选中")
+    if set(selected) - {c["id"] for c in candidates}: raise HTTPException(422,"视频不在本次候选中")
     from backlot.server import _ensure_production_queue
     q=_ensure_production_queue(request.app);job=call(q.get,job_id,include_private=True)
-    if job["status"]!="failed": raise HTTPException(409,"只能恢复暂停的任务")
+    if job["status"] not in {"failed", "awaiting_human"}: raise HTTPException(409,"只能恢复暂停的任务")
     d=job["frozen_request"]["draft"];path=studio(request).projects_root/d["id"]/"renders"/("studio-"+str(d["revision"]))/"source-decisions.json"
     value=json.loads(path.read_text()) if path.exists() else {}
-    value.update(authorized_video_ids=sorted(set(value.get("authorized_video_ids",[])+[data["video_id"]])),confirmed_at=timestamp())
+    value.update(authorized_video_ids=sorted(set(value.get("authorized_video_ids",[])+selected)),confirmed_at=timestamp(),selection_mode="ai-reviewed")
     atomic_private(path,value)
     return call(q.retry,job_id)
 

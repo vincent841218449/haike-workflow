@@ -555,7 +555,8 @@ class ProductionQueue:
                 raise ProductionQueueError("生产任务不存在")
             if row["status"] == "ambiguous":
                 raise ProductionQueueConflict("供应商受理状态不明确，核对原任务后才能恢复")
-            if row["status"] != "failed" or not bool(row["retryable"]):
+            material_confirmation = row["status"] == "awaiting_human" and row["kind"] == "studio_avatar" and row["safe_resume_point"] == "studio_avatar_material_rights"
+            if not material_confirmation and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(
@@ -564,7 +565,7 @@ class ProductionQueue:
                 "updated_at=?,revision=revision+1 WHERE job_id=?",
                 (now, job_id),
             )
-            self._event(connection, job_id, "retried", "failed", "queued")
+            self._event(connection, job_id, "retried", row["status"], "queued")
             updated = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._public_row(updated)
 

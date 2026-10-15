@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Film, ListChecks, LoaderCircle, Pause, Play, Plus, RefreshCw, Square, Sparkles } from 'lucide-react';
 import { TaskVideo } from './TaskVideo.jsx';
+import { DouyinRecovery } from './DouyinRecovery.jsx';
 import { api } from './studio-api.js';
 import { Button, Dialog, EmptyState, Heading, Notice } from './ui.jsx';
 import './tasks.css';
@@ -118,6 +119,7 @@ export function CreationTasks() {
     {selected && <Dialog title={detail?.task.title || '创作任务详情'} wide={!!detail?.task.work_id} onClose={close} busy={busy}>
       {detail ? <><div className="creation-detail-header"><span className={`creation-state ${detail.task.status}`}><StateIcon task={detail.task}/>{detail.task.status_label}</span><span className="creation-kind">{detail.task.type_label}</span>{detail.task.ratio && <span className="creation-ratio">{detail.task.ratio}</span>}</div><p className="creation-stage">{detail.task.stage}</p>{!detail.task.work_id&&<Progress task={detail.task}/>}<Notice error message={detail.task.error}/><Notice message={detail.task.notice}/>
         {detail.task.work_id&&<TaskVideo key={detail.task.work_id} workId={detail.task.work_id} initialVersion={detail.task.version_id} onUpdate={()=>setRefresh(v=>v+1)}/>}
+        <DouyinRecovery job={{...detail.task,job_id:detail.task.id}} onJob={()=>setRefresh(v=>v+1)}/>
         <details className="creation-history" open={detail.task.work_id?undefined:true}><summary>制作详情与记录 <small>{detail.events.length} 条</small></summary>{historyContent}</details>
         <div className="creation-detail-actions"><Button href={detail.task.edit_url}>返回制作项目<ArrowRight size={16}/></Button>{detail.task.actions.retry && <Button disabled={busy} onClick={() => act(detail.task, 'retry')}><Play size={16}/>继续原任务</Button>}{detail.task.actions.pause && <Button disabled={busy} onClick={() => act(detail.task, 'pause')}><Pause size={16}/>暂停排队</Button>}{detail.task.actions.resume && <Button disabled={busy} onClick={() => act(detail.task, 'resume')}><Play size={16}/>继续排队</Button>}{detail.task.actions.cancel && <Button disabled={busy} onClick={() => act(detail.task, 'cancel')}><Square size={14}/>取消后续制作</Button>}</div>
       </> : !detailError && <p role="status">正在读取任务详情…</p>}<Notice message={detailError} error/>

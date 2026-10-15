@@ -179,6 +179,47 @@ def test_douyin_resume_searches_selected_title_in_a_fresh_collection(data, tmp_p
     assert calls[0][1] != calls[1][1]
 
 
+def test_selected_video_is_analyzed_once_for_all_scenes_and_can_be_rejected(data, tmp_path, monkeypatch):
+    from backlot.studio_storyboard import Sources
+    s,d,_,_ = data
+    folder = tmp_path / 'render/ai-requests'; folder.mkdir(parents=True)
+    scenes = [{'id':'scene-1','text':'工程款拖欠','label':'欠款','query':'payment'},
+              {'id':'scene-2','text':'现场听众','label':'听众','query':'audience'}]
+    atomic_private(folder.parent/'storyboard.json',{'scenes':scenes,'draft_fingerprint':'original'})
+    path=folder/'approved.mp4'; path.write_bytes(b'authorized-video')
+    calls=[]
+    def call(stage, payload):
+        calls.append(payload)
+        return {'choices':[{'message':{'content':json.dumps({'suitable_scene_ids':['scene-2'],'reason':'画面为演讲听众，可作听众示意，不适合表现工程款拖欠'})}}]}
+    monkeypatch.setattr('backlot.studio_render.media_probe',lambda _: {'duration':5})
+    monkeypatch.setattr('backlot.studio_storyboard.image_preview',lambda *args:'data:image/jpeg;base64,preview')
+    source=Sources(s,d,SimpleNamespace(folder=folder,call=call),None)
+    item={'id':'approved','title':'用户选择的演讲片段'}
+    assert source.review_selected_douyin(scenes[0],path,item) is False
+    assert source.review_selected_douyin(scenes[1],path,item) is True
+    assert len(calls)==1
+    assert len([part for part in calls[0]['messages'][1]['content'] if part['type']=='image_url'])==3
+    record=json.loads((folder.parent/'douyin-material-review.json').read_text())['approved']
+    assert record['suitable_scene_ids']==['scene-2'] and record['reason']
+
+
+def test_material_confirmation_pauses_before_another_discovery_search(data,tmp_path,monkeypatch):
+    from pathlib import Path
+    from backlot.studio_storyboard import Sources
+    s,d,_,_=data
+    folder=tmp_path/'render/ai-requests';folder.mkdir(parents=True)
+    atomic_private(folder/'scene-1-candidates.json',{'items':[{'id':'unapproved','title':'待选择的素材'}]})
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]/'copy_skill/copy_skill-main/src'))
+    class Source:
+        def search(self,*args,**kwargs):raise AssertionError('Do not search again while waiting for the user')
+    monkeypatch.setattr('douyin_intelligence.sources.douyin.DouyinSource',Source)
+    monkeypatch.setattr('backlot.studio_storyboard.configuration',lambda _: {'douyin_commercial_authorized':True,'douyin_login_confirmed':True})
+    monkeypatch.setattr('backlot.studio_storyboard.crawler_config',lambda *_:{})
+    source=Sources(s,d,SimpleNamespace(folder=folder),None)
+    with pytest.raises(WorkError) as error:source.douyin({'id':'scene-1','query':'audience'})
+    assert error.value.code=='human_required'
+
+
 def test_image_cap_and_explicit_opt_in():
     bad=lambda _: (_ for _ in ()).throw(AssertionError('unwanted generation'))
     sources=SimpleNamespace(douyin=lambda _:None,pexels=lambda _:None,illustration=bad)

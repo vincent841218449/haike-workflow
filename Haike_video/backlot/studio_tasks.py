@@ -1,5 +1,6 @@
 """Public creation history projected from the existing durable production queue."""
 from urllib.parse import quote
+import json
 
 from math import gcd
 from backlot.work_catalog import WorkCatalog, WorkError
@@ -19,11 +20,12 @@ def task_view(studio, job, scheduled_paths=()):
     category, label = TYPES.get(job["kind"], ("other", "视频制作"))
     route = "/graphic" if category == "graphic" else "/avatar" if category in {"avatar", "motion"} else "/tasks"
     edit_url = route + "?draft=" + quote(job["project_id"], safe="") + ("&mode=motion" if category == "motion" else "") if category != "other" else route
-    progress = job.get("progress") or {}
+    progress = job.get("progress") or json.loads(job.get('progress_json') or '{}')
     observed = progress.get("basis") == "steps" and progress.get("total", 0) > 0
     complete = job["status"] == "completed"
     percent = 100 if complete else round(progress["ratio"] * 100) if observed else None
     error = job.get("error") or {}
+    material_confirmation = job['kind'] == 'studio_avatar' and job['status'] in {'failed','awaiting_human'} and '抖音' in (job.get('stage') or '')
     result = job.get("result") or {}
     work_id = result.get("work_id")
     title = job.get("project_title") or job.get("title") or label
@@ -59,7 +61,7 @@ def task_view(studio, job, scheduled_paths=()):
     return {
         "id": job["job_id"], "project_id": job["project_id"], "title": title, "excerpt": excerpt,
         "type": category, "type_label": label, "status": job["status"],
-        "status_label": "已排期" if scheduled else "已完成 · 已审核" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
+        "status_label": "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已审核" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
         "stage": job.get("stage") or LABELS.get(job["status"], "等待处理"),
@@ -72,7 +74,7 @@ def task_view(studio, job, scheduled_paths=()):
         "error": str(error.get("message") or "") if isinstance(error, dict) else str(error),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
-        "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")),
+        "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation,
                     "pause": job["status"] == "queued", "resume": job["status"] == "paused",
                     "cancel": job["status"] in {"queued", "running", "paused", "awaiting_human"} and not job.get("cancel_requested")},
     }

@@ -367,6 +367,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if on_progress: on_progress("成片核验完成，正在登记作品", steps_done + 1, steps_total)
         return {"status": "completed", "stage": "数字人口播已合成，等待观看审核", "result": {"output_path": str(output), "qa_status": "pending", "provider_jobs": report["provider_jobs"]}}
     except WorkError as exc:
+        if exc.code == "human_required":
+            return {"status": "awaiting_human", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMaterialRightsRequired"}, "retryable": False, "safe_resume_point": "studio_avatar_material_rights"}
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioAvatar", "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}
     except Exception:
         return {"status": "failed", "stage": "制作中断，原调用与产物已保留，可恢复同一任务", "error": {"message": "请检查API连接与本地渲染依赖，再恢复此任务", "type": "StudioAvatar"}, "retryable": True, "safe_resume_point": "studio_avatar"}
