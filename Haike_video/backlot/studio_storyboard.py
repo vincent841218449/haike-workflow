@@ -119,7 +119,7 @@ class TrialRelay:
         value = json.loads(recovery.read_text())
         plan = json.loads((self.folder.parent / 'storyboard.json').read_text())
         extra = value.get('extra_requests')
-        if type(extra) is not int or not 1 <= extra <= 6 or not value.get('reason') or not value.get('draft_fingerprint') or value['draft_fingerprint'] != plan.get('draft_fingerprint'):
+        if type(extra) is not int or not 1 <= extra <= 12 or not value.get('reason') or not value.get('draft_fingerprint') or value['draft_fingerprint'] != plan.get('draft_fingerprint'):
             raise WorkError('本地AI恢复额度与原任务不符，请核对恢复记录')
         return 12 + extra
 
@@ -455,16 +455,26 @@ class Sources:
         from backlot.studio_avatar import download_result
         cached = self.cached_material(scene, 'pexels')
         if cached: return cached
-        result = self.paid("assets-" + scene["id"], "haike/assets", {"query": scene["query"].split("|")[-1].strip()[:100], "media": "videos", "per_page": 3})
-        for item in result.get("items", []):
-            files = [f for f in item.get("video_files", []) if f.get("file_type") == "video/mp4" and 0 < f.get("width", 0) <= 1920 and f.get("link")]
-            if not files: continue
-            f = max(files, key=lambda f: f.get("width", 0)); key=hashlib.sha256(str(item.get('id')).encode()).hexdigest()[:20]
-            path = self.relay.folder / ('pexels-' + key + '.mp4')
-            if not path.exists(): download_result(f["link"], path)
-            material={'id':str(item.get('id')),'title':scene['label'],'source_url':item.get('url'),'author':(item.get('user') or {}).get('name')}
-            if not self.review_material(scene,path,material,'pexels'): continue
-            return self.own(path, "video", {"source": "pexels", "source_url": item.get("url"), "author": (item.get("user") or {}).get("name"), "license": "https://www.pexels.com/license/", "selection": "AI核验实际画面后采用，情境示意"})
+        query = scene['query'].split('|')[-1].strip()[:100]
+        queries = [query]
+        # "Store" dominates stock search and returns occupied supermarkets.
+        # Start with the explicit vacant-space goal; retain the frozen query/key.
+        if re.search(r'\b(vacant|empty)\b',query,re.I) and re.search(r'\b(storefront|retail|shop|store)\b',query,re.I):
+            queries.insert(0,'empty room interior')
+        original_query = query
+        for query in queries:
+            stage = 'assets-' + scene['id'] + ('-search-' + hashlib.sha256(query.encode()).hexdigest()[:12] if query != original_query else '')
+            result = self.paid(stage, "haike/assets", {"query": query, "media": "videos", "per_page": 3})
+            for item in result.get("items", []):
+                files = [f for f in item.get("video_files", []) if f.get("file_type") == "video/mp4" and 0 < f.get("width", 0) <= 1920 and f.get("link") and (not f.get('size') or f['size'] <= 100*1024*1024)]
+                if not files: continue
+                f = min(files, key=lambda f: (abs(min(f['width'],f.get('height') or f['width'])-720),f['width']))
+                key=hashlib.sha256(str(item.get('id')).encode()).hexdigest()[:20]
+                path = self.relay.folder / ('pexels-' + key + '.mp4')
+                if not path.exists(): download_result(f["link"], path)
+                material={'id':str(item.get('id')),'title':scene['label'],'source_url':item.get('url'),'author':(item.get('user') or {}).get('name')}
+                if not self.review_material(scene,path,material,'pexels'): continue
+                return self.own(path, "video", {"source": "pexels", "source_url": item.get("url"), "author": (item.get("user") or {}).get("name"), "license": "https://www.pexels.com/license/", "selection": "AI核验实际画面后采用，情境示意"})
         return None
 
     def review(self, scene, path, identity):

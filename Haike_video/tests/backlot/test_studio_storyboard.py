@@ -294,7 +294,7 @@ def test_candidate_metadata_does_not_consume_ai_request_quota(data,tmp_path):
     assert relay.call('one-actual-call',{'messages':[]})['choices']
 
 
-@pytest.mark.parametrize('extra',[0,7,True,1.5])
+@pytest.mark.parametrize('extra',[0,13,True,1.5])
 def test_ai_recovery_allowance_is_bounded_and_bound_to_original_plan(data,tmp_path,extra):
     s,_,_,_=data;relay=TrialRelay(s,tmp_path/'render/requests')
     atomic_private(relay.folder.parent/'storyboard.json',{'draft_fingerprint':'original'})
@@ -332,6 +332,43 @@ def test_cached_visual_review_reuses_only_matching_plan_media_and_scene(data,tmp
     assert source.cached_material({'id':'scene-1'},'pexels') is None
     path.write_bytes(b'changed')
     assert source.cached_material({'id':'scene-2'},'pexels') is None
+
+
+def test_empty_retail_search_preserves_original_request_and_uses_distinct_fallback_intent(data,tmp_path,monkeypatch):
+    from backlot.studio_storyboard import Sources
+    s,d,_,_=data;folder=tmp_path/'render/requests';folder.mkdir(parents=True)
+    calls=[]
+    def paid(stage,model,inputs):
+        calls.append((stage,inputs['query']))
+        return {'items':[{'id':str(len(calls)),'video_files':[{'file_type':'video/mp4','width':640,'link':'https://test.example/video'}]}]}
+    source=Sources(s,d,SimpleNamespace(folder=folder),paid)
+    monkeypatch.setattr('backlot.studio_avatar.download_result',lambda url,path:path.write_bytes(b'video'))
+    monkeypatch.setattr(source,'review_material',lambda scene,path,item,kind:item['id']=='2')
+    monkeypatch.setattr(source,'own',lambda path,kind,provenance:{'id':'accepted'})
+    assert source.pexels({'id':'scene-8','query':'空铺 | vacant neighborhood retail unit','label':'空铺'})['id']=='accepted'
+    assert calls[0][0].startswith('assets-scene-8-search-') and calls[0][1]=='empty room interior'
+    assert calls[1]==('assets-scene-8','vacant neighborhood retail unit')
+
+
+def test_stock_media_prefers_720p_over_large_1080p_download(data,tmp_path,monkeypatch):
+    from backlot.studio_storyboard import Sources
+    s,d,_,_=data;folder=tmp_path/'render/requests';folder.mkdir(parents=True)
+    files=[{'file_type':'video/mp4','width':1920,'height':1080,'link':'https://test.example/large'},
+           {'file_type':'video/mp4','width':640,'height':360,'link':'https://test.example/small'},
+           {'file_type':'video/mp4','width':1280,'height':720,'link':'https://test.example/720p'}]
+    source=Sources(s,d,SimpleNamespace(folder=folder),lambda *_:{'items':[{'id':'one','video_files':files}]})
+    downloads=[]
+    def download(url,path):downloads.append(url);path.write_bytes(b'video')
+    monkeypatch.setattr('backlot.studio_avatar.download_result',download)
+    monkeypatch.setattr(source,'review_material',lambda *args:True)
+    monkeypatch.setattr(source,'own',lambda *args:{'id':'accepted'})
+    source.pexels({'id':'scene-1','query':'empty shop','label':'空店'})
+    assert downloads==['https://test.example/720p']
+    files[2]['size']=116_000_000
+    files[0]['size']=201_000_000
+    for f in folder.glob('*.mp4'):f.unlink()
+    source.pexels({'id':'scene-1','query':'empty shop','label':'空店'})
+    assert downloads[-1]=='https://test.example/small'
 
 
 @pytest.mark.parametrize('change',[{'image_model':'gpt-image-1.5'}, {'api_key':'another-private-value'}, {'base_url':'https://another.example/v1'}])
