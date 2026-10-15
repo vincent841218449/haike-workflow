@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080">
+<defs><radialGradient id="blue"><stop stop-color="#fff"/><stop offset=".2" stop-color="#a9dfff"/><stop offset=".55" stop-color="#3077a5"/><stop offset="1" stop-color="#091525"/></radialGradient><radialGradient id="gold"><stop stop-color="#fff1b9"/><stop offset=".25" stop-color="#ffd36c"/><stop offset=".6" stop-color="#88621e"/><stop offset="1" stop-color="#141007"/></radialGradient><linearGradient id="glass"><stop stop-color="#b0d7ff" stop-opacity=".15"/><stop offset="1" stop-color="#efd381" stop-opacity=".1"/></linearGradient></defs>
+<rect width="1920" height="1080" fill="#05070b"/>
+<g font-family="PingFang SC,Microsoft YaHei,sans-serif"><text x="100" y="110" fill="#ff6a18" font-size="44" font-weight="700">HAIKE 海客科技</text><text x="100" y="180" fill="#8e9aa9" font-size="26" letter-spacing="5">海客创作 · 01 / 08</text><text x="100" y="286" fill="#f5f5f0" font-size="72" font-weight="700">你的内容，清晰表达</text>
+<circle cx="1700" cy="180" r="110" fill="#142132" stroke="#7da7c6" stroke-width="3"/><text x="1700" y="192" fill="#a5b9cb" font-size="32" text-anchor="middle">人物</text>
+<g fill="none" stroke="#75bcff"><ellipse cx="1550" cy="510" rx="127" ry="110" opacity=".2"/><circle cx="1550" cy="510" r="99" opacity=".55"/><circle cx="1550" cy="510" r="72" opacity=".7"/></g><circle cx="1550" cy="510" r="55" fill="url(#blue)"/>
+<g fill="none" stroke="#e9b649"><ellipse cx="1550" cy="748" rx="115" ry="99" opacity=".2"/><circle cx="1550" cy="748" r="90" opacity=".55"/><circle cx="1550" cy="748" r="64" opacity=".7"/></g><circle cx="1550" cy="748" r="50" fill="url(#gold)"/>
+<circle cx="115" cy="348" r="5" fill="#e9b649"/><text x="144" y="360" fill="#e0b86f" font-size="40">本期内容</text><path d="M400 347H1300" stroke="#b08a3c" opacity=".3"/>
+<rect x="110" y="400" width="1190" height="420" rx="26" fill="url(#glass)" stroke="#748aa6" stroke-opacity=".55"/><rect x="126" y="416" width="1158" height="388" rx="14" fill="#0d1420"/>
+<path d="M450 675l120-135 100 100 100-120 130 155" fill="#23405d"/><circle cx="850" cy="500" r="27" fill="#8c7743"/><text x="705" y="756" fill="#8a9baf" font-size="31" text-anchor="middle">自动安排你上传的图片与视频素材</text>
+<path d="M110 846H1300" stroke="#fff" stroke-opacity=".12" stroke-width="3"/><path d="M110 846H250" stroke="#8cbdff" stroke-width="3"/>
+<text x="960" y="960" fill="#f5f5f0" font-size="45" text-anchor="middle">这里显示同步口播字幕</text><text x="960" y="1038" fill="#718094" font-size="23" text-anchor="middle">仪器台演示 · 自动口播版 · 布局示意</text></g></svg>

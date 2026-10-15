@@ -151,7 +151,8 @@ def frozen_request(studio, draft, quote_id, maximum):
     if type(maximum) is not int or not 1 <= maximum <= 1000000000: raise WorkError("请填写有效费用上限，最高1,000元")
     if maximum < public_quote(data)["known_max_micros"]: raise WorkError("费用上限低于已读取报价，未提交任务")
     # The original gateway quote expires server-side. Do not silently replace it before charging.
-    return {**data, "workflow_version": 2, "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
+    from backlot.studio_presentation import selected
+    return {**data, "workflow_version": 3, "presentation":selected(draft), "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
 
 
 def public_media_address(host, port):
@@ -303,6 +304,10 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if advance: steps_done += 1
         if on_progress: on_progress(stage, steps_done, steps_total)
     def paid(stage, model, inputs):
+        if request.get('local_recomposition'):
+            previous=state['stages'].get(stage,{}).get('job',{})
+            if previous.get('status')=='succeeded': return previous.get('result') or {}
+            raise WorkError('本次只允许复用原产物重新排版；已有阶段结果缺失，未提交任何新收费调用', 'local_artifact_missing')
         if stage not in state["stages"]:
             q = request["quotes"].get(stage) or sdk.quote(model, inputs, request["draft"]["id"])
             committed = request.get('inherited_charge_micros', 0) + sum(int(s["quote"]["max_charge_micros"]) for s in state["stages"].values())
@@ -344,6 +349,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     try:
         publish_progress("准备配音与原始音轨")
         p = state["prepared"]; draft = request["draft"]
+        from backlot.studio_presentation import selected, verify
+        if request.get('presentation'): verify(draft,request['presentation'])
         asr = request.get("asr", {"provider": "gateway"})
         if asr["provider"] == "local-whisper":
             from backlot.studio_asr import configuration, identity
@@ -389,39 +396,45 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             download_result(result["video_url"], video)
         publish_progress("数字人画面已就绪", True)
         from backlot.studio_composition import compose_avatar
+        actual_presentation=selected(draft)
+        if composition['mode'] == 'instrument':
+            from backlot.studio_composition import compose_instrument
+            publish_progress('按仪器台演示合成蓝金光球、玻璃面板与本期素材')
+            actual_presentation=composition['presentation']
+            verify(draft,actual_presentation)
+            output=compose_instrument(output_dir,draft,video,Path(p['audio_path']),p['duration'],cues if draft['input'].get('subtitles',True) else [],storyboard,actual_presentation)
         if composition["mode"] == "motion":
             from backlot.studio_storyboard import compose_motion
             publish_progress("渲染动效画面、字幕与配乐")
             try:
                 result = compose_motion(studio, draft, output_dir, video, Path(p["audio_path"]), clock_cues, storyboard, caption_cues=cues if asr["provider"] == "local-whisper" else None)
             except WorkError as exc:
-                if draft["input"].get("templatePolicy", "auto") == "strict": raise
-                result = {"status": "failed", "stage": str(exc)}
+                raise WorkError('所选模板合成未完成，声音与数字人已保留，不会改用其他模板。'+str(exc)[:300], 'template_incompatible') from exc
             if result.get("status") == "completed":
+                if result.get('result',{}).get('presentation'): verify(draft,result['result']['presentation'])
+                result.setdefault('result', {}).update(composition_mode='motion',presentation={**actual_presentation,'variant':'original','variant_name':'原版镜头组','adapter':'adu-motion-video'},requested_presentation=selected(draft))
+                verify(draft,result['result']['presentation'])
                 publish_progress("动效画面已合成", True)
                 publish_progress("成片核验完成，正在登记作品", True)
-            if result.get("status") == "completed":
-                result.setdefault('result', {}).update(composition_mode='motion')
                 return result
-            if draft["input"].get("templatePolicy", "auto") == "strict": return result
-            from backlot.studio_preflight import basic_draft
-            composition = {**composition, "mode": "basic", "draft": basic_draft(draft), "notice": "动效合成未通过，已复用现有人物和声音继续制作基础口播。"}
-            atomic_private(output_dir / "composition-preflight.json", composition)
-            publish_progress(composition["notice"])
-        publish_progress("合成人物、画面、字幕与音轨")
+            raise WorkError('所选模板渲染尚未通过，原产物已保留，不会改用基础口播', 'template_incompatible')
         effective = composition["draft"]
-        output = compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues if draft["input"].get("subtitles", True) else [], storyboard=storyboard) if storyboard else compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues)
+        if composition['mode']=='basic':
+            publish_progress("合成人物、画面、字幕与音轨")
+            output = compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues if draft["input"].get("subtitles", True) else [], storyboard=storyboard) if storyboard else compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues)
+        verify(draft,actual_presentation)
         publish_progress("口播画面已合成", True)
-        report = {"template_id": effective["template_id"], "requested_template_id": draft["template_id"], "adapter_version": 1, "sources": [{"path": str(video), "sha256": sha(video)}, {"path": p["audio_path"], "sha256": sha(p["audio_path"])}],
+        report = {"template_id": actual_presentation['id'], "requested_template_id": selected(draft)['id'], 'base_adapter_template':effective['template_id'], "adapter_version": 1, "sources": [{"path": str(video), "sha256": sha(video)}, {"path": p["audio_path"], "sha256": sha(p["audio_path"])}],
+                  "presentation":actual_presentation, "requested_presentation":selected(draft),
                   "caption_timing": "Whisper word-level" if cues and asr["provider"] == "local-whisper" else "ASR sentence-level" if cues else "off", "provider_jobs": [s["job"]["id"] for s in state["stages"].values()], "human_review": "pending"}
         atomic_private(output_dir / "qa.json", report)
         # This callback runs only after composition's media checks and the QA receipt exist.
         if on_progress: on_progress("成片核验完成，正在登记作品", steps_done + 1, steps_total)
-        return {"status": "completed", "stage": "视频已制作完成，可直接播放和下载", "result": {"output_path": str(output), "qa_status": "pending", "notice": composition["notice"], "composition_mode": "basic", "effective_template_id": effective['template_id'], "provider_jobs": report["provider_jobs"]}}
+        return {"status": "completed", "stage": "视频已制作完成，可直接播放和下载", "result": {"output_path": str(output), "qa_status": "pending", "notice": composition["notice"], "composition_mode": 'motion' if composition['mode']=='instrument' else 'basic', "effective_template_id": actual_presentation['id'], "presentation":actual_presentation,"requested_presentation":selected(draft), "provider_jobs": report["provider_jobs"]}}
     except WorkError as exc:
         if exc.code == "provider_pending":
             return {"status": "ambiguous", "stage": str(exc), "error": {"code": "provider_pending", "message": str(exc), "type": "StudioProviderPending"}, "safe_resume_point": "studio_avatar_provider"}
-        if exc.code in {"audio_script_mismatch", "template_incompatible", "budget_exceeded"}:
+        if exc.code in {"audio_script_mismatch", "template_incompatible", "template_mismatch", "budget_exceeded", "local_artifact_missing"}:
             return {"status": "awaiting_human", "stage": str(exc), "error": {"code": exc.code, "message": str(exc), "type": "StudioInput"}, "safe_resume_point": "studio_avatar_input"}
         if exc.code == "human_required":
             return {"status": "awaiting_human", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMaterialRightsRequired"}, "retryable": False, "safe_resume_point": "studio_avatar_material_rights"}

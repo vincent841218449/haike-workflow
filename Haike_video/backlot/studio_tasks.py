@@ -34,6 +34,8 @@ def task_view(studio, job, scheduled_paths=()):
     input_issue = error.get('code') in {'audio_script_mismatch', 'template_incompatible', 'budget_exceeded'}
     if input_issue:
         edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if error['code'] == 'audio_script_mismatch' else '#more-fields')
+    elif job['kind']=='studio_avatar':
+        edit_url += '&resume_task=' + quote(job['job_id'],safe='')
     material_confirmation = job['kind'] == 'studio_avatar' and job['status'] in {'failed','awaiting_human'} and '抖音' in (job.get('stage') or '')
     result = job.get("result") or {}
     work_id = result.get("work_id")
@@ -53,6 +55,9 @@ def task_view(studio, job, scheduled_paths=()):
         if result.get('composition_mode') == 'basic' and draft.get('input', {}).get('motion'):
             label = '数字人口播'
             template_name = next((t['name'] for t in TEMPLATES if t['id'] == result.get('effective_template_id')), '基础圆框口播')
+        if result.get('presentation'):
+            actual=result['presentation']
+            template_name=actual['name']+(' · '+actual['variant_name'] if actual.get('variant_name') else '')
     except WorkError:
         pass
     if work_id:
@@ -75,6 +80,8 @@ def task_view(studio, job, scheduled_paths=()):
         "type": category, "type_label": label, "status": job["status"],
         "status_label": "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
+        "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
+        "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
         "stage": "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
         "progress": {"percent": percent, "completed": progress.get("completed", 0) if observed else int(complete),
@@ -101,6 +108,8 @@ def creation_view(studio, queue, job, scheduled):
     latest = members[-1]
     value.update(creation_id=members[0]['creation_id'], attempt_count=len(members),
                  current_task_id=latest['job_id'], is_current=latest['job_id'] == job['job_id'])
+    if latest['job_id'] != job['job_id']:
+        value['edit_url']=task_view(studio,latest,scheduled)['edit_url']
     success = next((m for m in reversed(members) if m['status'] == 'completed' and m.get('result', {}).get('work_id')), None)
     value['latest_success_id'] = success['job_id'] if success else None
     pending = False

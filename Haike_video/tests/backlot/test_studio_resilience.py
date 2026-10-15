@@ -53,20 +53,46 @@ def test_mismatched_sample_audio_stops_before_avatar_spending(rig):
 
 
 @pytest.mark.parametrize('strict', [False, True])
-def test_invalid_motion_is_checked_before_avatar_and_falls_back_without_review(rig, monkeypatch, strict):
+def test_incompatible_native_motion_stays_selected_and_stops_before_avatar(rig, monkeypatch, strict):
     _, project, request, gateway, events = rig
-    request['draft']['input'].update(motion={'style': '04-A', 'layout': 'landscape'}, templatePolicy='strict' if strict else 'auto')
+    request['draft']['input'].update(motion={'style': '03-A', 'layout': 'landscape'}, templatePolicy='strict' if strict else 'auto')
     def invalid(*args):
         events.append(('preflight',)); raise WorkError('AI动效分镜数量不一致')
     monkeypatch.setattr('backlot.studio_storyboard.select_motion', invalid)
     result = run_avatar(project, request, gateway)
-    if strict:
-        assert result['status'] == 'awaiting_human' and result['error']['code'] == 'template_incompatible'
-        assert not any(e[0] == 'confirm' and e[1] == 'haike/avatar' for e in events)
-    else:
-        assert result['status'] == 'completed' and '自动' in result['result']['notice']
-        assert events.index(('preflight',)) < next(i for i,e in enumerate(events) if e[0] == 'confirm' and e[1] == 'haike/avatar')
-        assert ('compose', 'landscape', 'avatar-safe-circle-v1') in events
+    assert result['status'] == 'awaiting_human' and result['error']['code'] == 'template_incompatible'
+    assert not any(e[0] == 'confirm' and e[1] == 'haike/avatar' for e in events)
+
+
+def test_instrument_story_keeps_selected_style_through_pipeline_without_basic_composer(rig,monkeypatch):
+    _,project,request,gateway,events=rig
+    request['draft']['input'].update(motion={'style':'04-A','layout':'portrait'})
+    story={'status':'ready','duration':3,'scenes':[{'id':'scene-1','start':0,'end':3,'text':request['draft']['text'],'asset':{'id':'source'},'asset_sha256':'frozen'}]}
+    monkeypatch.setattr('backlot.studio_storyboard.produce',lambda *a:story)
+    def compose(folder,*args):
+        events.append(('instrument',args[-1]['id']));output=folder/'motion-preview.mp4';output.write_bytes(b'instrument');return output
+    monkeypatch.setattr('backlot.studio_composition.compose_instrument',compose)
+    result=run_avatar(project,request,gateway)
+    assert result['status']=='completed'
+    assert result['result']['presentation']['id']==result['result']['requested_presentation']['id']=='adu:04-A:portrait'
+    assert ('instrument','adu:04-A:portrait') in events and not any(e[0]=='compose' for e in events)
+
+
+def test_local_recomposition_cannot_start_missing_paid_stage(rig):
+    _,project,request,gateway,events=rig
+    request['local_recomposition']=True
+    result=run_avatar(project,request,gateway)
+    assert result['status']=='awaiting_human' and result['error']['code']=='local_artifact_missing'
+    assert not events
+
+
+def test_wrong_style_from_renderer_is_not_registered_as_completed(rig,monkeypatch):
+    _,project,request,gateway,_=rig
+    request['draft']['input']['motion']={'style':'04-A','layout':'portrait'}
+    monkeypatch.setattr('backlot.studio_preflight.prepare',lambda *a:{'mode':'motion','draft':request['draft'],'notice':''})
+    monkeypatch.setattr('backlot.studio_storyboard.compose_motion',lambda *a,**k:{'status':'completed','result':{'output_path':'wrong.mp4','presentation':{'id':'adu:03-A:portrait'}}})
+    result=run_avatar(project,request,gateway)
+    assert result['status']=='awaiting_human' and result['error']['code']=='template_mismatch'
 
 
 def test_unknown_provider_is_automatic_wait_and_reuses_one_intent(rig):

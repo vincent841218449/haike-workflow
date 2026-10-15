@@ -1,4 +1,4 @@
-"""Local composition checks and the frozen automatic fallback policy."""
+"""Local checks preserve the selected visual style, including automatic variants."""
 from copy import deepcopy
 import hashlib
 import json
@@ -29,6 +29,18 @@ def prepare(studio, draft, folder, audio, cues, storyboard, caption_cues):
     if path.exists():
         saved = json.loads(path.read_text())
         if saved.get("fingerprint") != identity: raise WorkError("制作检查输入已改变，原结果保留")
+        if saved.get('mode') == 'basic':
+            raise WorkError('旧检查曾将所选模板替换为基础口播；请保留原素材重新安排所选模板', 'template_incompatible')
+        if saved.get('mode') == 'instrument':
+            from backlot.studio_presentation import instrument_plan
+            if instrument_plan(draft,storyboard) != saved.get('presentation'):
+                raise WorkError('所选仪器台组件或分镜已更新，需重新检查；原声音与素材保留', 'template_incompatible')
+        return saved
+    from backlot.studio_presentation import instrument_plan
+    if draft['input']['motion']['style'] == '04-A' and draft['input'].get('templatePolicy','auto') != 'strict':
+        saved={'mode':'instrument', 'draft':draft, 'notice':'已按仪器台演示的自动口播版编排，保留所选风格和全部原文。',
+               'presentation':instrument_plan(draft,storyboard), 'fingerprint':identity}
+        atomic_private(path,saved)
         return saved
     try:
         from backlot.studio_storyboard import select_motion, motion_draft
@@ -50,10 +62,6 @@ def prepare(studio, draft, folder, audio, cues, storyboard, caption_cues):
         if not report["report"]["ready"]: raise WorkError("模板动作、素材或时长没有形成完整编排")
         saved = {"mode": "motion", "draft": draft, "notice": "", "report": report, "fingerprint": identity}
     except (WorkError, subprocess.TimeoutExpired) as exc:
-        if draft["input"].get("templatePolicy", "auto") == "strict":
-            raise WorkError("所选模板与当前内容不兼容；请选择自动兼容或更换模板，声音和素材已保留", "template_incompatible") from exc
-        saved = {"mode": "basic", "draft": basic_draft(draft), "fingerprint": identity,
-                 "notice": "所选动效未通过完整编排检查，已自动使用基础圆框口播，无需重新配音或生成数字人。",
-                 "reason": str(exc)[:1200]}
+        raise WorkError('所选模板暂不能完整表达本期内容；已保留模板、声音与素材，不会自动换风格。原因：'+str(exc)[:300], 'template_incompatible') from exc
     atomic_private(path, saved)
     return saved

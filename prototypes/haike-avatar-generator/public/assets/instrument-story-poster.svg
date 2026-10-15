@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920">
+<defs><radialGradient id="blue"><stop stop-color="#fff"/><stop offset=".2" stop-color="#a9dfff"/><stop offset=".55" stop-color="#3077a5"/><stop offset="1" stop-color="#091525"/></radialGradient><radialGradient id="gold"><stop stop-color="#fff1b9"/><stop offset=".25" stop-color="#ffd36c"/><stop offset=".6" stop-color="#88621e"/><stop offset="1" stop-color="#141007"/></radialGradient><linearGradient id="glass"><stop stop-color="#b0d7ff" stop-opacity=".15"/><stop offset="1" stop-color="#efd381" stop-opacity=".1"/></linearGradient><pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse"><path d="M80 0H0V80" fill="none" stroke="#a9caff" stroke-opacity=".05"/></pattern></defs>
+<rect width="1080" height="1920" fill="#05070b"/><rect width="1080" height="1920" fill="url(#grid)"/>
+<g font-family="PingFang SC,Microsoft YaHei,sans-serif"><text x="86" y="138" fill="#ff6a18" font-size="44" font-weight="700">HAIKE 海客科技</text><text x="86" y="208" fill="#8e9aa9" font-size="26" letter-spacing="5">海客创作 · 01 / 08</text><text x="86" y="303" fill="#f5f5f0" font-size="64" font-weight="700">你的内容，清晰表达</text>
+<circle cx="902" cy="230" r="86" fill="#142132" stroke="#7da7c6" stroke-width="3"/><text x="902" y="242" fill="#a5b9cb" font-size="29" text-anchor="middle">人物</text>
+<g fill="none" stroke="#75bcff"><ellipse cx="310" cy="585" rx="154" ry="136" opacity=".2"/><circle cx="310" cy="585" r="120" opacity=".55"/><circle cx="310" cy="585" r="85" opacity=".7"/></g><circle cx="310" cy="585" r="68" fill="url(#blue)"/>
+<g fill="none" stroke="#e9b649"><ellipse cx="765" cy="585" rx="140" ry="120" opacity=".2"/><circle cx="765" cy="585" r="108" opacity=".55"/><circle cx="765" cy="585" r="78" opacity=".7"/></g><circle cx="765" cy="585" r="60" fill="url(#gold)"/>
+<circle cx="92" cy="781" r="5" fill="#e9b649"/><text x="120" y="793" fill="#e0b86f" font-size="38">本期内容</text><path d="M355 780H994" stroke="#b08a3c" opacity=".3"/>
+<rect x="86" y="840" width="908" height="550" rx="26" fill="url(#glass)" stroke="#748aa6" stroke-opacity=".55"/>
+<rect x="103" y="857" width="874" height="516" rx="14" fill="#0d1420"/>
+<path d="M300 1200l130-150 118 110 102-136 155 176" fill="#23405d"/><circle cx="670" cy="1000" r="37" fill="#8c7743"/>
+<text x="540" y="1300" fill="#8a9baf" font-size="31" text-anchor="middle">自动安排你上传的图片与视频素材</text>
+<path d="M86 1424H994" stroke="#fff" stroke-opacity=".12" stroke-width="3"/><path d="M86 1424H200" stroke="#8cbdff" stroke-width="3"/>
+<text x="540" y="1550" fill="#f5f5f0" font-size="45" text-anchor="middle">这里显示同步口播字幕</text>
+<text x="540" y="1805" fill="#718094" font-size="25" text-anchor="middle">仪器台演示 · 自动口播版 · 布局示意</text></g></svg>

@@ -269,6 +269,7 @@ def avatar_job(draft_id: str, request: Request):
     if latest:
         from backlot.studio_tasks import task_view
         private = queue.get(latest['job_id'], include_private=True)
+        latest['max_charge_micros'] = private.get('frozen_request',{}).get('max_charge_micros')
         frozen = (private.get('frozen_request') or {}).get('draft') or {}
         if task_view(studio(request), private).get('error_code') == 'audio_script_mismatch' and (frozen.get('input', {}).get('audio') or {}).get('id'):
             latest['input_issue'] = {'code':'audio_script_mismatch', 'audio_id':frozen['input']['audio']['id'], 'text':frozen['text']}

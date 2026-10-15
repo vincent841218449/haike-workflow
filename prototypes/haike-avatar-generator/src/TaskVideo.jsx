@@ -4,7 +4,7 @@ import {api} from './studio-api.js';
 import {Button, Notice} from './ui.jsx';
 
 // Completed versions and their review gates live inside creation tasks.
-export function TaskVideo({workId, initialVersion, onUpdate}) {
+export function TaskVideo({workId, initialVersion, onUpdate, onVersionChange}) {
   const [work,setWork]=useState(null), [version,setVersion]=useState('');
   const [error,setError]=useState(''), [message,setMessage]=useState(''), [busy,setBusy]=useState(false);
   const [fields,setFields]=useState({});
@@ -41,7 +41,7 @@ export function TaskVideo({workId, initialVersion, onUpdate}) {
   return <section className="task-video" aria-label="成片播放与下载">
     <Notice message={error} error/><Notice message={message}/>
     {!work?!error&&<p role="status" className="helper">正在加载成片…</p>:<>
-      <div className="task-video-toolbar"><label>观看版本<select aria-label="观看版本" value={version} disabled={busy} onChange={e=>{setVersion(e.target.value);setMessage('');}}>{work.versions.map((v,i)=><option key={v.version_id} value={v.version_id}>版本 {i+1}{v.version_id===work.final_version_id?' · 已确认':i===work.versions.length-1?' · 最新版本':''}</option>)}</select></label><span>{media?.width} × {media?.height}{media?.duration?` · ${Number(media.duration).toFixed(1)}秒`:''}</span></div>
+      <div className="task-video-toolbar"><label>观看版本<select aria-label="观看版本" value={version} disabled={busy} onChange={e=>{setVersion(e.target.value);setMessage('');onVersionChange?.(e.target.value);}}>{work.versions.map((v,i)=><option key={v.version_id} value={v.version_id}>版本 {i+1}{v.version_id===work.final_version_id?' · 已确认':i===work.versions.length-1?' · 最新版本':''}</option>)}</select></label><span>{media?.width} × {media?.height}{media?.duration?` · ${Number(media.duration).toFixed(1)}秒`:''}</span></div>
       <video key={version} controls preload="metadata" className="sample-video task-video-player" src={mediaUrl}/>
       <p className="helper">视频可以直接播放、下载。需要发布时，再选择用于发布的版本。</p>
       <div className="task-video-actions"><Button href={mediaUrl} download={`${work.title}.mp4`}><Download size={16}/>下载视频</Button>{approved?<span className="task-reviewed"><CheckCircle2 size={17}/>已选为发布版本</span>:<Button loading={busy} disabled={!version} onClick={confirm}>使用此版本准备发布</Button>}<Button href={`/tasks?work=${encodeURIComponent(workId)}`} variant="text" className="task-video-permalink">成片链接<ArrowRight size={14}/></Button></div>

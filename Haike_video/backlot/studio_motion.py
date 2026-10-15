@@ -95,6 +95,10 @@ def library(layout="portrait"):
                            "demo": "/api/studio/motion/media/" + demo if demo else None,
                            "preview_basis": item.get("previewBasis", "上游风格示例，不能作为本期人物或证据素材"),
                            "requirements": item.get("requires", []), "groups": group})
+            if item['id']=='04-A':
+                styles[-1].update(automatic_variant='narrative-v1', automatic_name='仪器台演示 · 自动口播版',
+                    automatic_preview='/ui/avatar-generator/assets/'+('instrument-story-landscape.svg' if layout=='landscape' else 'instrument-story-poster.svg'),
+                    automatic_description='保留黑色台面、蓝金光球与玻璃面板，自动安排原文和素材；原版固定动作保留在专业编辑中。')
     from backlot.studio_motion_quick import groups as quick_groups
     styles.append({"id":"quick", "name":"轻量动画组合", "family":"基础动画", "family_id":"07", "supported":layout=="landscape",
                    "selection":"TPL", "status":"quick-start", "scope":"9个轻量组件；不代表完整工程的全部动作", "preview":"/api/studio/motion/media/assets/tutorials/templates.png",

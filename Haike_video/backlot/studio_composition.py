@@ -10,6 +10,20 @@ from backlot.work_catalog import WorkError
 
 
 def compose_avatar(folder, draft, video, audio, duration, cues, storyboard=None):
+    return _compose(folder,draft,video,audio,duration,cues,storyboard,adapter='studio-avatar-v1',fps=30,stem='avatar')
+
+
+def compose_instrument(folder, draft, video, audio, duration, cues, storyboard, presentation):
+    from backlot.studio_presentation import instrument_plan, verify
+    actual=instrument_plan(draft,storyboard)
+    verify(draft,presentation)
+    if actual != presentation: raise WorkError('仪器台排版组件或分镜已变化，请保留原模板重新检查', 'template_incompatible')
+    output=_compose(folder,draft,video,audio,duration,cues,storyboard,adapter=actual['adapter'],fps=60,stem='motion')
+    atomic_private(Path(folder)/'presentation.json',actual)
+    return output
+
+
+def _compose(folder, draft, video, audio, duration, cues, storyboard, *, adapter, fps, stem):
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     from tools.video.video_compose import VideoCompose
     folder = Path(folder)
@@ -17,13 +31,14 @@ def compose_avatar(folder, draft, video, audio, duration, cues, storyboard=None)
     ffmpeg, _ = resolve_ffmpeg_pair()
     # Keep the original media, align video tail only; speech is never stretched.
     aligned = public / "avatar.mp4"
-    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(video), "-vf", "fps=30,tpad=stop_mode=clone:stop_duration=2", "-t", str(duration), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(aligned)], capture_output=True, timeout=180)
+    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(video), "-vf", f"fps={fps},tpad=stop_mode=clone:stop_duration=2", "-t", str(duration), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(aligned)], capture_output=True, timeout=180)
     if r.returncode: raise WorkError("数字人素材无法解码，请核对原模型任务")
     info = media_probe(video)
     if not info.get("video") or abs(info["duration"] - duration) > 1: raise WorkError("数字人片段与驱动音频时长不一致，保留原素材待核对")
     shutil.copy2(audio, public / "narration.wav")
     shutil.copy2(Path(__file__).parent / "ui/brand/haike-company-logo.png", public / "haike-logo.png")
-    landscape = draft["input"].get("outputLayout") == "landscape"
+    instrument = adapter == 'studio-instrument-v1'
+    landscape = draft['input'].get('motion',{}).get('layout') == 'landscape' if instrument else draft["input"].get("outputLayout") == "landscape"
     props = {"template": draft["template_id"], "outputLayout": "landscape" if landscape else "portrait", "duration": duration, "title": draft["title"], "text": draft["text"], "titleSize": draft["layout"].get("title_size", 60), "accent": draft["layout"].get("accent", "#316dd6"), "captions": cues}
     if storyboard:
         from backlot.studio import Studio
@@ -41,23 +56,24 @@ def compose_avatar(folder, draft, video, audio, duration, cues, storyboard=None)
                            "kind": "video" if source.suffix.lower() in {".mp4", ".mov"} else "image", "offset":offset,"generated": scene["asset"].get("provenance", {}).get("generated", False)})
         props["scenes"] = scenes
     atomic_private(folder / "props.json", props)
-    source = Path(__file__).resolve().parents[1] / "templates/studio-avatar-v1/index.tsx"
+    source = Path(__file__).resolve().parents[1] / 'templates' / adapter / 'index.tsx'
     shutil.copy2(source, folder / "index.tsx")
-    (folder / "art-direction.md").write_text("# 海客数字人口播\n海客科技统一品牌。选择模板决定画幅和人物位置；标题、文案、字号和强调色来自本期输入。模板3保留白卡与章节式讲解视觉，原v001确认基准不变。本适配器版本studio-avatar-v1，复用已有付费人物和声音。句级字幕需人审，素材范围与真实平台遮挡待用户观看。\n", encoding="utf-8")
-    raw = folder / "avatar-render.mp4"
+    direction = '仪器台自动口播版：黑色台面、蓝金光球、玻璃素材面板；保留真实分镜、音轨和全部原文。不是ADu原版固定编舞。' if instrument else '选择模板决定画幅和人物位置；标题、文案、字号和强调色来自本期输入。模板3原v001确认基准不变。'
+    (folder / "art-direction.md").write_text(f"# 海客数字人口播\n海客科技统一品牌。{direction}本适配器版本{adapter}，复用已有付费人物和声音。视频可直接播放；发布授权沿用原合同。\n", encoding="utf-8")
+    raw = folder / f'{stem}-render.mp4'
     edits = {"render_runtime": "remotion", "composition_mode": "atelier", "renderer_family": "bespoke", "bespoke": {"entry": str(folder / "index.tsx"), "composition_id": "HaikeStudioAvatar", "props_path": str(folder / "props.json"), "public_dir": str(public), "crf": 18, "concurrency": 2}, "timeline": {"duration_seconds": duration}}
     result = VideoCompose().execute({"operation": "render", "output_path": str(raw), "edit_decisions": edits, "asset_manifest": {"assets": []}, "script_text": draft["text"]})
     if not result.success: raise WorkError("本地模板合成未通过，请检查渲染依赖；数字人与音频已保留", "unavailable")
-    frames = round(duration * 30)
-    output = folder / "avatar-preview.mp4"
+    frames = round(duration * fps)
+    output = folder / f'{stem}-preview.mp4'
     # Align the AAC container tail to the same final frame clock as the image.
-    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", "apad", "-t", str(frames/30), "-c:a", "aac", str(output)], capture_output=True, timeout=90)
+    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", "apad", "-t", str(frames/fps), "-c:a", "aac", str(output)], capture_output=True, timeout=90)
     if r.returncode: raise WorkError("最终音视频封装失败，渲染文件已保留", "unavailable")
     info = media_probe(output)
-    expected_height = 1080 if landscape else 1440 if draft["template_id"].startswith("avatar-template3") else 1920
+    expected_height = 1080 if landscape else 1440 if not instrument and draft["template_id"].startswith("avatar-template3") else 1920
     expected_width = 1920 if landscape else 1080
     decode = subprocess.run([ffmpeg, "-v", "error", "-i", str(output), "-f", "null", "-"], capture_output=True, timeout=180)
-    if decode.returncode or not info.get("audio") or info["video"]["width"] != expected_width or info["video"]["height"] != expected_height or abs(info["duration"] - frames/30) > .1:
+    if decode.returncode or not info.get("audio") or info["video"]["width"] != expected_width or info["video"]["height"] != expected_height or abs(info["duration"] - frames/fps) > .1:
         raise WorkError("成片技术校验未通过，产物保留待核对", "unavailable")
-    atomic_private(folder / "render-result.json", {"template_adapter": "studio-avatar-v1", "media": info, "native_render": str(raw), "technical_decode": "passed", "human_review": "pending"})
+    atomic_private(folder / "render-result.json", {"template_adapter": adapter, "media": info, "native_render": str(raw), "technical_decode": "passed", "human_review": "pending"})
     return output

@@ -34,3 +34,5 @@
 .creation-latest {background:#edf7f0;color:#357554;flex-wrap:wrap}
 .creation-ratio small {display:block;font-size:11px;white-space:nowrap;color:#8b91a0;margin-top:6px}
 @media(max-width:600px){.creation-attempts li{align-items:flex-start;flex-direction:column}.creation-billing-note{align-items:flex-start}.creation-billing-note svg{flex-shrink:0;margin-top:3px}}
+.creation-template-receipt{display:flex;flex-wrap:wrap;gap:12px 24px;margin:16px 0;padding:14px 16px;border:1px solid #e8e3db;border-radius:12px;color:#858b96;font-size:13px}
+.creation-template-receipt strong{color:#343a43;font-weight:600;margin-left:8px}

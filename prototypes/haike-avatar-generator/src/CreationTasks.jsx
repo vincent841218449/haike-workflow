@@ -125,7 +125,8 @@ export function CreationTasks() {
         {!detail.task.is_current&&<div className="creation-latest"><CheckCircle2 size={18}/><span>你正在查看历史制作记录。</span><Button onClick={()=>setSelected(detail.task.current_task_id)}>查看当前制作<ArrowRight size={15}/></Button></div>}
         {!detail.task.work_id&&detail.task.latest_success_id&&<Button variant="primary" onClick={()=>setSelected(detail.task.latest_success_id)}>播放已完成视频<Play size={15}/></Button>}
         {detail.task.billing_pending&&<div className="creation-billing-note"><Info size={16}/>费用回执核对中；不影响已生成视频的播放、下载，系统不会重复生成。</div>}
-        {detail.task.work_id&&<TaskVideo key={detail.task.work_id} workId={detail.task.work_id} initialVersion={detail.task.version_id} onUpdate={()=>setRefresh(v=>v+1)}/>}
+        {!!detail.task.presentation?.name&&<div className="creation-template-receipt"><span>所选模板 <strong>{detail.task.requested_presentation?.name||detail.task.presentation.name}</strong></span><span>实际采用 <strong>{detail.task.presentation.name}{detail.task.presentation.variant_name?` · ${detail.task.presentation.variant_name}`:''}</strong></span></div>}
+        {detail.task.work_id&&<TaskVideo key={detail.task.work_id} workId={detail.task.work_id} initialVersion={detail.task.version_id} onVersionChange={version=>{const attempt=detail.attempts?.find(a=>a.work_id===detail.task.work_id&&a.version_id===version);if(attempt&&attempt.id!==detail.task.id)setSelected(attempt.id);}} onUpdate={()=>setRefresh(v=>v+1)}/>}
         <AttemptHistory detail={detail} onSelect={setSelected}/>
         <DouyinRecovery job={{...detail.task,job_id:detail.task.id}} onJob={()=>setRefresh(v=>v+1)}/>
         <details className="creation-history" open={detail.task.work_id?undefined:true}><summary>制作详情与记录 <small>{detail.events.length} 条</small></summary>{historyContent}</details>
