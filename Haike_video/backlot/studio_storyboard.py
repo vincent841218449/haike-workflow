@@ -562,6 +562,8 @@ def compose_motion(studio, draft, folder, video, audio, cues, storyboard, captio
         try: body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", r["choices"][0]["message"]["content"].strip()))
         except (ValueError, KeyError, IndexError, TypeError): raise WorkError("AI动效绑定未通过，原结果保留，请进入专业编辑复核") from None
         segments = body.get("segments")
+        if segments == [] and set(body) == {"segments"}:
+            raise WorkError("所选动效模板无法匹配当前文案和分镜时长，请更换模板；原数字人、配音和素材已保留")
         if set(body) != {"segments"} or not isinstance(segments, list) or len(segments) != len(storyboard["scenes"]): raise WorkError("AI动效分镜数量不一致")
         groups = {g["id"]:g for g in style["groups"]}; normalized = []
         for s, scene in zip(segments, storyboard["scenes"]):

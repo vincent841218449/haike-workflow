@@ -186,7 +186,8 @@ def test_concurrent_confirmation_reserves_one_durable_intent(rig):
 
 
 @pytest.mark.parametrize("voice", ["longxiaochun_v3", "longxiaoxia_v3", "longsanshu_v3", "longanyun_v3", "longanlang_v3", "longyingxiao_v3", "longjiayi_v3"])
-def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, monkeypatch, voice):
+@pytest.mark.parametrize("avatar_status", ["succeeded", "submission_unknown"])
+def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, monkeypatch, voice, avatar_status):
     from backlot import studio_avatar, studio_composition
     studio, client, seen = rig
     draft = studio.save_draft({"template_id": "avatar-safe-circle-v1", "title": "测试", "text": "你好。",
@@ -195,8 +196,14 @@ def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, 
     q = quote(client, voice)
     remote_calls = []
     monkeypatch.setattr(client.remote, "upload", lambda *args: {"id": "audio-file"}, raising=False)
-    monkeypatch.setattr(client.remote, "wait", lambda intent, timeout=300: remote_calls.append(intent) or
-        {"id": "avatar-job", "status": "succeeded", "result": {"video_url": "https://example.test/avatar.mp4"}})
+    def wait_for_avatar(intent, timeout=300):
+        remote_calls.append(intent)
+        # Simulate a healthy twenty-minute generation, without real sleeps or billing.
+        return {"id": "avatar-job", "status": avatar_status if timeout >= 1200 else "running",
+                "media_artifact_available": True, "upstream_id": "supplier-task",
+                "funds_status": "reconciliation_pending" if avatar_status == "submission_unknown" else "settled",
+                "result": {"video_url": "https://example.test/avatar.mp4"}}
+    monkeypatch.setattr(client.remote, "wait", wait_for_avatar)
     def prepare(source, target, rate=1):
         target.write_bytes(source.read_bytes()); return .1
     monkeypatch.setattr(studio_avatar, "prepare_audio", prepare)
@@ -213,5 +220,7 @@ def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, 
     assert result["status"] == "completed"
     assert seen[0]["json"]["input"]["voice"] == voice
     assert len(remote_calls) == 1 and "原始音轨已就绪" in progress
+    saved = json.loads((project / "renders/test-local/gateway-state.json").read_text())
+    assert saved["stages"]["avatar"]["job"]["status"] == avatar_status
     assert studio_avatar.run_avatar(project, request, client)["status"] == "completed"
     assert len(remote_calls) == len(seen) == 1

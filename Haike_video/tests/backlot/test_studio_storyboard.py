@@ -89,6 +89,18 @@ def test_real_audio_and_script_must_describe_same_speech():
         verify_spoken_script('今天讲工业生产流程',[{'text':'用户素材优先缺少素材再补充示意插画'}])
 
 
+@pytest.mark.parametrize('text', ['各位老板我问一个问题你们不用回答。', '我今天带来的不是什么大项目恰恰相反。', '这笔结算款拖欠了整整十四个月共1000万元。'])
+def test_word_captions_keep_real_boundaries_without_single_character_tail(text):
+    from backlot.studio_avatar import captions
+    words = [{'text': char, 'start': i*.1, 'end': (i+1)*.1} for i, char in enumerate(text)]
+    source = {'segments': [{'start': 0, 'end': len(words)*.1, 'text': text, 'words': words}]}
+    result = captions(source, len(words)*.1)
+    assert ''.join(c['text'] for c in result) == text
+    assert all(len(c['text'].strip('，。')) >= 5 for c in result)
+    assert all(c['startMs'] in [w['start']*1000 for w in words] and c['endMs'] in [w['end']*1000 for w in words] for c in result)
+    if '1000' in text: assert any('1000' in c['text'] for c in result)
+
+
 def test_25fps_drive_is_mapped_to_observed_60fps_tail():
     segments=[{'text':'一','end':1.73},{'text':'二','end':5.12}]
     result=motion_clock_segments(segments,308)
@@ -426,6 +438,19 @@ def test_unified_avatar_motion_result_is_recovered_after_restart(tmp_path):
     job={'project_id':'demo','kind':'studio_avatar','frozen_request':{'render_id':'studio-1','draft':{'input':{'motion':{'style':'01-D'}}}}}
     result=worker.inspect_parent(job)
     assert result['status']=='completed' and result['result']['output_path'].endswith('motion-preview.mp4')
+
+
+def test_empty_motion_selection_explains_template_mismatch_before_render(data, tmp_path, monkeypatch):
+    from backlot.studio_storyboard import compose_motion
+    s, d, cues, body = data
+    scenes = validate_plan(body, d, cues, 3.2)
+    for scene in scenes: scene['asset'] = {'id': 'owned-material', 'kind': 'video'}
+    monkeypatch.setattr('backlot.studio_storyboard.motion_options', lambda *_: {'groups': [], 'id': '04-A'})
+    monkeypatch.setattr(TrialRelay, 'call', lambda *_: {'choices': [{'message': {'content': '{"segments":[]}'}}]})
+    with pytest.raises(WorkError, match='更换模板'):
+        compose_motion(s, d, tmp_path, tmp_path / 'avatar.mp4', tmp_path / 'audio.wav', cues,
+                       {'scenes': scenes, 'duration': 3.2})
+    assert not (tmp_path / 'ai-motion-draft.json').exists()
 
 
 def test_expired_quote_renewal_cannot_change_customer_approval():

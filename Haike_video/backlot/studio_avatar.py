@@ -230,6 +230,30 @@ def download_result(url, path, referer=None):
     raise WorkError("供应商媒体跳转过多")
 
 
+def _caption_word_groups(words, limit=18):
+    units = []
+    for word in words:
+        word = dict(word)
+        if units and re.search(r"[A-Za-z0-9]$", units[-1]["text"]) and re.match(r"^[A-Za-z0-9]", word["text"]):
+            units[-1].update(text=units[-1]["text"] + word["text"], end=word["end"])
+        else: units.append(word)
+    groups, group = [], []
+    for word in units:
+        if group and sum(len(w["text"]) for w in group) + len(word["text"]) > limit:
+            groups.append(group); group = []
+        group.append(word)
+    if group: groups.append(group)
+    if len(groups) > 1 and len("".join(w["text"] for w in groups[-1]).strip(" ，。！？、；：")) < 5:
+        pair = groups[-2] + groups[-1]
+        choices = []
+        for i in range(1, len(pair)):
+            left = sum(len(w["text"]) for w in pair[:i]); right = sum(len(w["text"]) for w in pair[i:])
+            if 6 <= left <= limit and 6 <= right <= limit: choices.append((abs(left-right), i))
+        if choices:
+            cut = min(choices)[1]; groups[-2:] = [pair[:cut], pair[cut:]]
+    return groups
+
+
 def captions(result, duration, split=True):
     """Sentence timing comes from ASR, never from input text/duration guesses."""
     values = result.get("segments") or result.get("sentences") or []
@@ -241,14 +265,7 @@ def captions(result, duration, split=True):
         start, end, text = float(s["start"]), min(float(s["end"]), duration), str(s["text"]).strip()
         if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end and text): continue
         if split and s.get("words"):
-            group = []
-            for word in s["words"]:
-                if group and len("".join(w["text"] for w in group)) + len(word["text"]) > 18:
-                    out.append({"text": "".join(w["text"] for w in group).strip(), "startMs": group[0]["start"]*1000,
-                                "endMs": group[-1]["end"]*1000, "timestampMs": None, "confidence": None})
-                    group = []
-                group.append(word)
-            if group:
+            for group in _caption_word_groups(s["words"]):
                 out.append({"text": "".join(w["text"] for w in group).strip(), "startMs": group[0]["start"]*1000,
                             "endMs": group[-1]["end"]*1000, "timestampMs": None, "confidence": None})
             continue
@@ -300,14 +317,21 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if not s.get("intent"):
             identity = "call_" + hashlib.sha256((request["id"] + ":" + stage).encode()).hexdigest()[:32]
             s["intent"] = sdk.confirm(s["quote"], int(s["quote"]["max_charge_micros"]), identity); save()
-        job = sdk.wait(s["intent"], timeout=600)
+        # A healthy avatar run can exceed ten minutes; keep polling the same intent.
+        job = sdk.wait(s["intent"], timeout=3600 if stage == "avatar" else 600)
         s["job"] = job; save()
-        if job["status"] != "succeeded":
+        result = job.get("result") or {}
+        artifact_ready = (stage == "avatar" and job["status"] == "submission_unknown"
+                          and job.get("media_artifact_available") is True
+                          and bool(job.get("upstream_id"))
+                          and isinstance(result.get("video_url"), str) and bool(result["video_url"]))
+        if job["status"] != "succeeded" and not artifact_ready:
             if job.get("billing_source") == "local-provider":
                 raise WorkError(job.get("message") or "本地配音尚未完成，请恢复原任务", "unavailable" if job["status"] not in {"failed", "cancelled"} else "invalid")
             if job["status"] in {"failed", "cancelled"}: raise WorkError("模型任务未成功，请到账户中心核对原调用明细")
             raise WorkError("原模型任务仍在处理或结果待核对，请恢复此任务；不会新建付费调用", "unavailable")
-        return job["result"]
+        if artifact_ready: publish_progress("数字人视频已返回，费用回执待核对")
+        return result
     try:
         publish_progress("准备配音与原始音轨")
         p = state["prepared"]; draft = request["draft"]

@@ -176,6 +176,30 @@ def test_avatar_lost_confirmation_and_pending_resume_never_create_new_intent(stu
     assert gateway.polls==2 and len(gateway.confirm_calls)==2
 
 
+@pytest.mark.parametrize("available,upstream", [(False, "supplier-task"), (True, None)])
+def test_unknown_avatar_without_confirmed_artifact_stays_stopped(studio, monkeypatch, available, upstream):
+    from backlot.studio_avatar import run_avatar
+    d = make_draft(studio); d['input'] = {'soundMode': 'audio', 'subtitles': False}
+    folder = studio.projects_root / d['id']; folder.mkdir(parents=True, exist_ok=True)
+    audio = folder / 'drive.wav'; audio.write_bytes(b'test-audio')
+    request = {'id': 'unknown-avatar', 'draft': d, 'key_identity': key_identity(studio), 'render_id': 'unknown',
+               'prepared': {'audio_path': str(audio), 'audio_file': 'audio1', 'image_file': 'image1', 'duration': 3},
+               'quotes': {'avatar': {'model': 'haike/avatar', 'max_charge_micros': 150}}, 'max_charge_micros': 150}
+    class Gateway:
+        def __init__(self): self.confirmations = 0
+        def confirm(self, quote, maximum, identity):
+            self.confirmations += 1; return identity
+        def wait(self, intent, timeout):
+            return {'id': 'job1', 'status': 'submission_unknown', 'upstream_id': upstream,
+                    'media_artifact_available': available, 'result': {'video_url': 'https://example.test/avatar.mp4'}}
+    gateway = Gateway(); downloads = []
+    monkeypatch.setattr('backlot.studio_avatar.download_result', lambda *args: downloads.append(args))
+    for _ in range(2):
+        result = run_avatar(folder, request, gateway)
+        assert result['status'] == 'failed' and result['retryable']
+    assert gateway.confirmations == 1 and downloads == []
+
+
 def test_quote_budget_and_content_are_frozen(studio):
     d=make_draft(studio);data={'id':'q','draft':d,'key_identity':key_identity(studio),'quotes':{'avatar':{'model':'haike/avatar','max_charge_micros':'400000'}},'prepared':{}}
     data['draft']['input']['soundMode']='audio'
