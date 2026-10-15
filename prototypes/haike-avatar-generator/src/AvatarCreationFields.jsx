@@ -19,7 +19,7 @@ export function AvatarVoiceField({voice, loading, ready, error, fallback, onChoo
   return <div className="creation-voice-field">
     <div className="creation-voice-identity"><span className="voice-mark"><Mic2 size={22}/></span><div><strong>{loading ? '正在读取音色…' : voice?.name || '选择配音音色'}</strong><small>{previewOnly ? '官方示例 · 当前仅支持试听' : voice ? !ready ? '当前配音连接尚未就绪' : voice.scope === 'personal' ? '个人音色 · 可用于制作' : '当前可用配音' : '选好声音后，系统自动生成口播'}</small></div>{voice && <span className={`creation-voice-badge ${previewOnly||!ready?'preview':''}`}>{previewOnly ? '仅试听' : !ready ? '待连接' : '已选择'}</span>}</div>
     <div className="creation-voice-actions"><Button disabled={!voice || voice.preview_ready === false || loading} onClick={onAudition}><Play size={15}/>试听</Button><Button disabled={loading} onClick={onChoose}>{voice ? '更换音色' : '选择音色'}<ArrowRight size={15}/></Button></div>
-    {error ? <p className="helper creation-voice-warning" role="alert">{error}</p> : previewOnly ? <p className="helper creation-voice-warning">这款音色的制作服务尚未接通，选择已保留。{fallback && <button type="button" onClick={onChooseFallback}>使用当前可用配音</button>}</p> : <p className="helper creation-voice-help">{voice?.preview_ready === false ? '当前音色暂不支持单独试听；也可在更多设置中使用已有录音。' : '可以先试听，再选一个适合这条视频的声音。'}</p>}
+    {error ? <p className="helper creation-voice-warning" role="alert">{error}</p> : previewOnly ? <p className="helper creation-voice-warning">这款音色的制作服务尚未接通，选择已保留。{fallback && <button type="button" onClick={onChooseFallback}>使用当前可用配音</button>}</p> : <p className="helper creation-voice-help">{voice?.production_hint || (voice?.preview_ready === false ? '当前音色暂不支持单独试听；也可在更多设置中使用已有录音。' : '可以先试听，再选一个适合这条视频的声音。')}</p>}
   </div>;
 }
 

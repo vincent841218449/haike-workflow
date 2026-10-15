@@ -42,8 +42,11 @@ def _with_official(studio, value, capabilities=None):
         capabilities = studio.client().request('/capabilities').get('items', [])
     ready = any(v.get('model') == system.MODEL and v.get('status') == 'available' for v in capabilities)
     official = system.public_items(ready)
+    local = any(v.get('model') == system.MODEL and v.get('billing_source') == 'local-provider' for v in capabilities)
     for voice in official:
         voice.update(studio_voice_samples.describe(studio, voice))
+        if local:
+            voice['production_hint'] = '本地配音已接通，费用计入本次上限；按供应商实际账单结算。'
     # The local curated list is authoritative even when a gateway exposes more presets.
     return {**value, 'items':official + [v for v in value.get('items', []) if v.get('model') != system.MODEL and v.get('sample_kind') != 'official'],
             'default_voice_id':system.identity(system.CATALOGUE['default_voice']),

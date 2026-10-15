@@ -104,7 +104,9 @@ class Studio:
     def client(self, config=None):
         c = config or self.configuration()
         if not c.get("api_key"): raise WorkError("请先在API设置填写统一海客Key")
-        return sdk_type()(c["base_url"], c["api_key"], self.private / "haike-api/intents")
+        remote = sdk_type()(c["base_url"], c["api_key"], self.private / "haike-api/intents")
+        from backlot.studio_system_voice import SystemVoiceClient
+        return SystemVoiceClient(self, remote)
 
     def connect(self, data):
         previous = self.configuration()

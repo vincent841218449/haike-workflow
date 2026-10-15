@@ -139,7 +139,7 @@ def quote(studio, draft):
 
 def public_quote(data):
     return {"id": data["id"], "revision": data["draft"]["revision"], "known_max_micros": sum(int(q["max_charge_micros"]) for q in data["quotes"].values()),
-            "needs_audio_quote": data["draft"]["input"]["soundMode"] == "voice", "ai_trial": data["draft"]["input"].get("ai", {}).get("enabled", False), "items": [{"stage": k, "model": q["model"], "max_charge_micros": q["max_charge_micros"]} for k, q in data["quotes"].items()] + ([{"stage": "asr", "model": "local/whisper", "max_charge_micros": "0"}] if data.get("asr", {}).get("provider") == "local-whisper" else [])}
+            "needs_audio_quote": data["draft"]["input"]["soundMode"] == "voice", "ai_trial": data["draft"]["input"].get("ai", {}).get("enabled", False), "items": [{"stage": k, "model": q["model"], "max_charge_micros": q["max_charge_micros"], "billing_source": q.get("billing_source", "gateway")} for k, q in data["quotes"].items()] + ([{"stage": "asr", "model": "local/whisper", "max_charge_micros": "0"}] if data.get("asr", {}).get("provider") == "local-whisper" else [])}
 
 
 def frozen_request(studio, draft, quote_id, maximum):
@@ -303,6 +303,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         job = sdk.wait(s["intent"], timeout=600)
         s["job"] = job; save()
         if job["status"] != "succeeded":
+            if job.get("billing_source") == "local-provider":
+                raise WorkError(job.get("message") or "本地配音尚未完成，请恢复原任务", "unavailable" if job["status"] not in {"failed", "cancelled"} else "invalid")
             if job["status"] in {"failed", "cancelled"}: raise WorkError("模型任务未成功，请到账户中心核对原调用明细")
             raise WorkError("原模型任务仍在处理或结果待核对，请恢复此任务；不会新建付费调用", "unavailable")
         return job["result"]
