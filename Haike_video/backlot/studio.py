@@ -214,7 +214,7 @@ class Studio:
     def save_calendar(self, data, catalog=None, transaction=None):
         catalog = catalog or WorkCatalog(self.projects_root)
         work = catalog.get(str(data.get("work_id") or ""))
-        if not work.get("final_version_id"): raise WorkError("请先在作品中确认最终成片，再设置排期")
+        if not work.get("final_version_id"): raise WorkError("请先在创作任务中确认最终成片，再设置排期")
         try:
             when = datetime.fromisoformat(str(data.get("scheduled_at") or "").replace("Z", "+00:00"))
             if when.tzinfo is None or when <= datetime.now(timezone.utc): raise ValueError()

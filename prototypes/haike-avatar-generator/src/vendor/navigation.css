@@ -47,6 +47,8 @@
 .global-nav-link[data-route="/calendar"] { --nav-icon: url("/ui/brand/icons/calendar-days.svg"); }
 .global-nav-link[data-route="/settings"] { --nav-icon: url("/ui/brand/icons/key-round.svg"); }
 
+:root:root body.haike-global-layout .haike-navigation .global-nav-link[aria-current="page"] {background:#fff2e7;border-color:#f4d7bf;border-left-color:#ed5b25;color:#b95224;border-radius:12px}
+
 .library-app-frame .library-shell { width: min(100%,1560px); margin: 0 auto; }
 .audio-app-frame .audio-app { width: min(1280px,calc(100% - 56px)); margin: 0 auto; }
 :root:root .automation-app-frame .automation-shell { box-sizing: border-box; width: 100%; max-width: 1440px; min-width: 0; margin: 0 auto; padding-inline: 32px; }

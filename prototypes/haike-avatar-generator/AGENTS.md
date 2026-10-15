@@ -10,7 +10,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Accepted Haike design and scope (2026-10-13)
 
-- Company is 海客科技. Reuse the official logo, orange/yellow brand tokens and native shared navigation copied into src/vendor. The sidebar stays 242px; its seven entries are 图文视频、数字人口播、创作任务、资源库、我的作品、发布日历、API设置. Match menu geometry across every route.
+- Company is 海客科技. Reuse the official logo, brand tokens and native shared navigation copied into src/vendor. The sidebar stays 242px; its six entries are 图文视频、数字人口播、创作任务、资源库、发布日历、API设置. Match menu geometry across every route.
 - User selected the first redesign on 2026-10-13: ../../docs/ui/component-redesign-20261013/selected-design.png. Use the compact content editor on the left, reference preview on the right, and sticky bottom actions. Keep actual functionality and three avatar templates; reuse buttons, fields, uploads, empty states and native modal dialogs across every route. On narrow viewports the reference preview is a disclosure.
 - Sound sources are mutually exclusive. Uploaded audio triggers no TTS; switching source/template preserves assets. Template1/2 posters are layout illustrations, template3 plays an existing real sample, never a newly generated user result.
 - This is now the frontend of the actual workbench at 4188, backed by /api/studio/*. Drafts/assets persist on the server; browser IndexedDB only remembers the last avatar project. Paid quotes, budget caps and native queue production are connected. No supplier or customer Key belongs in browser storage.
@@ -33,7 +33,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Accepted simple avatar flow (2026-10-15)
 
-- The default form has script, voice, portrait and optional image/video materials. Fresh projects start with empty user content, voice synthesis and automatic storyboarding. Keep template/layout, uploaded audio and manual storyboard controls under optional settings.
+- The default form has script, voice, portrait and optional image/video materials. Fresh projects start with empty user content, voice synthesis and automatic storyboarding. Show the template picker above these fields; keep layout, uploaded audio and manual storyboard controls under optional settings.
 - 「制作视频」saves inputs, reads the commercial quote and enqueues once within the fee cap displayed beside the button, then opens `/tasks?task=<job_id>`. Material rights use one collective checkbox. No required preview or confirmation dialog; over-budget quotes stop without increasing the cap. Unknown submissions preserve their revision/quote and recover the original task, including after refresh.
 - New-project voice defaults must be usable with the live model capabilities; preserve explicit saved selections and distinguish audition-only voices. Persist only asset metadata, keeping browser File/Blob objects local. Repeated saves and refreshes must preserve the original media URL.
 - Four input cards use real readiness and inline errors; material multi-select keeps the four-item/80MB limits and preserves partial successful uploads. Keep local-only verification and service limitations explicit; current flow and evidence: ../../docs/PRODUCT_AVATAR_SIMPLE_UI.md.
@@ -41,3 +41,10 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Keep the default system voice list at 7 curated Alibaba Bailian presets in `../../api-platform/platform_app/bailian_system_voices.json`, with free official auditions. Do not expand the list without user direction. Existing personal voices retain their original model and identity.
 - Present voices with generic system/personal labels and style tags. Auditions use a persistent local cache, background warm-up and versioned browser-cache URLs. Supplier attribution stays in backend provenance and recording-transfer consent rather than voice badges or player labels.
 - Deploy and validate locally first. Cloud rollout and gateway synchronization require fresh explicit user authorization after local validation.
+
+## Accepted task center and template selection (2026-10-15)
+
+- Use the supplied hkglobal.ai/tasks screenshot as the task-list visual target: warm surfaces, orange selection, two filter rows, continuous task rows with original script excerpt, ratio, status and observed progress. Statistics come from actual local tasks.
+- Creation tasks own playback, version selection, download, review and publishing-material preparation. `/projects` is a compatibility redirect to `/tasks`, preserving the work query. The former standalone works page and navigation entry are removed; retain the underlying work/version APIs and media.
+- A task opens the version it produced, with its actual media ratio. Task summaries use the frozen submission, even when the editable draft changes. An acknowledged active schedule applies only to its exact video version.
+- The always-visible template entry opens basic and motion catalogs with previews. Choosing a template saves the choice and preserves script, voice/audio, portrait and uploaded materials. Previewing existing demos makes no paid generation call.

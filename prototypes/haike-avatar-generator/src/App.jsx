@@ -183,14 +183,14 @@ function BasicAvatar() {
     try { await audio.current.play(); setPlaying(true); }
     catch { setToast("音频未能播放，请重新选择文件后再试。"); }
   }
-  async function persistServer() {
-    await writeDraft(input, serverDraft?.id);
-    let d=await api('/api/studio/drafts',{id:serverDraft?.id,revision:serverDraft?.revision,template_id:input.templateId,title:input.title||input.text.split(/[。！？\n]/)[0].slice(0,16),text:input.text,layout,input:{soundMode:input.soundMode,voiceId:input.voiceId,...(input.toneId?{toneId:input.toneId}:{}),rate:input.rate,subtitles:input.subtitles,ai:input.ai||AI_DEFAULTS,motion:input.motion||null}});
+  async function persistServer(values=input) {
+    await writeDraft(values, serverDraft?.id);
+    let d=await api('/api/studio/drafts',{id:serverDraft?.id,revision:serverDraft?.revision,template_id:values.templateId,title:values.title||values.text.split(/[。！？\n]/)[0].slice(0,16),text:values.text,layout,input:{soundMode:values.soundMode,voiceId:values.voiceId,...(values.toneId?{toneId:values.toneId}:{}),rate:values.rate,subtitles:values.subtitles,ai:values.ai||AI_DEFAULTS,motion:values.motion||null}});
     setServerDraft(d);
     const draftUrl=new URL(location.href);draftUrl.searchParams.set('draft',d.id);draftUrl.searchParams.delete('new');history.replaceState(null,'',draftUrl);
     const assets={};
     for (const [name,kind,sample] of [['audio','audio','narration.wav'],['portrait','image','presenter.png']]) {
-      const value=input[name]; if(!value || (name==='audio'&&input.soundMode!=='audio'))continue;
+      const value=values[name]; if(!value || (name==='audio'&&values.soundMode!=='audio'))continue;
       if(value?.id&&serverDraft){assets[name]=persistedAsset(value);continue;}
       let file=value?.file;
       if(!file){const r=await fetch(assetPath(sample));if(!r.ok)throw new Error('示例素材无法读取，请上传自己的文件');file=new File([await r.blob()],value?.name||sample,{type:value?.type});}
@@ -199,9 +199,9 @@ function BasicAvatar() {
       uploaded.current.set(file,{draftId:d.id,asset:a});assets[name]={...a,duration:value?.duration,type:value?.type};
     }
     d=await api('/api/studio/drafts',{...d,input:{...d.input,...assets}});setServerDraft(d);
-    const next={...input,...Object.fromEntries(Object.entries(assets).map(([name,value])=>[name,{...input[name],...value}]))};setInput(next);await writeDraft(next,d.id);setSaved(true);return d;
+    const next={...values,...Object.fromEntries(Object.entries(assets).map(([name,value])=>[name,{...values[name],...value}]))};setInput(next);await writeDraft(next,d.id);setSaved(true);return d;
   }
-  async function saveDraft(){setSaving(true);setError(null);try{await persistServer();setToast('制作项目已保存到工作台，可从我的作品继续编辑。');}catch(e){setError({field:'draft',message:e.message});}finally{setSaving(false);}}
+  async function saveDraft(){setSaving(true);setError(null);try{await persistServer();setToast('草稿已保存，返回数字人口播页可继续编辑。');}catch(e){setError({field:'draft',message:e.message});}finally{setSaving(false);}}
   async function importMaterials(files) {
     if (materialBusy.current) throw new Error('正在上传素材，请等待当前上传完成。');
     const selected = materialSelection(files, input.ai?.materials?.length || 0);
@@ -277,6 +277,7 @@ function BasicAvatar() {
   return <main className="workspace creation-workspace avatar-creation">
     <Heading title="数字人口播" helper="给文案一个声音，让你的数字人开口讲。"><div className="creation-header-actions"><Button href="/tasks" variant="text">创作任务<ArrowRight size={15}/></Button>{serverDraft&&<Button href="/avatar?new=1">新建视频</Button>}</div></Heading>
     {blocked&&!blocked.startsWith('已选系统')&&<div className="creation-connection"><Notice message={blocked} error={accountState!==null}><Button variant="text" disabled={accountState===null} onClick={()=>{setConnectionVersion(v=>v+1);voiceLibrary.reload();}}>重新检查连接</Button><a href="/settings">查看 API 设置<ArrowRight size={14}/></a></Notice></div>}
+    <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setSamplePlaying(false);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
     <PreparationStrip state={readiness}/>
     <div className="editor-shell avatar-editor"><section className="editor-content" aria-label="填写制作内容" aria-busy={draftLoading}>
       <fieldset className="avatar-form" disabled={saving||draftLoading||uncertain}>
@@ -297,7 +298,7 @@ function BasicAvatar() {
       </div>
       <section className="more-settings"><button className="settings-toggle" onClick={()=>setMore(!more)} aria-expanded={more} aria-controls="more-fields"><ChevronDown size={18} className={more?'':'collapsed'}/><strong>更多设置</strong><span>已自动配置，可直接制作</span></button>
         {more&&<div id="more-fields" className="settings-fields">
-          <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} onChoose={choice=>{update({...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}});setSamplePlaying(false);setStoryboard(null);}}/>
+
           <div className="sound-tabs" role="group" aria-label="声音来源"><button aria-pressed={input.soundMode==="voice"} className={input.soundMode==="voice"?"active":""} onClick={()=>update({soundMode:"voice"})}>音色配音</button><button aria-pressed={input.soundMode==="audio"} className={input.soundMode==="audio"?"active":""} onClick={()=>update({soundMode:"audio"})}>使用已有音频</button></div>
           <Field label="本次制作费用上限（元）" hint="配音、数字人与识别合计；超过上限暂停，保留已完成内容。"><input type="number" min=".01" max="1000" step=".01" value={budget} onChange={e=>setBudget(e.target.value)}/></Field>
           <Field label="视频标题"><input value={input.title} maxLength={36} placeholder="自动取文案首句，建议16字以内" onChange={e=>update({title:e.target.value})}/></Field><div className="layout-fields"><Field label="标题字号"><select value={layout.title_size} onChange={e=>updateLayout({title_size:Number(e.target.value)})}>{[48,54,60,66].map(n=><option key={n} value={n}>{n}px</option>)}</select></Field><Field label="强调色"><input type="color" value={layout.accent} onChange={e=>updateLayout({accent:e.target.value})}/></Field></div><label className="checkbox-row"><input type="checkbox" checked={input.subtitles} onChange={e=>update({subtitles:e.target.checked})}/>显示字幕</label>{input.soundMode==="voice"&&<Field label="配音语速"><select value={input.rate} onChange={e=>update({rate:Number(e.target.value)})}>{[.8,1,1.2,1.5].map(n=><option key={n} value={n}>{n.toFixed(2)}×</option>)}</select></Field>}
@@ -307,7 +308,7 @@ function BasicAvatar() {
       </fieldset>
       <SubmissionStatus phase={submitPhase} uncertain={uncertain}/>
       <div className="notice-stack avatar-notices"><Notice message={!['text','voice','portrait','materials','audio'].includes(error?.field) ? error?.message : ''} error/></div>
-      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已合成 · 待审核',failed:'需要处理',canceled:'已取消'})[job.status]||job.status}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href="/projects">观看并审核成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
+      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已合成 · 待审核',failed:'需要处理',canceled:'已取消'})[job.status]||job.status}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看并审核成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
       <DouyinRecovery job={job} onJob={setJob}/>
     </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}><div className="poster-frame"><img src={motionPreview||assetPath(template.poster)} alt={`${input.motion?.style||template.name} · 版式参考`}/></div><p className="preview-note">{input.motion?'上游风格参考；AI按本期原文、素材与实际时钟安排动作。':template.sample?"现有真实样片，生成后使用你的内容。":"模板布局示意，生成后使用你的内容。"}</p>{!input.motion&&template.sample&&<Button className="preview-play" onClick={()=>{setModal("sample");setSamplePlaying(true);}}><Play size={16}/>播放样片</Button>}{input.motion&&<Button href="/avatar?mode=motion">进入专业分镜编辑</Button>}</PreviewPanel>
     <ActionBar note={<><strong>本次费用上限 ¥{budget}</strong><span>按实际调用结算 · 提交后自动制作，在创作任务查看进度</span></>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!blocked&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>

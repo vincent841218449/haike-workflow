@@ -7,7 +7,7 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, RedirectResponse
 
 from backlot.studio import Studio, TEMPLATES, gateway_connection_message
 from backlot.work_api import catalog, call
@@ -15,7 +15,7 @@ from backlot.work_catalog import WorkError
 from backlot import work_publish
 
 router = APIRouter()
-REMOVED_ENTRIES = {"/audio": "/avatar", "/automation": "/calendar", "/material-library": "/graphic", "/material-library/manage": "/graphic", "/material-commentary": "/projects", "/published-clips": "/projects", "/works": "/projects", "/legacy/projects": "/projects"}
+REMOVED_ENTRIES = {"/audio": "/avatar", "/automation": "/calendar", "/material-library": "/graphic", "/material-library/manage": "/graphic", "/material-commentary": "/tasks", "/published-clips": "/tasks", "/works": "/tasks", "/legacy/projects": "/tasks"}
 
 
 def studio(request):
@@ -39,12 +39,16 @@ def mutation(request):
 @router.get("/avatar", response_class=HTMLResponse)
 @router.get("/calendar", response_class=HTMLResponse)
 @router.get("/settings", response_class=HTMLResponse)
-@router.get("/projects", response_class=HTMLResponse)
 @router.get("/resources", response_class=HTMLResponse)
 @router.get("/tasks", response_class=HTMLResponse)
 def page():
     path = Path(__file__).parent / "ui/avatar-generator/index.html"
     return HTMLResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@router.get('/projects')
+def retired_projects(request: Request):
+    return RedirectResponse('/tasks' + ('?' + request.url.query if request.url.query else ''), status_code=307)
 
 
 @router.get("/api/studio/templates")
@@ -53,7 +57,7 @@ def templates(): return {"templates": TEMPLATES}
 
 @router.get("/api/studio/tasks")
 def creation_tasks(request: Request,
-                   status: Literal["all", "active", "queued", "needs_action", "failed", "completed", "cancelled"] = "all",
+                   status: Literal["all", "active", "queued", "needs_action", "failed", "completed", "scheduled", "cancelled"] = "all",
                    type: Literal["all", "graphic", "avatar", "motion"] = "all",
                    limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0, le=1000000)):
     from backlot.server import _ensure_production_queue

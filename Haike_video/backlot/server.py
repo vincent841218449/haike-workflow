@@ -1359,7 +1359,7 @@ def create_app() -> FastAPI:
     async def redirect_removed_entries(request, call_next):
         destination = REMOVED_ENTRIES.get(request.url.path.rstrip("/"))
         if request.method == "GET" and destination:
-            return RedirectResponse(destination, status_code=307)
+            return RedirectResponse(destination + ('?' + request.url.query if request.url.query else ''), status_code=307)
         return await call_next(request)
     app.include_router(work_router)
     from backlot.studio_api import router as studio_router

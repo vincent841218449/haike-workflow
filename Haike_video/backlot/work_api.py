@@ -33,8 +33,8 @@ def call(fn, *args, **kwargs):
 
 
 @router.get("/works", response_class=HTMLResponse)
-def page():
-    return RedirectResponse("/projects", status_code=307)
+def page(request: Request):
+    return RedirectResponse('/tasks' + ('?' + request.url.query if request.url.query else ''), status_code=307)
 
 
 @router.get("/api/works")

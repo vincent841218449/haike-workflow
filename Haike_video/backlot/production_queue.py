@@ -327,7 +327,7 @@ class ProductionQueue:
 
     def list(self, *, project_id: str | None = None, limit: int = 80,
              kinds: tuple[str, ...] | None = None, statuses: tuple[str, ...] | None = None,
-             offset: int = 0) -> dict[str, Any]:
+             offset: int = 0, result_output_paths: tuple[str, ...] | None = None) -> dict[str, Any]:
         limit = min(200, max(1, int(limit)))
         offset = max(0, int(offset))
         clauses, parameters = [], []
@@ -338,6 +338,9 @@ class ProductionQueue:
             if values is not None:
                 clauses.append(f"{field} IN ({','.join('?' for _ in values)})" if values else "0")
                 parameters.extend(values)
+        if result_output_paths is not None:
+            clauses.append(f"json_extract(result_json,'$.output_path') IN ({','.join('?' for _ in result_output_paths)})" if result_output_paths else "0")
+            parameters.extend(result_output_paths)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         ordering = (
             "CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 "
