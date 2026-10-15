@@ -23,5 +23,6 @@ export function validateInputs(input, availableVoices, availableTones) {
   if (input.soundMode === 'voice' && availableTones && !availableTones.some(v => v.id === input.toneId && v.status === 'ready')) return { field: 'voice', message: '请选择当前音色库中的可用音色；原音色不可用时不会自动替换。' };
   if (!["audio", "voice"].includes(input.soundMode)) return { field: "audio", message: "请选择声音来源。" };
   if (!input.portrait) return { field: "portrait", message: "请上传人物正面图片。" };
+  if (input.ai?.enabled && input.ai.materials?.some(m=>!m.rights_confirmed)) return {field:'materials',message:'请确认上传素材的使用权，再制作视频。'};
   return null;
 }

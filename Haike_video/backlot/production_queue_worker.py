@@ -60,15 +60,21 @@ class ProductionQueueWorker:
 
     def _run_studio_graphic(self, job):
         from backlot.studio_render import run_graphic
-        return run_graphic(self._project_dir(job), job["frozen_request"])
+        return run_graphic(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
 
     def _run_studio_avatar(self, job):
         from backlot.studio_avatar import run_avatar
-        return run_avatar(self._project_dir(job), job["frozen_request"])
+        return run_avatar(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
 
     def _run_studio_motion(self, job):
         from backlot.studio_motion import run_motion
-        return run_motion(self._project_dir(job), job["frozen_request"])
+        return run_motion(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
+
+    def _stage_reporter(self, job):
+        def report(stage, completed, total):
+            # The queue still needs to register the result after rendering/QA.
+            self.queue.update_stage(job["job_id"], self.worker_id, stage, completed=completed, total=total + 1)
+        return report
 
     def _project_dir(self, job: dict[str, Any]) -> Path:
         project_dir = (self.projects_root / str(job["project_id"])).resolve()

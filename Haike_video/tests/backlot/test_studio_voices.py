@@ -60,3 +60,32 @@ def test_library_rejects_path_like_voice_ids_before_local_media_access(rig, monk
     with pytest.raises(WorkError, match="无效"):
         studio_voices.sample(studio, "../../private")
     assert client.downloads == 0
+
+
+def test_old_gateway_offers_explicit_default_without_claiming_cloning_or_audition(rig, monkeypatch):
+    studio, client = rig
+    class MissingLibrary(ValueError): status = 404
+    def request(path):
+        if path == "/voices": raise MissingLibrary("not found")
+        assert path == "/capabilities"
+        return {"items": [{"model": "haike/cosyvoice", "status": "available"}]}
+    monkeypatch.setattr(client, "request", request)
+    value = studio_voices.catalogue(studio)
+    voice = value["items"][0]
+    assert value["default_voice_id"] == voice["id"] == "voice_gateway_default"
+    assert not value["clone_ready"] and not voice["preview_ready"]
+    from backlot.studio_avatar import tts_input
+    assert tts_input({"text": "原文", "input": {"toneId": voice["id"]}}) == {"text": "原文"}
+    assert tts_input({"text": "原文", "input": {"toneId": "voice_owned"}})["voice_id"] == "voice_owned"
+    with pytest.raises(WorkError, match="单独试听"):
+        studio_voices.quote_preview(studio, voice["id"])
+    assert client.intents == []
+
+
+def test_unavailable_gateway_does_not_silently_replace_a_personal_voice(rig, monkeypatch):
+    studio, client = rig
+    class Unauthorized(ValueError): status = 401
+    def request(path): raise Unauthorized("private account")
+    monkeypatch.setattr(client, "request", request)
+    with pytest.raises(WorkError, match="音色库暂不可用"):
+        studio_voices.catalogue(studio)

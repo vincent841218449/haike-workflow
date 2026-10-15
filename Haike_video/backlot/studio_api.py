@@ -4,8 +4,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from uuid import uuid4
+from typing import Literal
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from backlot.studio import Studio, TEMPLATES
@@ -40,6 +41,7 @@ def mutation(request):
 @router.get("/settings", response_class=HTMLResponse)
 @router.get("/projects", response_class=HTMLResponse)
 @router.get("/resources", response_class=HTMLResponse)
+@router.get("/tasks", response_class=HTMLResponse)
 def page():
     path = Path(__file__).parent / "ui/avatar-generator/index.html"
     return HTMLResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
@@ -47,6 +49,28 @@ def page():
 
 @router.get("/api/studio/templates")
 def templates(): return {"templates": TEMPLATES}
+
+
+@router.get("/api/studio/tasks")
+def creation_tasks(request: Request,
+                   status: Literal["all", "active", "queued", "needs_action", "failed", "completed", "cancelled"] = "all",
+                   type: Literal["all", "graphic", "avatar", "motion"] = "all",
+                   limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0, le=1000000)):
+    from backlot.server import _ensure_production_queue
+    from backlot.studio_tasks import list_tasks
+    return call(list_tasks, studio(request), _ensure_production_queue(request.app),
+                status=status, task_type=type, limit=limit, offset=offset)
+
+
+@router.get("/api/studio/tasks/{job_id}")
+def creation_task(job_id: str, request: Request):
+    from backlot.server import _ensure_production_queue
+    from backlot.studio_tasks import detail
+    from backlot.production_queue import ProductionQueueError
+    try:
+        return detail(studio(request), _ensure_production_queue(request.app), job_id)
+    except ProductionQueueError as exc:
+        raise HTTPException(404, "未找到这条创作任务") from exc
 
 
 @router.get("/api/studio/voices")

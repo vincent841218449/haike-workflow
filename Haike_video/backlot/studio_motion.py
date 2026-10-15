@@ -360,11 +360,12 @@ def freeze(studio, draft, plan_id, confirmed):
     return {"draft": draft, "plan_id": plan_id, "plan_folder": str(folder), "snapshot": snapshot, "render_id": "studio-" + str(draft["revision"])}
 
 
-def run_motion(project_dir, request):
+def run_motion(project_dir, request, *, on_progress=None):
     project_dir = Path(project_dir); studio = Studio(project_dir.parent)
     output = project_dir / "renders" / request["render_id"]
     output.mkdir(parents=True, exist_ok=True)
     try:
+        if on_progress: on_progress("核对冻结工程与原口播素材", 0, 5)
         # Freeze is authoritative; a newer editor draft does not change a queued render.
         checked = freeze(studio, request["draft"], request["plan_id"], True)
         if checked != request: raise WorkError("队列内容与冻结计划不一致，请重新提交")
@@ -378,6 +379,7 @@ def run_motion(project_dir, request):
             args = [ffmpeg, "-v", "error", "-i", str(video), "-i", checked["snapshot"]["audio"], "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", str(aligned)]
             subprocess.run(args, check=True, capture_output=True, timeout=90); video = aligned
         engineering = attempt / "engineering"
+        if on_progress: on_progress("构建动效工程与准确字幕", 1, 5)
         saved=json.loads((folder / "planning/auto_plan.json").read_text())
         if saved['schema']=='haike-adu-quick-plan/1':
             from backlot.studio_motion_quick import build
@@ -388,10 +390,13 @@ def run_motion(project_dir, request):
             build(saved,video,engineering,folder/'subs.js',command,runtime)
         else:
             command("auto-build", folder / "planning/auto_plan.json", video, engineering, "--subs-js", folder / "subs.js", timeout=900, log=attempt / "build.log")
+        if on_progress: on_progress("生成并混合配乐与口播音轨", 2, 5)
         command("audio", engineering, timeout=600, log=attempt / "audio.log")
         command("mix", engineering, timeout=300, log=attempt / "mix.log")
         candidate = attempt / "motion-preview.mp4"
+        if on_progress: on_progress("渲染动效视频", 3, 5)
         command("render", engineering, candidate, "2", timeout=3600, log=attempt / "render.log")
+        if on_progress: on_progress("核验视频并打包可编辑工程", 4, 5)
         command("check", candidate, timeout=300, log=attempt / "check.log")
         info = media_probe(candidate); desired = json.loads((folder / "planning/auto_plan.json").read_text())["report"]["durationFrames"] / 60
         if not info["video"] or not info["audio"] or abs(info["duration"] - desired) > .05: raise WorkError("导出视频与口播时钟不一致，保留工程待处理")
@@ -409,6 +414,7 @@ def run_motion(project_dir, request):
         atomic_private(output / "qa.json", {"engine": VERSION, "commit": COMMIT, "source": checked["snapshot"], "source_clock": "unmodified-narration", "output": info,
                        "frames": round(desired*60), "caption_timing": "provided exact cues", "checks": ["upstream-plan-build-revalidation", "full-decode", "duration", "audio", "version-bound-preview"],
                        "human_review": "pending", "engineering": str(engineering), "archive": str(archive), "no_paid_calls": True})
+        if on_progress: on_progress("成片与工程核验完成，正在登记作品", 5, 5)
         return {"status": "completed", "stage": "动效口播已合成，等待观看与审核", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending", "engineering_archive": str(archive)}}
     except WorkError as exc:
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMotion"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_motion"}

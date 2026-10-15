@@ -16,6 +16,10 @@ def catalogue(studio):
     try:
         value = studio.client().request("/voices")
     except Exception as error:
+        # Older gateways still provide their configured CosyVoice through /quotes.
+        # Offer that explicit default only when the library route is absent.
+        if getattr(error, "status", None) == 404:
+            return _legacy_catalogue(studio)
         raise WorkError("音色库暂不可用，请先连接海客Key，并确认网关已更新音色库服务") from error
     for voice in value.get("items", []):
         if not isinstance(voice.get("id"), str) or not re.fullmatch(r"voice_[a-z0-9_]{1,64}", voice["id"]):
@@ -23,6 +27,21 @@ def catalogue(studio):
         if voice.get("sample_url"):
             voice["sample_url"] = "/api/studio/voices/" + voice["id"] + "/sample"
     return value
+
+
+def _legacy_catalogue(studio):
+    try:
+        capabilities = studio.client().request("/capabilities").get("items", [])
+    except Exception:
+        raise WorkError("暂时无法核对配音能力，请检查API连接后刷新") from None
+    ready = any(v.get("model") == "haike/cosyvoice" and v.get("status") == "available" for v in capabilities)
+    return {"items": [{"id": "voice_gateway_default", "name": "CosyVoice · 网关默认音色",
+                       "scope": "system", "language": "multilingual", "tags": ["现有配音"],
+                       "status": "ready", "sample_status": "unavailable", "preview_ready": False,
+                       "preview_hint": "当前服务暂不支持单独试听，可上传已有录音制作"}] if ready else [],
+            "default_voice_id": "voice_gateway_default" if ready else None, "clone_ready": False,
+            "clone_hint": "当前服务可使用已配置的默认配音；个人音色、克隆及单独试听尚未启用。本次仅运行本地项目，未更新云端服务。默认音色由服务配置决定。",
+            "mode": "gateway_default"}
 
 
 def sample(studio, voice_id):
@@ -108,6 +127,8 @@ def quote_clone(studio, data):
 
 
 def quote_preview(studio, voice_id):
+    if voice_id == "voice_gateway_default":
+        raise WorkError("当前服务暂不支持默认音色的单独试听，可上传已有录音制作")
     try:
         value = studio.client().request("/voices/" + voice_id + "/preview-quote", {})
     except Exception as error:

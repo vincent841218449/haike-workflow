@@ -11,6 +11,12 @@ from urllib.parse import urlsplit
 from client import save_private
 
 
+class HaikeAPIError(ValueError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 class HaikeClient:
     def __init__(self, base_url, api_key, state_dir):
         parsed = urlsplit(base_url)
@@ -65,7 +71,7 @@ class HaikeClient:
                 message = value.get("error", {}).get("message", "海客 API 请求失败")
             except ValueError:
                 message = "海客 API 请求失败"
-            raise ValueError(message) from None
+            raise HaikeAPIError(message, error.code) from None
 
     def media(self, path):
         return self.request(path, binary=True)

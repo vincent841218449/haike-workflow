@@ -167,6 +167,9 @@ class ProductionQueue:
                 PRAGMA user_version=1;
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(production_jobs)")}
+            if "progress_json" not in columns:
+                connection.execute("ALTER TABLE production_jobs ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}'")
         finally:
             connection.close()
 
@@ -322,8 +325,20 @@ class ProductionQueue:
             raise ProductionQueueError("生产任务不存在")
         return self._private_row(row) if include_private else self._public_row(row)
 
-    def list(self, *, project_id: str | None = None, limit: int = 80) -> dict[str, Any]:
+    def list(self, *, project_id: str | None = None, limit: int = 80,
+             kinds: tuple[str, ...] | None = None, statuses: tuple[str, ...] | None = None,
+             offset: int = 0) -> dict[str, Any]:
         limit = min(200, max(1, int(limit)))
+        offset = max(0, int(offset))
+        clauses, parameters = [], []
+        if project_id:
+            clauses.append("project_id=?")
+            parameters.append(project_id)
+        for field, values in (("kind", kinds), ("status", statuses)):
+            if values is not None:
+                clauses.append(f"{field} IN ({','.join('?' for _ in values)})" if values else "0")
+                parameters.extend(values)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
         ordering = (
             "CASE status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 "
             "WHEN 'awaiting_human' THEN 3 WHEN 'ambiguous' THEN 3 WHEN 'failed' THEN 4 "
@@ -333,22 +348,13 @@ class ProductionQueue:
             "created_at DESC,job_id ASC"
         )
         with self._connection() as connection:
-            if project_id:
-                rows = connection.execute(
-                    f"SELECT * FROM production_jobs WHERE project_id=? ORDER BY {ordering} LIMIT ?",
-                    (project_id, limit),
-                ).fetchall()
-                count_rows = connection.execute(
-                    "SELECT status,COUNT(*) AS count FROM production_jobs WHERE project_id=? GROUP BY status",
-                    (project_id,),
-                ).fetchall()
-            else:
-                rows = connection.execute(
-                    f"SELECT * FROM production_jobs ORDER BY {ordering} LIMIT ?", (limit,)
-                ).fetchall()
-                count_rows = connection.execute(
-                    "SELECT status,COUNT(*) AS count FROM production_jobs GROUP BY status"
-                ).fetchall()
+            rows = connection.execute(
+                f"SELECT * FROM production_jobs{where} ORDER BY {ordering} LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+            count_rows = connection.execute(
+                f"SELECT status,COUNT(*) AS count FROM production_jobs{where} GROUP BY status", parameters,
+            ).fetchall()
             queued = connection.execute(
                 "SELECT job_id FROM production_jobs WHERE status='queued' "
                 "ORDER BY priority_rank DESC,created_at ASC,job_id ASC"
@@ -361,6 +367,8 @@ class ProductionQueue:
             tasks.append(task)
         summary = self._summary(tasks)
         counts = {str(row["status"]): int(row["count"]) for row in count_rows}
+        total = sum(counts.values())
+        summary["pagination"] = {"offset": offset, "limit": limit, "total": total, "has_more": offset + len(tasks) < total}
         summary.update(
             {
                 "active_count": counts.get("running", 0),
@@ -369,6 +377,7 @@ class ProductionQueue:
                 "waiting_count": counts.get("awaiting_human", 0) + counts.get("ambiguous", 0),
                 "failure_count": counts.get("failed", 0),
                 "completed_count": counts.get("completed", 0),
+                "cancelled_count": counts.get("cancelled", 0),
             }
         )
         return summary
@@ -405,7 +414,7 @@ class ProductionQueue:
             if row is None:
                 return None
             changed = connection.execute(
-                "UPDATE production_jobs SET status='running',stage='正在取得生产执行权',worker_id=?,"
+                "UPDATE production_jobs SET status='running',stage='正在取得生产执行权',progress_json='{}',worker_id=?,"
                 "lease_expires_at=?,started_at=COALESCE(started_at,?),updated_at=?,"
                 "attempt_count=attempt_count+1,revision=revision+1 "
                 "WHERE job_id=? AND status='queued'",
@@ -429,16 +438,24 @@ class ProductionQueue:
             if changed != 1:
                 raise ProductionQueueConflict("生产任务租约已经失效")
 
-    def update_stage(self, job_id: str, worker_id: str, stage: str) -> None:
+    def update_stage(self, job_id: str, worker_id: str, stage: str, *, completed: int | None = None,
+                     total: int | None = None) -> None:
         stage = _validate_identifier(stage, "任务阶段", maximum=300)
+        progress = None
+        if completed is not None or total is not None:
+            if type(completed) is not int or type(total) is not int or not 0 <= completed <= total <= 10000 or total == 0:
+                raise ProductionQueueError("制作进度必须是已完成步骤与实际总步骤")
+            progress = {"completed": completed, "total": total, "ratio": completed / total, "basis": "steps"}
         with self._connection(immediate=True) as connection:
             changed = connection.execute(
-                "UPDATE production_jobs SET stage=?,updated_at=?,revision=revision+1 "
+                "UPDATE production_jobs SET stage=?,progress_json=COALESCE(?,progress_json),updated_at=?,revision=revision+1 "
                 "WHERE job_id=? AND status='running' AND worker_id=?",
-                (stage, _now(), job_id, worker_id),
+                (stage, _json(progress) if progress is not None else None, _now(), job_id, worker_id),
             ).rowcount
             if changed != 1:
                 raise ProductionQueueConflict("生产任务已经不属于当前工作者")
+            if progress is not None:
+                self._event(connection, job_id, "progress", "running", "running", {"stage": stage, "progress": progress})
 
     def finish(
         self,
@@ -644,6 +661,7 @@ class ProductionQueue:
     @classmethod
     def _public_row(cls, row: sqlite3.Row) -> dict[str, Any]:
         private = cls._private_row(row)
+        observed = _decode(private.pop("progress_json", "{}"), {})
         private.pop("idempotency_key", None)
         private.pop("priority_rank", None)
         private.pop("worker_id", None)
@@ -656,6 +674,9 @@ class ProductionQueue:
             "full_preview": "合成全片审核预览",
             "published_remix": "成片二剪待审预览",
             "material_commentary": "素材解说待审预览",
+            "studio_graphic": "图文视频",
+            "studio_avatar": "数字人口播",
+            "studio_motion": "动效口播",
         }.get(private["kind"], private["kind"])
         private["progress"] = {
             "completed": 1 if private["status"] == "completed" else 0,
@@ -663,6 +684,10 @@ class ProductionQueue:
             "failed": 1 if private["status"] == "failed" else 0,
             "ratio": 1.0 if private["status"] == "completed" else 0.0,
         }
+        if observed and observed.get("basis") == "steps":
+            private["progress"] = {**observed, "failed": 1 if private["status"] == "failed" else 0}
+            if private["status"] == "completed":
+                private["progress"].update(completed=observed["total"], ratio=1.0)
         private["target_view"] = "quality" if private["kind"] == "full_preview" else "review"
         private["wait_reason"] = (
             "等待前序生产任务释放执行资格" if private["status"] == "queued"

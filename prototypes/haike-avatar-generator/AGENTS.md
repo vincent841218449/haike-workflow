@@ -10,10 +10,10 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Accepted Haike design and scope (2026-10-13)
 
-- Company is 海客科技. Reuse the official logo, orange/yellow brand tokens and native shared navigation copied into src/vendor. The sidebar stays 242px; its six entries are 图文视频、数字人口播、资源库、我的作品、发布日历、API设置. Match menu geometry across every route.
+- Company is 海客科技. Reuse the official logo, orange/yellow brand tokens and native shared navigation copied into src/vendor. The sidebar stays 242px; its seven entries are 图文视频、数字人口播、创作任务、资源库、我的作品、发布日历、API设置. Match menu geometry across every route.
 - User selected the first redesign on 2026-10-13: ../../docs/ui/component-redesign-20261013/selected-design.png. Use the compact content editor on the left, reference preview on the right, and sticky bottom actions. Keep actual functionality and three avatar templates; reuse buttons, fields, uploads, empty states and native modal dialogs across every route. On narrow viewports the reference preview is a disclosure.
 - Sound sources are mutually exclusive. Uploaded audio triggers no TTS; switching source/template preserves assets. Template1/2 posters are layout illustrations, template3 plays an existing real sample, never a newly generated user result.
-- This is now the frontend of the actual workbench at 14754, backed by /api/studio/*. Drafts/assets persist on the server; browser IndexedDB only remembers the last avatar project. Paid quotes, budget caps and native queue production are connected. No supplier or customer Key belongs in browser storage.
+- This is now the frontend of the actual workbench at 4188, backed by /api/studio/*. Drafts/assets persist on the server; browser IndexedDB only remembers the last avatar project. Paid quotes, budget caps and native queue production are connected. No supplier or customer Key belongs in browser storage.
 - Keep original template3 baseline immutable. New parameterized avatar rendering belongs to templates/studio-avatar-v1 with its own version. Graphic uses the native safe_v2 nine-second/three-scene layout.
 - Publication is through real CreatorHub receipts: future times, Beijing display, approved final version, owned/authorized sources, title/description/cover and live account checks. Save a draft first, activate only on explicit user confirmation. Unknown results reuse the original idempotency key; partial cancellation stays visible and recoverable.
 - No real paid call or external publish during automated validation. Local outputs remain pending user review. Unconfirmed procurement prices must block the relevant capability.
@@ -30,3 +30,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - System and account-owned personal voices share one library/picker, with audition available in both. Video selection preserves script and assets and saves the specific immutable voice ID. Changes to the default voice do not retarget saved selections.
 - Clone through Alibaba Bailian after recording rights and cost confirmation; create is free, first synthesized audition has its own quote. Cache successful auditions for repeated playback. Label reference recording playback separately from synthesized audition.
 - For voice cloning, account permissions, unknown task recovery or migrating existing voices, read ../../docs/PRODUCT_VOICE_LIBRARY.md before changing the contract.
+
+## Accepted simple avatar flow (2026-10-15)
+
+- The default form has script, voice, portrait and optional image/video materials. Fresh projects start with empty user content, voice synthesis and automatic storyboarding. Keep template/layout, uploaded audio and manual storyboard controls under optional settings.
+- 「制作视频」saves inputs, reads the commercial quote and enqueues once within the fee cap displayed beside the button, then opens `/tasks?task=<job_id>`. Material rights use one collective checkbox. No required preview or confirmation dialog; over-budget quotes stop without increasing the cap. Unknown submissions preserve their revision/quote and recover the original task, including after refresh.

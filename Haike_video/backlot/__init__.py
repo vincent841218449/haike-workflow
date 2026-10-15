@@ -13,4 +13,4 @@ Design contract (see internal/design/LIVING_STORYBOARD.md):
 
 __version__ = "0.1.0"
 
-DEFAULT_PORT = 4750
+DEFAULT_PORT = 4188

@@ -59,6 +59,22 @@ class MacosMigrationTests(unittest.TestCase):
         self.assertEqual(env["FFMPEG_BINARY"], str(self.root / "runtime/macos/bin/ffmpeg"))
         self.assertEqual(env["PYTHONPATH"], str(self.root / "Haike_video"))
 
+    def test_fixed_port_does_not_reuse_an_old_recorded_port(self):
+        state = {"services": [{"kind": "backlot", "port": 14756}]}
+        with patch.object(launcher.bundle, "read_json", return_value=state), \
+             patch.object(launcher.bundle, "own_identity", return_value=None), \
+             patch.object(launcher.socket, "socket"):
+            self.assertEqual(launcher.choose_port(4188, "backlot", set()), (4188, None))
+
+    def test_occupied_fixed_port_fails_instead_of_starting_another_project_instance(self):
+        with patch.object(launcher.bundle, "read_json", return_value={}), \
+             patch.object(launcher.bundle, "own_identity", return_value=None), \
+             patch.object(launcher.socket, "socket") as socket:
+            socket.return_value.__enter__.return_value.bind.side_effect = OSError("in use")
+            with self.assertRaisesRegex(RuntimeError, "4188"):
+                launcher.choose_port(4188, "backlot", set())
+            self.assertEqual(socket.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
