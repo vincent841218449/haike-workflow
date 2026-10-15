@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {canProduceVoice, defaultProductionTone, creationReadiness, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
+import {canProduceVoice, defaultProductionTone, creationReadiness, knownAudioMismatch, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
 
 const models=[{id:'haike/cosyvoice'}], legacy={id:'voice_gateway_default',status:'ready'}, preview={id:'official',model:'haike/cosyvoice-system',status:'ready',production_ready:false};
 test('新项目只默认选择能实际制作的音色；没有可用服务时不伪装为就绪',()=>{
@@ -33,4 +33,13 @@ test('保存已上传图片不把浏览器File序列化回服务器，重复保�
   assert.equal(saved.id,source.id);assert.equal(saved.url,source.url);
   assert.ok(!('file' in saved));
   assert.deepEqual(persistedAsset(JSON.parse(JSON.stringify({...source,file:{}}))),saved);
+});
+test('已识别录音与文案不符时不显示准备完成，切换配音或换录音后自动解除',()=>{
+  const input={text:'真实文案',soundMode:'audio',audio:{id:'sample'},portrait:{id:'portrait'}};
+  const job={input_issue:{code:'audio_script_mismatch',audio_id:'sample',text:'真实文案'}};
+  assert.equal(knownAudioMismatch(input,job),true);
+  assert.equal(creationReadiness(input,[],[],job).completed,2);
+  assert.equal(knownAudioMismatch({...input,soundMode:'voice'},job),false);
+  assert.equal(knownAudioMismatch({...input,audio:{id:'replacement'}},job),false);
+  assert.equal(knownAudioMismatch({...input,text:'修改后的文案'},job),false);
 });

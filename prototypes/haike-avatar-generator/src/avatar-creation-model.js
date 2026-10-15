@@ -9,11 +9,17 @@ export function defaultProductionTone(library, models) {
     items.find(v => canProduceVoice(v, models));
 }
 
-export function creationReadiness(input, models, tones) {
+export function knownAudioMismatch(input, job) {
+  const issue = job?.input_issue;
+  return issue?.code === 'audio_script_mismatch' && input.soundMode === 'audio' &&
+    !!input.audio?.id && input.audio.id === issue.audio_id && input.text === issue.text;
+}
+
+export function creationReadiness(input, models, tones, job) {
   const materials = input.ai?.materials || [];
   const fields = [
     {id:'text', label:'文案', ready:!!input.text.trim() && [...input.text].length <= 5000},
-    {id:'voice', label:input.soundMode === 'audio' ? '声音' : '音色', ready:input.soundMode === 'audio' ? !!input.audio :
+    {id:'voice', label:input.soundMode === 'audio' ? '声音' : '音色', ready:input.soundMode === 'audio' ? !!input.audio && !knownAudioMismatch(input, job) :
       canProduceVoice(tones.find(v => v.id === input.toneId), models)},
     {id:'portrait', label:'人物图片', ready:!!input.portrait},
   ];

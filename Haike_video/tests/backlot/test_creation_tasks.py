@@ -31,6 +31,46 @@ def submit(queue, draft, n=1, kind="studio_graphic"):
                         parent_job_id=f"studio-{n}", frozen_request={"confirmed": True})
 
 
+def test_explicit_creation_collapses_before_filters_counts_and_pages(setup):
+    _, draft, queue, client = setup
+    jobs = []
+    for i, status in enumerate(['failed', 'failed', 'completed', 'completed']):
+        job = submit(queue, draft, 100+i); jobs.append(job)
+        queue.claim_next('worker'); queue.finish(job['job_id'], 'worker', status=status, stage='历史失败' if status == 'failed' else '制作完成')
+        if i: queue.link_creation(job['job_id'], jobs[i-1]['job_id'], 'recomposition')
+    data = client.get('/api/studio/tasks?limit=1').json()
+    assert data['counts']['all'] == data['counts']['completed'] == 1 and data['counts']['failed'] == 0
+    assert data['tasks'][0]['id'] == jobs[-1]['job_id'] and data['tasks'][0]['attempt_count'] == 4
+    assert client.get('/api/studio/tasks?status=failed').json()['tasks'] == []
+    old = client.get('/api/studio/tasks/'+jobs[0]['job_id']).json()
+    assert old['task']['status'] == 'failed' and old['task']['current_task_id'] == jobs[-1]['job_id']
+    assert len(old['attempts']) == 4 and not old['task']['is_current']
+    with pytest.raises(ProductionQueueConflict, match='更新'): queue.retry(jobs[0]['job_id'])
+    unrelated = submit(queue, draft, 105)
+    queue.claim_next('worker'); queue.finish(unrelated['job_id'], 'worker', status='completed', stage='另一次明确创作')
+    assert client.get('/api/studio/tasks').json()['counts']['all'] == 2
+
+
+def test_provider_wait_is_active_automatic_and_cancel_preserves_unknown_request(setup):
+    _, draft, queue, client = setup
+    job = submit(queue, draft, kind='studio_avatar')
+    queue.claim_next('worker')
+    queue.finish(job['job_id'], 'worker', status='ambiguous', stage='系统查询原请求',
+        error={'code':'provider_pending','message':'原请求处理中'}, safe_resume_point='studio_avatar_provider')
+    data = client.get('/api/studio/tasks?status=active').json()
+    assert data['counts']['active'] == 1 and data['counts']['needs_action'] == 0
+    assert data['tasks'][0]['status_label'] == '等待供应商返回' and not data['tasks'][0]['error']
+    assert not client.get('/api/studio/tasks?status=needs_action').json()['tasks']
+    assert queue.resume_provider_waits() == []
+    with queue._connection(immediate=True) as db: db.execute("UPDATE production_jobs SET updated_at='2000-01-01T00:00:00Z'")
+    assert queue.resume_provider_waits() == [job['job_id']]
+    assert queue.get(job['job_id'], include_private=True)['frozen_request'] == {'confirmed':True}
+    queue.claim_next('worker')
+    queue.finish(job['job_id'], 'worker', status='ambiguous', stage='继续查询', error={'code':'provider_pending'}, safe_resume_point='studio_avatar_provider')
+    queue.cancel(job['job_id'])
+    assert queue.get(job['job_id'])['status'] == 'cancelled' and queue.resume_provider_waits() == []
+
+
 def test_observed_progress_is_durable_owned_and_preserved_on_failure(setup):
     studio, draft, queue, _ = setup
     job = submit(queue, draft)
@@ -84,11 +124,23 @@ def test_failed_nonretryable_task_returns_to_original_draft_and_hides_private_in
     response = client.get(f'/api/studio/tasks/{job["job_id"]}')
     assert response.status_code == 200
     task = response.json()["task"]
-    assert task["edit_url"] == f'/avatar?draft={draft["id"]}'
+    assert task["edit_url"] == f'/avatar?draft={draft["id"]}&resume_task={job["job_id"]}#creation-voice'
+    assert task['error_code'] == 'audio_script_mismatch' and task['actions']['edit_label'] == '按文案配音或替换录音'
     assert task["actions"]["retry"] is False
     assert task["error"] == "核对原文与声音，未提交数字人"
     assert "must-not-leak" not in json.dumps(response.json())
     assert response.json()["events"]
+
+
+def test_avatar_form_receives_exact_failed_audio_binding_without_private_request(setup):
+    _, draft, queue, client = setup
+    frozen = {**draft,'text':'原文案','input':{'soundMode':'audio','audio':{'id':'sample-audio'}}}
+    job=queue.submit(project_id=draft['id'],kind='studio_avatar',source='workbench',priority='normal',parent_job_id='audio-test',
+        frozen_request={'draft':frozen,'key_identity':'private-account-binding'})
+    queue.claim_next('worker');queue.finish(job['job_id'],'worker',status='failed',stage='录音与文案不一致')
+    data=client.get(f"/api/studio/drafts/{draft['id']}/avatar-job").json()
+    assert data['job']['input_issue']=={'code':'audio_script_mismatch','audio_id':'sample-audio','text':'原文案'}
+    assert 'private-account-binding' not in json.dumps(data)
 
 
 def test_invalid_filters_fail_explicitly(setup):

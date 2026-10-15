@@ -40,3 +40,13 @@ test('刷新保留待核对提交，不存正文或凭据，也不恢复到其�
   assert.ok(!JSON.stringify([...values.values()]).includes('private text'));
   rememberSubmission(storage,null);assert.equal(readSubmission(storage,s.draft.id),null);
 });
+
+test('修正输入后沿原创作继续，刷新和提交均保留显式关联',async()=>{
+  const values=new Map(),storage={setItem:(k,v)=>values.set(k,v),getItem:k=>values.get(k),removeItem:k=>values.delete(k)};
+  const s={...submission(),resumeTask:'PQ-original'};
+  rememberSubmission(storage,s);
+  const restored=readSubmission(storage,s.draft.id),calls=[];
+  await enqueueAvatar(async(path,body)=>{calls.push(body);return {job_id:'PQ-next'};},restored);
+  assert.equal(calls[0].resume_task,'PQ-original');
+  assert.equal(calls[0].max_charge_micros,10000000);
+});

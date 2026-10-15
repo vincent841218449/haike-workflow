@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Film, ListChecks, LoaderCircle, Pause, Play, Plus, RefreshCw, Square, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Film, Info, ListChecks, LoaderCircle, Pause, Play, Plus, RefreshCw, Square, Sparkles } from 'lucide-react';
 import { TaskVideo } from './TaskVideo.jsx';
 import { DouyinRecovery } from './DouyinRecovery.jsx';
 import { api } from './studio-api.js';
@@ -21,13 +21,17 @@ function Progress({ task }) {
     <div className={`creation-progress-track ${known ? '' : 'indeterminate'}`} role="progressbar" aria-label={`${task.title}制作进度`} aria-valuemin={0} aria-valuemax={100} {...(known ? { 'aria-valuenow': p.percent } : { 'aria-valuetext': task.stage })}>
       <span style={known ? { width: `${p.percent}%` } : undefined}/>
     </div>
-    <span className="creation-progress-value">{known ? `${p.percent}%` : task.status === 'queued' ? '等待开始' : task.status === 'running' ? '处理中' : '已停止'}</span>
+    <span className="creation-progress-value">{known ? `${p.percent}%` : task.provider_wait ? '等待返回' : task.status === 'queued' ? '等待开始' : task.status === 'running' ? '处理中' : '已停止'}</span>
     {p.basis === 'steps' && <small>{p.completed}/{p.total} 步</small>}
   </div>;
 }
 function StateIcon({ task }) {
-  const Icon = task.status === 'completed' ? CheckCircle2 : task.status === 'running' ? LoaderCircle : ['failed', 'ambiguous'].includes(task.status) ? CircleAlert : Clock3;
+  const Icon = task.status === 'completed' ? CheckCircle2 : task.status === 'running' ? LoaderCircle : task.provider_wait ? Clock3 : ['failed', 'ambiguous'].includes(task.status) ? CircleAlert : Clock3;
   return <Icon size={16} className={task.status === 'running' ? 'task-spin' : ''}/>;
+}
+function AttemptHistory({detail, onSelect}) {
+  if (!detail?.attempts?.length || detail.attempts.length < 2) return null;
+  return <details className="creation-attempts"><summary>历史制作与版本 <small>{detail.attempts.length} 次记录</small></summary><p className="helper">历史问题和原调用均已保留，以当前制作进度为准。</p><ol>{[...detail.attempts].reverse().map((attempt, i)=><li key={attempt.id}><div><strong>{attempt.current?'当前制作':`历史记录 ${detail.attempts.length-i}`}</strong><span>{attempt.status_label} · {time(attempt.created_at)}</span><p>{attempt.stage}</p></div><Button variant="text" disabled={attempt.id===detail.task.id} onClick={()=>onSelect(attempt.id)}>{attempt.work_id?'查看成片':'查看记录'}<ChevronRight size={15}/></Button></li>)}</ol></details>;
 }
 export function CreationTasks() {
   const [view, setView] = useState(initialView), [data, setData] = useState(null), [error, setError] = useState('');
@@ -110,7 +114,7 @@ export function CreationTasks() {
     <Notice message={error} error/><Notice message={message}/>
     {loading && !data ? <div className="creation-loading" role="status"><LoaderCircle className="task-spin" size={22}/>正在读取创作任务…</div> : !tasks.length ? <EmptyState title={view.status === 'all' && view.type === 'all' ? '还没有创作任务' : '当前筛选下没有任务'} action={<Button onClick={()=>filter({status:'all',type:'all'})}>查看全部任务</Button>}>提交制作后，进度和视频会保存在这里。<a href="/avatar?new=1">开始新创作<ArrowRight size={14}/></a></EmptyState> : <section className="creation-list" aria-label="创作任务列表">{tasks.map(task => <article className={`creation-row state-${task.status}`} key={task.id}>
       <div className="creation-row-body"><span className={`creation-kind kind-${task.type}`}>{task.type_label}</span><h2><button aria-label={`查看任务文案：${task.title}`} onClick={event => inspect(task, event)}>{task.excerpt || task.title}</button></h2><p className="creation-stage">{task.template_name ? `${task.template_name} · ` : ''}{task.stage}</p><div className="creation-row-meta"><span>提交制作：{time(task.created_at)}</span>{task.queue_position && <span>当前排在第 {task.queue_position} 位</span>}</div>{task.error && task.error !== task.stage && <p className="creation-row-error"><CircleAlert size={14}/>{task.error}</p>}</div>
-      <span className="creation-ratio" aria-label={`画幅 ${task.ratio || '待确定'}`}>{task.ratio || '—'}</span>
+      <span className="creation-ratio" aria-label={`画幅 ${task.ratio || '待确定'}`}>{task.ratio || '—'}{task.attempt_count>1&&<small>{task.attempt_count} 次记录</small>}</span>
       <span className={`creation-state ${task.status}`}><StateIcon task={task}/>{task.status_label}</span><Progress task={task}/>
       <button className="creation-details" onClick={event => inspect(task, event)} aria-label={`${task.work_id?'查看视频':'查看任务'}：${task.title}`}><ChevronRight size={21}/></button>
     </article>)}</section>}
@@ -118,10 +122,14 @@ export function CreationTasks() {
     </section>
     {selected && <Dialog title={detail?.task.title || '创作任务详情'} wide={!!detail?.task.work_id} onClose={close} busy={busy}>
       {detail ? <><div className="creation-detail-header"><span className={`creation-state ${detail.task.status}`}><StateIcon task={detail.task}/>{detail.task.status_label}</span><span className="creation-kind">{detail.task.type_label}</span>{detail.task.ratio && <span className="creation-ratio">{detail.task.ratio}</span>}</div><p className="creation-stage">{detail.task.stage}</p>{!detail.task.work_id&&<Progress task={detail.task}/>}<Notice error message={detail.task.error}/><Notice message={detail.task.notice}/>
+        {!detail.task.is_current&&<div className="creation-latest"><CheckCircle2 size={18}/><span>你正在查看历史制作记录。</span><Button onClick={()=>setSelected(detail.task.current_task_id)}>查看当前制作<ArrowRight size={15}/></Button></div>}
+        {!detail.task.work_id&&detail.task.latest_success_id&&<Button variant="primary" onClick={()=>setSelected(detail.task.latest_success_id)}>播放已完成视频<Play size={15}/></Button>}
+        {detail.task.billing_pending&&<div className="creation-billing-note"><Info size={16}/>费用回执核对中；不影响已生成视频的播放、下载，系统不会重复生成。</div>}
         {detail.task.work_id&&<TaskVideo key={detail.task.work_id} workId={detail.task.work_id} initialVersion={detail.task.version_id} onUpdate={()=>setRefresh(v=>v+1)}/>}
+        <AttemptHistory detail={detail} onSelect={setSelected}/>
         <DouyinRecovery job={{...detail.task,job_id:detail.task.id}} onJob={()=>setRefresh(v=>v+1)}/>
         <details className="creation-history" open={detail.task.work_id?undefined:true}><summary>制作详情与记录 <small>{detail.events.length} 条</small></summary>{historyContent}</details>
-        <div className="creation-detail-actions"><Button href={detail.task.edit_url}>返回制作项目<ArrowRight size={16}/></Button>{detail.task.actions.retry && <Button disabled={busy} onClick={() => act(detail.task, 'retry')}><Play size={16}/>继续原任务</Button>}{detail.task.actions.pause && <Button disabled={busy} onClick={() => act(detail.task, 'pause')}><Pause size={16}/>暂停排队</Button>}{detail.task.actions.resume && <Button disabled={busy} onClick={() => act(detail.task, 'resume')}><Play size={16}/>继续排队</Button>}{detail.task.actions.cancel && <Button disabled={busy} onClick={() => act(detail.task, 'cancel')}><Square size={14}/>取消后续制作</Button>}</div>
+        <div className="creation-detail-actions"><Button href={detail.task.edit_url}>{detail.task.actions.edit_label||'返回制作项目'}<ArrowRight size={16}/></Button>{detail.task.is_current&&detail.task.actions.retry && <Button disabled={busy} onClick={() => act(detail.task, 'retry')}><Play size={16}/>继续原任务</Button>}{detail.task.actions.pause && <Button disabled={busy} onClick={() => act(detail.task, 'pause')}><Pause size={16}/>暂停排队</Button>}{detail.task.actions.resume && <Button disabled={busy} onClick={() => act(detail.task, 'resume')}><Play size={16}/>继续排队</Button>}{detail.task.actions.cancel && <Button disabled={busy} onClick={() => act(detail.task, 'cancel')}><Square size={14}/>取消后续制作</Button>}</div>
       </> : !detailError && <p role="status">正在读取任务详情…</p>}<Notice message={detailError} error/>
       {pending&&<div className="creation-cancel-confirm"><p>停止后续制作？已提交的模型调用仍会保留，实际费用以调用明细为准。</p><Button disabled={busy} onClick={()=>setPending(null)}>继续等待</Button><Button variant="danger" disabled={busy} onClick={cancel}>确认停止后续制作</Button></div>}
     </Dialog>}

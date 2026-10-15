@@ -21,7 +21,7 @@ export function TaskVideo({workId, initialVersion, onUpdate}) {
   },[workId,initialVersion]);
   async function confirm(){
     setBusy(true);setError('');
-    try{const w=await api(`/api/works/${workId}/confirm`,{revision:work.revision,version_id:version,evidence:'用户在创作任务中观看并确认最终成片'});setWork(w);setMessage('当前观看版本已确认。');onUpdate?.();}
+    try{const w=await api(`/api/works/${workId}/confirm`,{revision:work.revision,version_id:version,evidence:'用户在创作任务中选择此版本用于准备发布'});setWork(w);setMessage('已选择此版本用于准备发布。');onUpdate?.();}
     catch(e){setError(e.message);}finally{setBusy(false);}
   }
   async function chooseCover(e){
@@ -38,13 +38,13 @@ export function TaskVideo({workId, initialVersion, onUpdate}) {
   const media=work?.versions.find(v=>v.version_id===version)?.media;
   const mediaUrl=`/api/works/${encodeURIComponent(workId)}/media?version=${encodeURIComponent(version)}`;
   const approved=work?.final_version_id===version;
-  return <section className="task-video" aria-label="成片预览与审核">
+  return <section className="task-video" aria-label="成片播放与下载">
     <Notice message={error} error/><Notice message={message}/>
     {!work?!error&&<p role="status" className="helper">正在加载成片…</p>:<>
       <div className="task-video-toolbar"><label>观看版本<select aria-label="观看版本" value={version} disabled={busy} onChange={e=>{setVersion(e.target.value);setMessage('');}}>{work.versions.map((v,i)=><option key={v.version_id} value={v.version_id}>版本 {i+1}{v.version_id===work.final_version_id?' · 已确认':i===work.versions.length-1?' · 最新版本':''}</option>)}</select></label><span>{media?.width} × {media?.height}{media?.duration?` · ${Number(media.duration).toFixed(1)}秒`:''}</span></div>
       <video key={version} controls preload="metadata" className="sample-video task-video-player" src={mediaUrl}/>
-      <p className="helper">请观看并核对声音、文字、画面及素材来源，确认后可准备发布资料。</p>
-      <div className="task-video-actions"><Button href={mediaUrl} download={`${work.title}.mp4`}><Download size={16}/>下载视频</Button>{approved?<span className="task-reviewed"><CheckCircle2 size={17}/>此版本已确认</span>:<Button variant="primary" loading={busy} disabled={!version} onClick={confirm}>观看后确认最终成片</Button>}<Button href={`/tasks?work=${encodeURIComponent(workId)}`} variant="text" className="task-video-permalink">成片链接<ArrowRight size={14}/></Button></div>
+      <p className="helper">视频可以直接播放、下载。需要发布时，再选择用于发布的版本。</p>
+      <div className="task-video-actions"><Button href={mediaUrl} download={`${work.title}.mp4`}><Download size={16}/>下载视频</Button>{approved?<span className="task-reviewed"><CheckCircle2 size={17}/>已选为发布版本</span>:<Button loading={busy} disabled={!version} onClick={confirm}>使用此版本准备发布</Button>}<Button href={`/tasks?work=${encodeURIComponent(workId)}`} variant="text" className="task-video-permalink">成片链接<ArrowRight size={14}/></Button></div>
       {approved&&<details className="task-publish-details"><summary>发布资料与排期</summary><form className="studio-form" onSubmit={save}><label>发布标题<input required maxLength={80} value={fields.title||''} onChange={e=>setFields({...fields,title:e.target.value})}/></label><label>详情<textarea required maxLength={2000} rows={3} value={fields.desc||''} onChange={e=>setFields({...fields,desc:e.target.value})}/></label><label>话题<input value={fields.topics||''} onChange={e=>setFields({...fields,topics:e.target.value})}/></label><Button disabled={busy} onClick={()=>cover.current.click()}><Upload size={16}/>{fields.cover_path?'更换封面（已上传）':'上传发布封面（3:4）'}</Button><input hidden ref={cover} type="file" accept="image/png,image/jpeg" onChange={chooseCover}/><label className="checkbox-row"><input type="checkbox" checked={!!fields.rights_confirmed} onChange={e=>setFields({...fields,rights_confirmed:e.target.checked})}/>已确认人物、声音和素材的使用范围</label><div className="button-row"><Button type="submit" loading={busy}>保存发布资料</Button><Button href={`/calendar?work=${workId}`} variant="primary">安排日历<ArrowRight size={16}/></Button></div></form></details>}
     </>}
   </section>;

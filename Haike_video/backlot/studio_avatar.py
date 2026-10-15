@@ -104,8 +104,7 @@ def validate(studio, draft):
 def quote(studio, draft):
     validate(studio, draft)
     from backlot.studio_asr import snapshot
-    needs_clock = draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")
-    asr = snapshot(studio) if needs_clock else {"provider": "gateway"}
+    asr = snapshot(studio)  # Verify real speech before avatar spending in every new creation.
     sdk = studio.client()
     if draft['input'].get('soundMode') == 'voice' and draft['input'].get('voiceId') == 'haike/cosyvoice-system':
         from backlot.studio_voices import _system_catalogue
@@ -124,13 +123,12 @@ def quote(studio, draft):
         duration = prepare_audio(studio.asset(draft["input"]["audio"]["id"], draft["id"]), audio)
         prepared.update(audio_path=str(audio), duration=duration, audio_file=sdk.upload(audio, "audio")["id"])
         quotes["avatar"] = sdk.quote("haike/avatar", {"audio_file": prepared["audio_file"], "image_file": prepared["image_file"]}, draft["id"])
-        if (draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")) and asr["provider"] == "gateway": quotes["asr"] = sdk.quote("haike/tencent-asr", {"audio_file": prepared["audio_file"]}, draft["id"])
+        if asr["provider"] == "gateway": quotes["asr"] = sdk.quote("haike/tencent-asr", {"audio_file": prepared["audio_file"]}, draft["id"])
     else:
         quotes["tts"] = sdk.quote(draft["input"]["voiceId"], tts_input(draft), draft["id"])
         # Availability is checked before any TTS charge. Its exact avatar quote needs the real audio.
         models = {m.get("id") or m.get("model") for m in sdk.request("/capabilities").get("items", [])}
-        needs_asr = draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")
-        required = {"haike/avatar"} | ({"haike/tencent-asr"} if needs_asr and asr["provider"] == "gateway" else set())
+        required = {"haike/avatar"} | ({"haike/tencent-asr"} if asr["provider"] == "gateway" else set())
         if required - models: raise WorkError("数字人或字幕模型尚不可用，请由管理员确认成本费率后再制作")
     data = {"id": identity, "draft": draft, "prepared": prepared, "quotes": quotes, "asr": asr, "key_identity": key_identity(studio), "created_at": datetime.now(timezone.utc).isoformat()}
     with studio.db() as db: db.execute("INSERT INTO studio_quotes VALUES(?,?)", (identity, json.dumps(data, ensure_ascii=False)))
@@ -153,7 +151,7 @@ def frozen_request(studio, draft, quote_id, maximum):
     if type(maximum) is not int or not 1 <= maximum <= 1000000000: raise WorkError("请填写有效费用上限，最高1,000元")
     if maximum < public_quote(data)["known_max_micros"]: raise WorkError("费用上限低于已读取报价，未提交任务")
     # The original gateway quote expires server-side. Do not silently replace it before charging.
-    return {**data, "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
+    return {**data, "workflow_version": 2, "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
 
 
 def public_media_address(host, port):
@@ -297,7 +295,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     def save(): atomic_private(state_path, state)
     steps_done = 0
     draft_input = request["draft"]["input"]
-    needs_clock = bool(draft_input.get("subtitles", True) or draft_input.get("ai", {}).get("enabled"))
+    needs_clock = bool(request.get("workflow_version", 1) >= 2 or draft_input.get("subtitles", True) or draft_input.get("ai", {}).get("enabled"))
     needs_ai = bool(draft_input.get("ai", {}).get("enabled"))
     steps_total = 4 + int(needs_clock) + int(needs_ai)
     def publish_progress(stage, advance=False):
@@ -307,18 +305,27 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     def paid(stage, model, inputs):
         if stage not in state["stages"]:
             q = request["quotes"].get(stage) or sdk.quote(model, inputs, request["draft"]["id"])
-            committed = sum(int(s["quote"]["max_charge_micros"]) for s in state["stages"].values())
+            committed = request.get('inherited_charge_micros', 0) + sum(int(s["quote"]["max_charge_micros"]) for s in state["stages"].values())
             if committed + int(q["max_charge_micros"]) > request["max_charge_micros"]:
-                raise WorkError("后续报价超过本次总费用上限，已完成产物保留；未提交这一步")
+                raise WorkError("后续报价与原调用合计超过本次总费用上限，已完成产物保留；未提交这一步", "budget_exceeded")
             state["stages"][stage] = {"quote": q}; save()
         s = state["stages"][stage]
         if not s.get("job"):
             s["quote"]=renew_if_expired(sdk,s["quote"]);save()
         if not s.get("intent"):
-            identity = "call_" + hashlib.sha256((request["id"] + ":" + stage).encode()).hexdigest()[:32]
-            s["intent"] = sdk.confirm(s["quote"], int(s["quote"]["max_charge_micros"]), identity); save()
+            identity = s.get('intent_identity') or "call_" + hashlib.sha256((request["id"] + ":" + stage).encode()).hexdigest()[:32]
+            s['intent_identity'] = identity; save()
+            try: s["intent"] = sdk.confirm(s["quote"], int(s["quote"]["max_charge_micros"]), identity); save()
+            except (TimeoutError, OSError):
+                if request.get('workflow_version', 1) >= 2:
+                    raise WorkError('原请求回执暂未返回，系统将按原编号查询，无需重新提交', 'provider_pending') from None
+                raise
         # A healthy avatar run can exceed ten minutes; keep polling the same intent.
-        job = sdk.wait(s["intent"], timeout=3600 if stage == "avatar" else 600)
+        try: job = sdk.wait(s["intent"], timeout=3600 if stage == "avatar" else 600)
+        except (TimeoutError, OSError):
+            if request.get('workflow_version', 1) >= 2:
+                raise WorkError('原模型请求查询暂时中断，系统将自动继续', 'provider_pending') from None
+            raise
         s["job"] = job; save()
         result = job.get("result") or {}
         artifact_ready = (stage == "avatar" and job["status"] == "submission_unknown"
@@ -326,9 +333,11 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
                           and bool(job.get("upstream_id"))
                           and isinstance(result.get("video_url"), str) and bool(result["video_url"]))
         if job["status"] != "succeeded" and not artifact_ready:
-            if job.get("billing_source") == "local-provider":
-                raise WorkError(job.get("message") or "本地配音尚未完成，请恢复原任务", "unavailable" if job["status"] not in {"failed", "cancelled"} else "invalid")
             if job["status"] in {"failed", "cancelled"}: raise WorkError("模型任务未成功，请到账户中心核对原调用明细")
+            if request.get("workflow_version", 1) >= 2:
+                raise WorkError("正在等待原模型请求返回；系统会自动查询，无需重复提交", "provider_pending")
+            if job.get("billing_source") == "local-provider":
+                raise WorkError(job.get("message") or "本地配音尚未完成，请恢复原任务", "unavailable")
             raise WorkError("原模型任务仍在处理或结果待核对，请恢复此任务；不会新建付费调用", "unavailable")
         if artifact_ready: publish_progress("数字人视频已返回，费用回执待核对")
         return result
@@ -352,7 +361,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         publish_progress("原始音轨已就绪", True)
         cues = []
         clock_cues = []
-        if draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled"):
+        if needs_clock:
             publish_progress("识别真实声音与字幕时间轴")
             if asr["provider"] == "local-whisper":
                 from backlot.studio_asr import transcribe
@@ -361,11 +370,18 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
                 result = paid("asr", "haike/tencent-asr", {"audio_file": p["audio_file"]})
             cues = captions(result, p["duration"])
             clock_cues = clock_captions(result, p["duration"])
+            if request.get("workflow_version", 1) >= 2:
+                from backlot.studio_storyboard import verify_spoken_script
+                verify_spoken_script(draft["text"], clock_cues)
             publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
         if needs_ai: publish_progress("理解分镜并匹配用户与网络素材")
         storyboard = produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
         if needs_ai: publish_progress("分镜与素材已就绪", True)
+        from backlot.studio_preflight import prepare
+        if draft["input"].get("motion"): publish_progress("检查模板、素材与真实口播时长")
+        composition = prepare(studio, draft, output_dir, Path(p["audio_path"]), clock_cues, storyboard, cues if draft["input"].get("subtitles", True) else [])
+        if composition["notice"]: publish_progress(composition["notice"])
         video = output_dir / "avatar-source.mp4"
         publish_progress("数字人生成与结果下载")
         if not video.exists():
@@ -373,24 +389,40 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             download_result(result["video_url"], video)
         publish_progress("数字人画面已就绪", True)
         from backlot.studio_composition import compose_avatar
-        if draft["input"].get("motion"):
+        if composition["mode"] == "motion":
             from backlot.studio_storyboard import compose_motion
             publish_progress("渲染动效画面、字幕与配乐")
-            result = compose_motion(studio, draft, output_dir, video, Path(p["audio_path"]), clock_cues, storyboard, caption_cues=cues if asr["provider"] == "local-whisper" else None)
+            try:
+                result = compose_motion(studio, draft, output_dir, video, Path(p["audio_path"]), clock_cues, storyboard, caption_cues=cues if asr["provider"] == "local-whisper" else None)
+            except WorkError as exc:
+                if draft["input"].get("templatePolicy", "auto") == "strict": raise
+                result = {"status": "failed", "stage": str(exc)}
             if result.get("status") == "completed":
                 publish_progress("动效画面已合成", True)
                 publish_progress("成片核验完成，正在登记作品", True)
-            return result
+            if result.get("status") == "completed":
+                result.setdefault('result', {}).update(composition_mode='motion')
+                return result
+            if draft["input"].get("templatePolicy", "auto") == "strict": return result
+            from backlot.studio_preflight import basic_draft
+            composition = {**composition, "mode": "basic", "draft": basic_draft(draft), "notice": "动效合成未通过，已复用现有人物和声音继续制作基础口播。"}
+            atomic_private(output_dir / "composition-preflight.json", composition)
+            publish_progress(composition["notice"])
         publish_progress("合成人物、画面、字幕与音轨")
-        output = compose_avatar(output_dir, draft, video, Path(p["audio_path"]), p["duration"], cues if draft["input"].get("subtitles", True) else [], storyboard=storyboard) if storyboard else compose_avatar(output_dir, draft, video, Path(p["audio_path"]), p["duration"], cues)
+        effective = composition["draft"]
+        output = compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues if draft["input"].get("subtitles", True) else [], storyboard=storyboard) if storyboard else compose_avatar(output_dir, effective, video, Path(p["audio_path"]), p["duration"], cues)
         publish_progress("口播画面已合成", True)
-        report = {"template_id": draft["template_id"], "adapter_version": 1, "sources": [{"path": str(video), "sha256": sha(video)}, {"path": p["audio_path"], "sha256": sha(p["audio_path"])}],
+        report = {"template_id": effective["template_id"], "requested_template_id": draft["template_id"], "adapter_version": 1, "sources": [{"path": str(video), "sha256": sha(video)}, {"path": p["audio_path"], "sha256": sha(p["audio_path"])}],
                   "caption_timing": "Whisper word-level" if cues and asr["provider"] == "local-whisper" else "ASR sentence-level" if cues else "off", "provider_jobs": [s["job"]["id"] for s in state["stages"].values()], "human_review": "pending"}
         atomic_private(output_dir / "qa.json", report)
         # This callback runs only after composition's media checks and the QA receipt exist.
         if on_progress: on_progress("成片核验完成，正在登记作品", steps_done + 1, steps_total)
-        return {"status": "completed", "stage": "数字人口播已合成，等待观看审核", "result": {"output_path": str(output), "qa_status": "pending", "provider_jobs": report["provider_jobs"]}}
+        return {"status": "completed", "stage": "视频已制作完成，可直接播放和下载", "result": {"output_path": str(output), "qa_status": "pending", "notice": composition["notice"], "composition_mode": "basic", "effective_template_id": effective['template_id'], "provider_jobs": report["provider_jobs"]}}
     except WorkError as exc:
+        if exc.code == "provider_pending":
+            return {"status": "ambiguous", "stage": str(exc), "error": {"code": "provider_pending", "message": str(exc), "type": "StudioProviderPending"}, "safe_resume_point": "studio_avatar_provider"}
+        if exc.code in {"audio_script_mismatch", "template_incompatible", "budget_exceeded"}:
+            return {"status": "awaiting_human", "stage": str(exc), "error": {"code": exc.code, "message": str(exc), "type": "StudioInput"}, "safe_resume_point": "studio_avatar_input"}
         if exc.code == "human_required":
             return {"status": "awaiting_human", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMaterialRightsRequired"}, "retryable": False, "safe_resume_point": "studio_avatar_material_rights"}
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioAvatar", "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}

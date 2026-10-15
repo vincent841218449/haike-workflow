@@ -23,7 +23,8 @@ def compose_avatar(folder, draft, video, audio, duration, cues, storyboard=None)
     if not info.get("video") or abs(info["duration"] - duration) > 1: raise WorkError("数字人片段与驱动音频时长不一致，保留原素材待核对")
     shutil.copy2(audio, public / "narration.wav")
     shutil.copy2(Path(__file__).parent / "ui/brand/haike-company-logo.png", public / "haike-logo.png")
-    props = {"template": draft["template_id"], "duration": duration, "title": draft["title"], "text": draft["text"], "titleSize": draft["layout"].get("title_size", 60), "accent": draft["layout"].get("accent", "#316dd6"), "captions": cues}
+    landscape = draft["input"].get("outputLayout") == "landscape"
+    props = {"template": draft["template_id"], "outputLayout": "landscape" if landscape else "portrait", "duration": duration, "title": draft["title"], "text": draft["text"], "titleSize": draft["layout"].get("title_size", 60), "accent": draft["layout"].get("accent", "#316dd6"), "captions": cues}
     if storyboard:
         from backlot.studio import Studio
         from backlot.work_catalog import sha
@@ -53,9 +54,10 @@ def compose_avatar(folder, draft, video, audio, duration, cues, storyboard=None)
     r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", "apad", "-t", str(frames/30), "-c:a", "aac", str(output)], capture_output=True, timeout=90)
     if r.returncode: raise WorkError("最终音视频封装失败，渲染文件已保留", "unavailable")
     info = media_probe(output)
-    expected_height = 1440 if draft["template_id"].startswith("avatar-template3") else 1920
+    expected_height = 1080 if landscape else 1440 if draft["template_id"].startswith("avatar-template3") else 1920
+    expected_width = 1920 if landscape else 1080
     decode = subprocess.run([ffmpeg, "-v", "error", "-i", str(output), "-f", "null", "-"], capture_output=True, timeout=180)
-    if decode.returncode or not info.get("audio") or info["video"]["width"] != 1080 or info["video"]["height"] != expected_height or abs(info["duration"] - frames/30) > .1:
+    if decode.returncode or not info.get("audio") or info["video"]["width"] != expected_width or info["video"]["height"] != expected_height or abs(info["duration"] - frames/30) > .1:
         raise WorkError("成片技术校验未通过，产物保留待核对", "unavailable")
     atomic_private(folder / "render-result.json", {"template_adapter": "studio-avatar-v1", "media": info, "native_render": str(raw), "technical_decode": "passed", "human_review": "pending"})
     return output

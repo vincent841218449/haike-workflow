@@ -154,6 +154,15 @@ class ProductionQueue:
                     ON production_jobs(status, priority_rank DESC, created_at ASC, job_id ASC);
                 CREATE INDEX IF NOT EXISTS production_jobs_project_idx
                     ON production_jobs(project_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS production_creation_links (
+                    job_id TEXT PRIMARY KEY REFERENCES production_jobs(job_id),
+                    creation_id TEXT NOT NULL REFERENCES production_jobs(job_id),
+                    previous_job_id TEXT REFERENCES production_jobs(job_id),
+                    relation TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS production_creation_family
+                    ON production_creation_links(creation_id);
                 CREATE TABLE IF NOT EXISTS production_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT NOT NULL,
@@ -307,6 +316,8 @@ class ProductionQueue:
                 ),
             )
             self._event(connection, job_id, "submitted", None, "queued", {"source": source})
+            previous = (request.get('continuation') or {}).get('previous_job_id')
+            if previous: self._link_creation(connection, job_id, previous, 'continuation')
             row = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()
         return self._public_row(row)
 
@@ -325,9 +336,63 @@ class ProductionQueue:
             raise ProductionQueueError("生产任务不存在")
         return self._private_row(row) if include_private else self._public_row(row)
 
+    def link_creation(self, job_id: str, previous_job_id: str, relation: str = "continuation") -> dict:
+        """Explicit lineage only; titles and similar scripts never imply identity."""
+        if relation not in {"continuation", "regeneration", "recomposition", "polish"}:
+            raise ProductionQueueError("制作关联类型无效")
+        with self._connection(immediate=True) as db:
+            return self._link_creation(db, job_id, previous_job_id, relation)
+
+    def _link_creation(self, db, job_id, previous_job_id, relation):
+        job = db.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()
+        previous = db.execute("SELECT * FROM production_jobs WHERE job_id=?", (previous_job_id,)).fetchone()
+        if not job or not previous or job_id == previous_job_id:
+            raise ProductionQueueError("制作关联任务不存在或无效")
+        if (job['project_id'], job['kind']) != (previous['project_id'], previous['kind']) or job['created_at'] <= previous['created_at']:
+            raise ProductionQueueConflict("只能关联同一项目较早的同类制作记录")
+        parent = db.execute("SELECT creation_id FROM production_creation_links WHERE job_id=?", (previous_job_id,)).fetchone()
+        root = parent['creation_id'] if parent else previous_job_id
+        existing = db.execute("SELECT * FROM production_creation_links WHERE job_id=?", (job_id,)).fetchone()
+        if existing:
+            if (existing['creation_id'], existing['previous_job_id'], existing['relation']) != (root, previous_job_id, relation):
+                raise ProductionQueueConflict("已有制作关联不能覆盖")
+        else:
+            if db.execute("SELECT 1 FROM production_creation_links WHERE creation_id=?", (job_id,)).fetchone():
+                raise ProductionQueueConflict("请先关联较早记录，不能改变已有制作链的根节点")
+            db.execute("INSERT INTO production_creation_links VALUES(?,?,?,?,?)", (job_id, root, previous_job_id, relation, _now()))
+            self._event(db, job_id, "creation_linked", None, None, {"creation_id": root, "previous_job_id": previous_job_id, "relation": relation})
+        return {"creation_id": root, "previous_job_id": previous_job_id, "relation": relation}
+
+    def creation_members(self, job_id: str) -> list[dict]:
+        with self._connection() as db:
+            link = db.execute("SELECT creation_id FROM production_creation_links WHERE job_id=?", (job_id,)).fetchone()
+            root = link['creation_id'] if link else job_id
+            rows = db.execute("SELECT j.*, l.previous_job_id,l.relation FROM production_jobs j LEFT JOIN production_creation_links l ON l.job_id=j.job_id WHERE j.job_id=? OR l.creation_id=? ORDER BY j.created_at,j.job_id", (root, root)).fetchall()
+        if not rows: raise ProductionQueueError("生产任务不存在")
+        return [{**self._private_row(row), "creation_id": root} for row in rows]
+
+    def resume_provider_waits(self, *, minimum_age: int = 30) -> list[str]:
+        """Re-enter only the original durable request; never revive legacy failures."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(30, minimum_age))).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        resumed = []
+        with self._connection(immediate=True) as db:
+            rows = db.execute("SELECT * FROM production_jobs WHERE kind='studio_avatar' AND status='ambiguous' AND safe_resume_point='studio_avatar_provider' AND json_extract(error_json,'$.code')='provider_pending' AND updated_at<=? AND cancel_requested=0", (cutoff,)).fetchall()
+            for row in rows:
+                if db.execute("SELECT 1 FROM production_jobs WHERE project_id=? AND kind=? AND status IN ('queued','running','paused')", (row['project_id'], row['kind'])).fetchone(): continue
+                # A superseded attempt must never resume behind a newer version.
+                root = db.execute("SELECT creation_id FROM production_creation_links WHERE job_id=?", (row['job_id'],)).fetchone()
+                family = root['creation_id'] if root else row['job_id']
+                if db.execute("SELECT 1 FROM production_creation_links l JOIN production_jobs j ON j.job_id=l.job_id WHERE l.creation_id=? AND j.created_at>?", (family, row['created_at'])).fetchone(): continue
+                db.execute("UPDATE production_jobs SET status='queued',stage='自动查询原数字人请求',error_json='{}',finished_at=NULL,updated_at=?,revision=revision+1 WHERE job_id=?", (_now(), row['job_id']))
+                self._event(db, row['job_id'], "provider_recheck", "ambiguous", "queued")
+                resumed.append(row['job_id'])
+        return resumed
+
     def list(self, *, project_id: str | None = None, limit: int = 80,
              kinds: tuple[str, ...] | None = None, statuses: tuple[str, ...] | None = None,
-             offset: int = 0, result_output_paths: tuple[str, ...] | None = None) -> dict[str, Any]:
+             offset: int = 0, result_output_paths: tuple[str, ...] | None = None,
+             collapse_creations: bool = False, include_provider_waits: bool = False,
+             exclude_provider_waits: bool = False) -> dict[str, Any]:
         limit = min(200, max(1, int(limit)))
         offset = max(0, int(offset))
         clauses, parameters = [], []
@@ -336,8 +401,13 @@ class ProductionQueue:
             parameters.append(project_id)
         for field, values in (("kind", kinds), ("status", statuses)):
             if values is not None:
-                clauses.append(f"{field} IN ({','.join('?' for _ in values)})" if values else "0")
+                clause = f"{field} IN ({','.join('?' for _ in values)})" if values else "0"
+                if field == 'status' and include_provider_waits:
+                    clause = f"({clause} OR (status='ambiguous' AND json_extract(error_json,'$.code')='provider_pending'))"
+                clauses.append(clause)
                 parameters.extend(values)
+        if exclude_provider_waits:
+            clauses.append("NOT (status='ambiguous' AND COALESCE(json_extract(error_json,'$.code'),'')='provider_pending')")
         if result_output_paths is not None:
             clauses.append(f"json_extract(result_json,'$.output_path') IN ({','.join('?' for _ in result_output_paths)})" if result_output_paths else "0")
             parameters.extend(result_output_paths)
@@ -351,12 +421,17 @@ class ProductionQueue:
             "created_at DESC,job_id ASC"
         )
         with self._connection() as connection:
+            source = "production_jobs"
+            if collapse_creations:
+                # Collapse BEFORE filtering, counting or paging. Historical failures
+                # remain addressable by their exact job IDs in the detail endpoint.
+                source = "(SELECT * FROM (SELECT j.*,COALESCE(l.creation_id,j.job_id) AS creation_id,ROW_NUMBER() OVER(PARTITION BY COALESCE(l.creation_id,j.job_id) ORDER BY j.created_at DESC,j.job_id DESC) AS creation_rank FROM production_jobs j LEFT JOIN production_creation_links l ON l.job_id=j.job_id) WHERE creation_rank=1)"
             rows = connection.execute(
-                f"SELECT * FROM production_jobs{where} ORDER BY {ordering} LIMIT ? OFFSET ?",
+                f"SELECT * FROM {source}{where} ORDER BY {ordering} LIMIT ? OFFSET ?",
                 (*parameters, limit, offset),
             ).fetchall()
             count_rows = connection.execute(
-                f"SELECT status,COUNT(*) AS count FROM production_jobs{where} GROUP BY status", parameters,
+                f"SELECT status,COUNT(*) AS count,SUM(CASE WHEN status='ambiguous' AND json_extract(error_json,'$.code')='provider_pending' THEN 1 ELSE 0 END) AS provider_waits FROM {source}{where} GROUP BY status", parameters,
             ).fetchall()
             queued = connection.execute(
                 "SELECT job_id FROM production_jobs WHERE status='queued' "
@@ -381,6 +456,7 @@ class ProductionQueue:
                 "failure_count": counts.get("failed", 0),
                 "completed_count": counts.get("completed", 0),
                 "cancelled_count": counts.get("cancelled", 0),
+                "provider_wait_count": sum(int(row['provider_waits']) for row in count_rows),
             }
         )
         return summary
@@ -528,7 +604,8 @@ class ProductionQueue:
             if row is None:
                 raise ProductionQueueError("生产任务不存在")
             status = str(row["status"])
-            if status in {"queued", "paused"}:
+            automatic_wait = status == 'ambiguous' and _decode(row['error_json'], {}).get('code') == 'provider_pending'
+            if status in {"queued", "paused", "awaiting_human"} or automatic_wait:
                 now = _now()
                 connection.execute(
                     "UPDATE production_jobs SET status='cancelled',stage='已取消待执行任务',"
@@ -553,6 +630,10 @@ class ProductionQueue:
             row = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()
             if row is None:
                 raise ProductionQueueError("生产任务不存在")
+            link = connection.execute("SELECT creation_id FROM production_creation_links WHERE job_id=?", (job_id,)).fetchone()
+            root = link['creation_id'] if link else job_id
+            if connection.execute("SELECT 1 FROM production_creation_links l JOIN production_jobs j ON j.job_id=l.job_id WHERE l.creation_id=? AND j.created_at>?", (root, row['created_at'])).fetchone():
+                raise ProductionQueueConflict('这条创作已有更新的制作记录，请打开当前制作，原记录保持不变')
             if row["status"] == "ambiguous":
                 raise ProductionQueueConflict("供应商受理状态不明确，核对原任务后才能恢复")
             material_confirmation = row["status"] == "awaiting_human" and row["kind"] == "studio_avatar" and row["safe_resume_point"] == "studio_avatar_material_rights"
@@ -696,6 +777,7 @@ class ProductionQueue:
         private["wait_reason"] = (
             "等待前序生产任务释放执行资格" if private["status"] == "queued"
             else "任务已暂停" if private["status"] == "paused"
+            else "系统自动查询原请求，无需重复提交" if private["status"] == "ambiguous" and private.get('error', {}).get('code') == 'provider_pending'
             else "供应商受理状态需要人工核对" if private["status"] == "ambiguous"
             else "底层生产管线正在等待人工确认" if private["status"] == "awaiting_human"
             else ""

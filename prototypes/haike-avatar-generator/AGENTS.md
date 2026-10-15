@@ -48,3 +48,9 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Creation tasks own playback, version selection, download, review and publishing-material preparation. `/projects` is a compatibility redirect to `/tasks`, preserving the work query. The former standalone works page and navigation entry are removed; retain the underlying work/version APIs and media.
 - A task opens the version it produced, with its actual media ratio. Task summaries use the frozen submission, even when the editable draft changes. An acknowledged active schedule applies only to its exact video version.
 - The always-visible template entry opens basic and motion catalogs with previews. Choosing a template saves the choice and preserves script, voice/audio, portrait and uploaded materials. Previewing existing demos makes no paid generation call.
+
+## Accepted automatic recovery (2026-10-15)
+
+- Default to automatic audio/script and template compatibility checks before avatar spending. Incompatible motion content uses the basic circle layout with its selected aspect ratio. Strict template behavior is optional under advanced settings. Project sample recordings are audition-only.
+- Routine material decisions and intermediate checks run automatically. Require input only for missing/contradictory content, explicit new paid regeneration, or raising the aggregate fee cap. Provider waits query the original intent; pending billing receipts do not block returned media.
+- One explicitly linked creation occupies one task row; preserve exact historical attempts and video versions in a collapsed history. Playback and download need no review click. Preparing publication requires selecting one exact version; actual publication retains its existing explicit authorization.

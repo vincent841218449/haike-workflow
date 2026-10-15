@@ -17,6 +17,7 @@ export function rememberSubmission(storage, submission) {
     draft: {id: submission.draft.id},
     quote: {id: submission.quote.id, revision: submission.quote.revision, known_max_micros: submission.quote.known_max_micros},
     maximum: submission.maximum,
+    resumeTask: submission.resumeTask,
   }));
 }
 export function readSubmission(storage, draftId) {
@@ -28,7 +29,7 @@ export function readSubmission(storage, draftId) {
 
 // Retrying a lost response must reuse the frozen draft revision and quote.
 export async function enqueueAvatar(request, submission) {
-  const {draft, quote, maximum} = submission;
+  const {draft, quote, maximum, resumeTask} = submission;
   if (Number(quote.known_max_micros) > maximum) {
     throw new Error(`当前报价超过本次费用上限，请在更多设置中调整后重新制作。`);
   }
@@ -36,6 +37,7 @@ export async function enqueueAvatar(request, submission) {
     return await request(`/api/studio/drafts/${draft.id}/generate`, {
       revision: quote.revision, quote_id: quote.id,
       max_charge_micros: maximum, confirmed: true,
+      ...(resumeTask ? {resume_task:resumeTask} : {}),
     });
   } catch (error) {
     try {

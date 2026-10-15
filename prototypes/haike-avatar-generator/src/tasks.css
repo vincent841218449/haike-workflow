@@ -23,3 +23,14 @@
 .creation-live {position:absolute;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .creation-list {margin-top:18px}
 @media(min-width:1201px) {.creation-statuses button {font-size:15px}.creation-kind,.creation-state {font-size:11px}.creation-progress-value {font-size:14px}}
+.creation-attempts {margin:20px 0;border:1px solid var(--border,#e6e1da);border-radius:14px;padding:16px;background:#fcfaf7}
+.creation-attempts summary {cursor:pointer;font-weight:600}
+.creation-attempts summary small {color:#7d8797;font-weight:400;margin-left:8px}
+.creation-attempts ol {padding:0;list-style:none;margin:12px 0 0}
+.creation-attempts li {display:flex;align-items:center;gap:12px;justify-content:space-between;padding:14px 0;border-top:1px solid #ece7df}
+.creation-attempts li strong,.creation-attempts li span {display:block}
+.creation-attempts li span,.creation-attempts li p {font-size:13px;color:#7b8391;margin:5px 0}
+.creation-billing-note,.creation-latest {display:flex;align-items:center;gap:9px;padding:13px 16px;margin:14px 0;border-radius:12px;background:#fff7e8;color:#926627;font-size:13px;line-height:1.6}
+.creation-latest {background:#edf7f0;color:#357554;flex-wrap:wrap}
+.creation-ratio small {display:block;font-size:11px;white-space:nowrap;color:#8b91a0;margin-top:6px}
+@media(max-width:600px){.creation-attempts li{align-items:flex-start;flex-direction:column}.creation-billing-note{align-items:flex-start}.creation-billing-note svg{flex-shrink:0;margin-top:3px}}

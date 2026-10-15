@@ -242,7 +242,7 @@ def verify_spoken_script(text, cues):
     written=re.sub(r"[^\w\u4e00-\u9fff]","",text).casefold()
     spoken=re.sub(r"[^\w\u4e00-\u9fff]","","".join(c["text"] for c in cues)).casefold()
     if not written or not spoken or difflib.SequenceMatcher(None,written,spoken,autojunk=False).ratio()<.7:
-        raise WorkError("音频识别内容与文案不一致，请核对录音和文案；声音与字幕已保留，未提交数字人生成")
+        raise WorkError("录音内容与文案不一致；请选择按文案配音或替换录音，已保存的内容不会丢失", "audio_script_mismatch")
 
 
 def bind_script_ranges(body, draft, cues):
@@ -544,51 +544,84 @@ def produce(studio, draft, folder, cues, duration, paid):
     return plan
 
 
+def select_motion(studio, draft, folder, cues, storyboard):
+    """Bind semantic motion before submitting the expensive avatar call."""
+    style = motion_options(draft); folder = Path(folder)
+    relay = TrialRelay(studio, folder / "ai-requests")
+    path = folder / "motion-selection.json"
+    fingerprint = hashlib.sha256(json.dumps([draft, cues, storyboard], sort_keys=True).encode()).hexdigest()
+    if path.exists():
+        saved = json.loads(path.read_text())
+        if saved.get("fingerprint") != fingerprint: raise WorkError("动效检查输入已改变，不能恢复另一份编排")
+        return saved["segments"]
+    contract = {"groups": [{**g, "fields":[f for f in g['fields'] if f['type'] != 'talk']} for g in style["groups"]], "scenes": [{"id": s["id"], "text": s["text"], "label": s["label"], "duration": s["end"]-s["start"], "asset_id": s["asset"]["id"], "kind": s["asset"]["kind"],
+                "cue_anchors": [{"index": i, "at": c["startMs"]/1000-s["start"]} for i,c in enumerate(cues) if s["start"] <= c["startMs"]/1000 < s["end"]]} for s in storyboard["scenes"]]}
+    system = '''仅返回JSON {"segments":[{"scene_ids":["scene-1"],"group":"目录中的完整group id","values":{"目录中的文字字段":"忠实于原文的短标题","目录中的媒体字段":{"asset_id":"本段覆盖镜头的素材id"}},"anchors":{"目录中cueRoles的角色值":0}}]}。素材镜头和动效组分别编排；可以合并相邻素材镜头为完整动效段，但scene_ids必须按原顺序恰好覆盖全部镜头一次，不省略或重复原文。选择适合真实语义、素材类型、总时长的完整组，保护最短动作时长。values只包含目录字段，数字填数字，媒体只用本段覆盖镜头的asset_id。anchors数字是cue_anchors中的真实index，不猜秒数。没有语义或足够素材时返回空segments，不伪造数量、步骤或并列关系。不能输出路径、URL、代码。'''
+    r = relay.call("motion-layout-v2", {"model": CHAT_MODEL, "messages": [{"role":"system","content":system},{"role":"user","content":json.dumps(contract,ensure_ascii=False)}], "max_completion_tokens":4096,"stream":False})
+    try: body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", r["choices"][0]["message"]["content"].strip()))
+    except (ValueError, KeyError, IndexError, TypeError): raise WorkError("AI动效绑定未通过，原结果保留，请进入专业编辑复核") from None
+    if not isinstance(body, dict): raise WorkError("AI动效分镜格式无效")
+    segments = body.get("segments")
+    if segments == [] and set(body) == {"segments"}:
+        raise WorkError("所选动效模板无法匹配当前文案和分镜时长，请更换模板；原数字人、配音和素材已保留")
+    if set(body) != {"segments"} or not isinstance(segments, list): raise WorkError("AI动效分镜格式无效")
+    groups = {g["id"]:g for g in style["groups"]}; normalized = []; cursor = 0; used = set()
+    for s in segments:
+        if not isinstance(s,dict) or set(s)!={"scene_ids","group","values","anchors"} or not isinstance(s["group"],str) or s["group"] not in groups: raise WorkError("AI动效模板引用无效")
+        ids = s["scene_ids"]
+        if not isinstance(ids,list) or not ids: raise WorkError("动效段必须引用连续的素材镜头")
+        covered = storyboard["scenes"][cursor:cursor+len(ids)]
+        if ids != [scene["id"] for scene in covered]: raise WorkError("动效段没有按原文顺序覆盖镜头")
+        cursor += len(ids)
+        scene = {**covered[0], "id": "+".join(ids), "end": covered[-1]["end"], "text": "".join(v["text"] for v in covered), "to_cue": covered[-1]["to_cue"]}
+        if round((scene["end"]-scene["start"])*60) < groups[s["group"]]["duration"]["minFrames"]: raise WorkError("动效段短于模板完整动作时长")
+        assets = {v["asset"]["id"]:v["asset"] for v in covered}
+        fields = {f["id"]: f for f in groups[s["group"]]["fields"] if f['type'] != 'talk'}; values = {}
+        if not isinstance(s["values"],dict) or set(s["values"])-fields.keys(): raise WorkError("AI动效字段不在目录中")
+        for k, v in s["values"].items():
+            if fields[k]["type"] in {"text","dynamicText","number"}: values[k] = v
+            else:
+                if not isinstance(v,dict) or set(v)!={"asset_id"} or v["asset_id"] not in assets: raise WorkError("AI动效引用不属于本段的素材")
+                asset = assets[v["asset_id"]]; used.add(asset["id"])
+                values[k] = {"asset":asset,"offset":asset.get("offset",0)}
+        if not isinstance(s["anchors"],dict): raise WorkError("AI动作落点格式无效")
+        anchors = {}
+        for role,index in s["anchors"].items():
+            if type(index) is not int or not scene["from_cue"]<=index<=scene["to_cue"]: raise WorkError("AI动作落点未引用当前分镜的真实字幕")
+            anchors[role] = max(0,cues[index]["startMs"]/1000-scene["start"])
+        normalized.append({"id":scene["id"],"group":s["group"],"text":scene["text"],"end":scene["end"],"values":values,"anchors":anchors})
+    if cursor != len(storyboard["scenes"]): raise WorkError("动效段未覆盖全部原文镜头")
+    required = {v["id"] for v in draft["input"].get("ai",{}).get("materials",[]) if v.get("mode") == "must"}
+    if required-used: raise WorkError("动效编排遗漏必须使用的用户素材")
+    atomic_private(path, {"fingerprint": fingerprint, "segments": normalized})
+    return normalized
+
+
+def motion_draft(studio, draft, mother, frames, normalized, cues):
+    source = studio.save_asset(draft["id"], mother.name, "video", mother.read_bytes())
+    return {**draft, "template_id":"avatar-motion-adu-v1", "input": {
+        "source":source, "motionLayout":draft["input"]["motion"]["layout"], "style":draft["input"]["motion"]["style"],
+        "segments":motion_clock_segments(normalized, frames), "music":{"mode":"none"},
+        "captions":[{"start":c["startMs"]/1000,"end":c["endMs"]/1000,"text":c["text"]} for c in cues],
+        "face":{"mode":"auto"}, "subtitleBottom":.18, "selectionMode":"fixed"}}
+
+
 def compose_motion(studio, draft, folder, video, audio, cues, storyboard, caption_cues=None):
     """Compile AI choices into the existing pinned ADu contract, then revalidate it."""
     from backlot.studio_motion import plan, freeze, run_motion, narration_clock
     from backlot.studio_render import media_probe
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
-    style = motion_options(draft); folder = Path(folder)
-    relay = TrialRelay(studio, folder / "ai-requests")
+    folder = Path(folder)
     compiled_path = folder / "ai-motion-draft.json"
     if compiled_path.exists():
         compiled = json.loads(compiled_path.read_text())
     else:
-        contract = {"groups": style["groups"], "scenes": [{"id": s["id"], "text": s["text"], "label": s["label"], "duration": s["end"]-s["start"], "asset_id": s["asset"]["id"], "kind": s["asset"]["kind"],
-                    "cue_anchors": [{"index": i, "at": c["startMs"]/1000-s["start"]} for i,c in enumerate(cues) if s["start"] <= c["startMs"]/1000 < s["end"]]} for s in storyboard["scenes"]]}
-        system = '''仅返回JSON {"segments":[{"scene_id":"scene-1","group":"目录中的完整group id","values":{"目录中的文字字段":"忠实于原文的短标题","目录中的媒体字段":{"asset_id":"该分镜的素材id"}},"anchors":{"目录中cueRoles的角色值":0}}]}。每镜对应一个segment，不合并、不改原文。选择适合实际语义、素材类型、时长的完整组。values只包含目录字段，数字字段填数字；需要媒体只用该镜asset_id。anchors数字是cue_anchors中的index，由服务器绑定真实字幕时钟，不猜秒数。没有语义或足够素材的组不可使用；不伪造多项数量或并列关系。不能输出路径、URL、代码。'''
-        r = relay.call("motion-layout", {"model": CHAT_MODEL, "messages": [{"role":"system","content":system},{"role":"user","content":json.dumps(contract,ensure_ascii=False)}], "max_completion_tokens":4096,"stream":False})
-        try: body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", r["choices"][0]["message"]["content"].strip()))
-        except (ValueError, KeyError, IndexError, TypeError): raise WorkError("AI动效绑定未通过，原结果保留，请进入专业编辑复核") from None
-        segments = body.get("segments")
-        if segments == [] and set(body) == {"segments"}:
-            raise WorkError("所选动效模板无法匹配当前文案和分镜时长，请更换模板；原数字人、配音和素材已保留")
-        if set(body) != {"segments"} or not isinstance(segments, list) or len(segments) != len(storyboard["scenes"]): raise WorkError("AI动效分镜数量不一致")
-        groups = {g["id"]:g for g in style["groups"]}; normalized = []
-        for s, scene in zip(segments, storyboard["scenes"]):
-            if not isinstance(s,dict) or set(s)!={"scene_id","group","values","anchors"} or s["scene_id"]!=scene["id"] or s["group"] not in groups: raise WorkError("AI动效模板引用无效")
-            fields = {f["id"]: f for f in groups[s["group"]]["fields"]}; values = {}
-            if not isinstance(s["values"],dict) or set(s["values"])-fields.keys(): raise WorkError("AI动效字段不在目录中")
-            for k, v in s["values"].items():
-                if fields[k]["type"] in {"text","dynamicText","number"}: values[k] = v
-                else:
-                    if not isinstance(v,dict) or set(v)!={"asset_id"} or v["asset_id"]!=scene["asset"]["id"]: raise WorkError("AI动效引用不属于本镜头的素材")
-                    values[k] = {"asset":scene["asset"],"offset":scene["asset"].get("offset",0)}
-            if not isinstance(s["anchors"],dict): raise WorkError("AI动作落点格式无效")
-            anchors = {}
-            for role,index in s["anchors"].items():
-                if type(index) is not int or not scene["from_cue"]<=index<=scene["to_cue"]: raise WorkError("AI动作落点未引用当前分镜的真实字幕")
-                anchors[role] = max(0,cues[index]["startMs"]/1000-scene["start"])
-            normalized.append({"id":scene["id"],"group":s["group"],"text":scene["text"],"end":scene["end"],"values":values,"anchors":anchors})
+        normalized = select_motion(studio, draft, folder, cues, storyboard)
         ffmpeg,_ = resolve_ffmpeg_pair(); mother = folder / "ai-motion-mother.mp4"
         frames=math.ceil(storyboard["duration"]*60-1e-7)
         r = subprocess.run([ffmpeg,"-v","error","-y","-i",str(video),"-i",str(audio),"-map","0:v","-map","1:a","-vf","fps=60,tpad=stop_mode=clone:stop_duration=1","-af","apad","-frames:v",str(frames),"-t",str(frames/60),"-c:v","libx264","-c:a","aac",str(mother)],capture_output=True,timeout=180)
         if r.returncode: raise WorkError("动效口播母版无法对齐，数字人与音频已保留")
-        normalized=motion_clock_segments(normalized,narration_clock(media_probe(mother))["frames"])
-        source = studio.save_asset(draft["id"],mother.name,"video",mother.read_bytes())
-        display_cues = cues if caption_cues is None else caption_cues
-        compiled = {**draft,"template_id":"avatar-motion-adu-v1","input":{"source":source,"motionLayout":draft["input"]["motion"]["layout"],"style":style["id"],"segments":normalized,"music":{"mode":"none"},"captions":[{"start":c["startMs"]/1000,"end":c["endMs"]/1000,"text":c["text"]} for c in display_cues],"face":{"mode":"auto"},"subtitleBottom":.18,"selectionMode":"fixed"}}
+        compiled = motion_draft(studio, draft, mother, frames, normalized, cues if caption_cues is None else caption_cues)
         atomic_private(compiled_path,compiled)
     native_plan = folder / "ai-motion-plan.json"
     p = json.loads(native_plan.read_text()) if native_plan.exists() else plan(studio,compiled)

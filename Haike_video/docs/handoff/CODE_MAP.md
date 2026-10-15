@@ -1,6 +1,6 @@
 # 代码地图
 
-更新时间：2026-10-13
+更新时间：2026-10-15
 
 ## 当前工作台V2
 
@@ -13,6 +13,7 @@
 - AI分镜/素材：studio_storyboard.py原文/词级时钟/路由；studio_chat_gateway.py统一Key免费报价/持久意图/恢复。云端sponsored.py原子账户/平台次数配额，Token账单成本未知；生图暂停。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用；test_studio_{storyboard,chat_gateway}.py。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue.py/production_queue_worker.py；studio_graphic、studio_avatar、studio_motion处理器，所有产物登记作品台账。
+- 口播恢复：studio_preflight.py先核验动效并自动回退；studio_creation.py复用阶段/历史费用上限；队列creation_links与studio_tasks.py投影单条创作及精确尝试。合同见根docs/PRODUCT_CREATION_TASKS.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。

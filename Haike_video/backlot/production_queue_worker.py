@@ -210,10 +210,17 @@ class ProductionQueueWorker:
             filename = {"studio_graphic": "graphic-preview.mp4", "studio_avatar": "avatar-preview.mp4", "studio_motion": "motion-preview.mp4"}[job["kind"]]
             if job["kind"] == "studio_avatar" and job["frozen_request"].get("draft", {}).get("input", {}).get("motion"):
                 filename = "motion-preview.mp4"
+                folder = project_dir / "renders" / job["frozen_request"]["render_id"]
+                fallback = folder / "composition-preflight.json"
+                if fallback.is_file():
+                    from backlot.work_catalog import read_json
+                    if read_json(fallback).get("mode") == "basic": filename = "avatar-preview.mp4"
             output = project_dir / "renders" / job["frozen_request"]["render_id"] / filename
             report = output.parent / "qa.json"
             if output.is_file() and report.is_file():
                 return {"status": "completed", "stage": "合成完成，等待人工审核", "result": {"output_path": str(output), "qa_status": "pending"}}
+            if job['kind'] == 'studio_avatar' and job['frozen_request'].get('workflow_version', 1) >= 2:
+                return {'status':'queued', 'stage':'自动恢复原制作，复用已完成声音、素材与模型请求', 'safe_resume_point':'studio_avatar'}
             return {"status": "failed", "stage": "制作中断，原调用与产物保留，可恢复此任务", "retryable": True, "safe_resume_point": job["kind"]}
         if job["kind"] == "commentary_presenter":
             from backlot.commentary_presenter_job import inspect
@@ -276,6 +283,7 @@ class ProductionQueueWorker:
 
     def run_once(self) -> dict[str, Any] | None:
         self.reconcile_expired()
+        self.queue.resume_provider_waits()
         job = self.queue.claim_next(self.worker_id, lease_seconds=self.lease_seconds)
         if job is None:
             return None

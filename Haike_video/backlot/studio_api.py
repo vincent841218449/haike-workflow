@@ -262,9 +262,17 @@ def storyboard(draft_id: str, request: Request, revision: int | None = None):
 def avatar_job(draft_id: str, request: Request):
     call(studio(request).draft, draft_id)
     from backlot.server import _ensure_production_queue
-    result = call(_ensure_production_queue(request.app).list, project_id=draft_id, limit=200)
+    queue = _ensure_production_queue(request.app)
+    result = call(queue.list, project_id=draft_id, limit=200)
     jobs = [j for j in result["tasks"] if j["kind"] == "studio_avatar"]
-    return {"job": max(jobs, key=lambda j:j["created_at"]) if jobs else None}
+    latest = max(jobs, key=lambda j:j['created_at']) if jobs else None
+    if latest:
+        from backlot.studio_tasks import task_view
+        private = queue.get(latest['job_id'], include_private=True)
+        frozen = (private.get('frozen_request') or {}).get('draft') or {}
+        if task_view(studio(request), private).get('error_code') == 'audio_script_mismatch' and (frozen.get('input', {}).get('audio') or {}).get('id'):
+            latest['input_issue'] = {'code':'audio_script_mismatch', 'audio_id':frozen['input']['audio']['id'], 'text':frozen['text']}
+    return {"job": latest}
 
 
 @router.post("/api/studio/ai/jobs/{job_id}/skip-douyin")
@@ -413,8 +421,18 @@ def generate(draft_id: str, request: Request, data: dict = Body(...)):
     if not (project_dir / "project.json").exists():
         from lib.checkpoint import init_project
         init_project(draft_id, title=d["title"], pipeline_type="animated-explainer", pipeline_dir=s.projects_root)
-    return call(_ensure_production_queue(request.app).submit, project_id=draft_id, kind="studio_" + kind, source="workbench", priority="normal",
-                parent_job_id=render_id, idempotency_key=f"studio:{draft_id}:{d['revision']}", frozen_request=frozen)
+    queue = _ensure_production_queue(request.app)
+    idem = f"studio:{draft_id}:{d['revision']}"
+    existing = queue.find_by_idempotency_key(idem)
+    if existing: return existing
+    previous = data.get('resume_task')
+    if previous:
+        if kind != 'avatar': raise HTTPException(422, '当前恢复入口只支持数字人口播')
+        from backlot.studio_creation import continue_request
+        frozen = call(continue_request, s, queue, frozen, previous)
+    result = call(queue.submit, project_id=draft_id, kind="studio_" + kind, source="workbench", priority="normal",
+                parent_job_id=render_id, idempotency_key=idem, frozen_request=frozen)
+    return result
 
 
 @router.post("/api/studio/drafts/{draft_id}/quote")
