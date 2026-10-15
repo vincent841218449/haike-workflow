@@ -95,15 +95,18 @@ def library(layout="portrait"):
                            "demo": "/api/studio/motion/media/" + demo if demo else None,
                            "preview_basis": item.get("previewBasis", "上游风格示例，不能作为本期人物或证据素材"),
                            "requirements": item.get("requires", []), "groups": group})
-            if item['id']=='04-A':
-                styles[-1].update(automatic_variant='narrative-v1', automatic_name='仪器台演示 · 自动口播版',
-                    automatic_preview='/ui/avatar-generator/assets/'+('instrument-story-landscape.svg' if layout=='landscape' else 'instrument-story-poster.svg'),
-                    automatic_description='保留黑色台面、蓝金光球与玻璃面板，自动安排原文和素材；原版固定动作保留在专业编辑中。')
+            if group:
+                from backlot.studio_template_registry import legacy_ref
+                styles[-1]['template_ref'] = legacy_ref(item['id'], layout, caps['groups'])
+                styles[-1]['runtime_label'] = 'ADu 原生镜头组'
     from backlot.studio_motion_quick import groups as quick_groups
+    from backlot.studio_motiongit import library as motiongit_library
+    styles.extend(motiongit_library(layout))
     styles.append({"id":"quick", "name":"轻量动画组合", "family":"基础动画", "family_id":"07", "supported":layout=="landscape",
                    "selection":"TPL", "status":"quick-start", "scope":"9个轻量组件；不代表完整工程的全部动作", "preview":"/api/studio/motion/media/assets/tutorials/templates.png",
                    "demo":None, "preview_basis":"上游9个基础动画组件说明图，不是完整工程样片", "requirements":["已有口播与原文","实际动作落点"], "groups":quick_groups(QUICK) if layout=="landscape" else []})
-    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout,
+    from backlot.studio_template_registry import pending_packages
+    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout, "pending_packages": pending_packages(),
             "available_styles": caps["availableStyles"], "available_groups": caps["availableGroups"],
             "quick": [{"id": a, "name": b, "layout": "landscape", "status": "quick-start"} for a, b in QUICK],
             "tools": ["自动比较可用组", "内容与动作时钟检查", "当前分镜素材替换", "横竖屏排版", "准确字幕与双语字幕", "人脸构图", "背景音乐与动作音效", "工程与视频导出", "版本保留"],
@@ -291,10 +294,17 @@ def brief(studio, draft, directory):
             if at is not None and at != "": anchors[role] = {"at": number(at, "动作落点", 0, (end - cursor) / 60)}
         candidates=compatible_candidates(group,groups,slots) if value.get('selectionMode')=='compatible' and not group['id'].startswith('quick:') else {group['id']:{'slots':slots}}
         text_fields={f['id'] for candidate in candidates for f in groups[candidate]['fields'] if f['type'] in {'text','dynamicText','number'} and f['id'] in candidates[candidate]['slots']}
+        semantics = {"intent": group["intents"][0], "phases": group["phases"], "counts": {k: v["min"] for k,v in group["counts"].items()},
+                     "supportingRefs": {k:[ref] for k in text_fields}}
+        if value.get('nativeDirection'):
+            from backlot.studio_motion_director import compile_evidence
+            semantics, detail_units, _ = compile_evidence(segment['text'], group, segment.get('semantics'), identity[:16], text_cursor, slots)
+            units.pop()  # Native evidence partitions ownership into non-overlapping source spans.
+            units.extend(detail_units)
         timeline.append({"id": "segment-" + str(i+1), "text": segment["text"], "durationFrames": end-cursor,
-                         "intent": group["intents"][0], "phases": group["phases"], "counts": {k: v["min"] for k,v in group["counts"].items()},
-                         "anchors": anchors, "candidates": candidates, "ownershipRefs": [ref],
-                         "supportingRefs": {k:[ref] for k in text_fields}})
+                         **semantics,
+                         "anchors": anchors, "candidates": candidates, "ownershipRefs": semantics.get('ownershipRefs', [ref]),
+                         })
         cursor = end; text_cursor += len(segment["text"])
     if cursor != frames: raise WorkError("最后一个分镜须覆盖口播结尾，时间以实际视频为准")
     evidence = {"schema": "adu-content-evidence/1", "text": draft["text"], "textSha256": identity, "sourceKind": "user-confirmed-transcript", "units": units,
@@ -374,7 +384,8 @@ def run_motion(project_dir, request, *, on_progress=None):
         checked = freeze(studio, request["draft"], request["plan_id"], True)
         if checked != request: raise WorkError("队列内容与冻结计划不一致，请重新提交")
         if (output / "motion-preview.mp4").is_file() and (output / "qa.json").is_file():
-            return {"status": "completed", "stage": "动效口播已合成，等待审核", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending"}}
+            from backlot.studio_motion_qa import cached_result
+            return {"status": "completed", "stage": "动效口播已合成，可播放和下载", "result": cached_result(output)}
         attempt = output / ("attempt-" + uuid4().hex[:10]); attempt.mkdir()
         folder = Path(request["plan_folder"]); video = Path(checked["snapshot"]["video"])
         if checked["snapshot"]["audio"]:
@@ -415,11 +426,14 @@ def run_motion(project_dir, request, *, on_progress=None):
             z.write(folder / "planning/auto_plan.json", "planning/auto_plan.json")
             z.write(folder / "brief.json", "planning/brief.json")
         shutil.copy2(candidate, output / "motion-preview.mp4")
+        from backlot.studio_motion_qa import receipt
+        presentation = receipt(request['draft'], folder, output / 'motion-preview.mp4')
         atomic_private(output / "qa.json", {"engine": VERSION, "commit": COMMIT, "source": checked["snapshot"], "source_clock": "unmodified-narration", "output": info,
+                       "presentation": presentation,
                        "frames": round(desired*60), "caption_timing": "provided exact cues", "checks": ["upstream-plan-build-revalidation", "full-decode", "duration", "audio", "version-bound-preview"],
                        "human_review": "pending", "engineering": str(engineering), "archive": str(archive), "no_paid_calls": True})
         if on_progress: on_progress("成片与工程核验完成，正在登记作品", 5, 5)
-        return {"status": "completed", "stage": "动效口播已合成，等待观看与审核", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending", "engineering_archive": str(archive)}}
+        return {"status": "completed", "stage": "动效口播已合成，可播放和下载", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending", "engineering_archive": str(archive), **({'presentation':presentation} if presentation else {})}}
     except WorkError as exc:
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMotion"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_motion"}
     except Exception:

@@ -15,7 +15,10 @@ def test_default_automatic_policy_preserves_selected_motion(tmp_path, monkeypatc
     monkeypatch.setattr('backlot.studio_storyboard.select_motion', incompatible)
     draft['text']='原故事'
     storyboard={'status':'ready','duration':3,'scenes':[{'id':'scene-1','start':0,'end':3,'text':'原故事','asset':{'id':'asset'},'asset_sha256':'frozen'}]}
-    value=prepare(None,draft,tmp_path,audio,[],storyboard,[])
+    with pytest.raises(WorkError, match='三步流程'):
+        prepare(None,draft,tmp_path,audio,[],storyboard,[])
+    # Only explicitly frozen old workflows retain their historical adapter.
+    value=prepare(None,draft,tmp_path,audio,[],storyboard,[],legacy_variant=True)
     assert value['mode']=='instrument' and value['draft']==draft
     assert value['presentation']['id']=='adu:04-A:portrait'
     assert value['presentation']['variant']=='narrative-v1'

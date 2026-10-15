@@ -67,6 +67,9 @@ class ProductionQueueWorker:
         return run_avatar(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
 
     def _run_studio_motion(self, job):
+        if job['frozen_request'].get('runtime')=='motiongit':
+            from backlot.studio_motiongit import run_job
+            return run_job(self._project_dir(job),job['frozen_request'],on_progress=self._stage_reporter(job))
         from backlot.studio_motion import run_motion
         return run_motion(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
 
@@ -207,6 +210,8 @@ class ProductionQueueWorker:
     def inspect_parent(self, job: dict[str, Any]) -> dict[str, Any]:
         project_dir = self._project_dir(job)
         if job["kind"] in {"studio_graphic", "studio_avatar", "studio_motion"}:
+            if job['frozen_request'].get('runtime')=='motiongit' or (job['frozen_request'].get('template_ref') or {}).get('runtime')=='motiongit':
+                return {'status':'queued','stage':'自动核对原生工程、成片版本与输入摘要','safe_resume_point':job['kind']}
             filename = {"studio_graphic": "graphic-preview.mp4", "studio_avatar": "avatar-preview.mp4", "studio_motion": "motion-preview.mp4"}[job["kind"]]
             if job["kind"] == "studio_avatar" and job["frozen_request"].get("draft", {}).get("input", {}).get("motion"):
                 filename = "motion-preview.mp4"

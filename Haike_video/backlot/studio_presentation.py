@@ -10,8 +10,12 @@ INSTRUMENT_ADAPTER = 'studio-instrument-v1'
 def selected(draft):
     motion = draft.get('input', {}).get('motion')
     if motion:
-        return {'id':f"adu:{motion['style']}:{motion['layout']}", 'style':motion['style'],
-                'layout':motion['layout'], 'name':'仪器台演示' if motion['style']=='04-A' else motion['style']}
+        value = {'id':f"adu:{motion['style']}:{motion['layout']}", 'style':motion['style'],
+                'layout':motion['layout'], 'name':{'04-A':'仪器台演示','motiongit-612':'仪器台演示 · 完整版'}.get(motion['style'],motion['style'])}
+        if draft['input'].get('templateRef'):
+            ref=draft['input']['templateRef']
+            value.update(template_ref=ref, adapter='motiongit' if ref.get('runtime')=='motiongit' else 'adu-motion-video')
+        return value
     from backlot.studio import TEMPLATES
     template = next((t for t in TEMPLATES if t['id']==draft['template_id']), {})
     return {'id':draft['template_id'], 'style':None, 'layout':template.get('ratio'), 'name':template.get('name',draft['template_id'])}
@@ -44,3 +48,17 @@ def instrument_plan(draft, storyboard):
 def verify(draft, actual):
     if not isinstance(actual,dict) or actual.get('id') != selected(draft)['id']:
         raise WorkError('实际渲染模板与所选模板不一致，产物保留但不会标记制作成功', 'template_mismatch')
+    ref = draft.get('input', {}).get('templateRef')
+    if ref:
+        if actual.get('template_ref') != ref or actual.get('adapter') != ('motiongit' if ref.get('runtime')=='motiongit' else 'adu-motion-video'):
+            raise WorkError('实际渲染模板来源与所选原生包不一致', 'template_mismatch')
+
+
+def verify_native(actual, expected_ref, *, rendered=False):
+    from backlot.studio_template_registry import verify_ref
+    verify_ref(expected_ref)
+    adapter='motiongit' if expected_ref.get('runtime')=='motiongit' else 'adu-motion-video'
+    if not isinstance(actual, dict) or actual.get('adapter') != adapter or actual.get('template_ref') != expected_ref:
+        raise WorkError('实际渲染模板并非所选 ADu 原生包，不能登记为制作成功', 'template_mismatch')
+    if rendered and (not actual.get('plan_sha256') or not actual.get('output_sha256') or not actual.get('groups')):
+        raise WorkError('原生模板缺少实际计划、镜头与成片来源回执', 'template_mismatch')

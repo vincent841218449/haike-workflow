@@ -105,6 +105,22 @@ def media(work_id: str, request: Request, version: str | None = None):
     return FileResponse(call(catalog(request).media_path, work_id, version), media_type="video/mp4")
 
 
+@router.get('/api/works/{work_id}/engineering')
+@router.head('/api/works/{work_id}/engineering')
+def engineering(work_id: str, request: Request, version: str):
+    from backlot.work_catalog import regular_path,sha
+    c=catalog(request);work=call(c.get,work_id)
+    media=call(c.media_path_from_work,work,version)
+    path=call(regular_path,media.parent/'editable-project.zip',c.project(work['project_id']))
+    report=media.parent/'qa.json'
+    if report.is_file():
+        qa=call(lambda:json.loads(report.read_text()))
+        if qa.get('archive_sha256') and qa['archive_sha256']!=sha(path):raise HTTPException(409,'工程文件与该视频版本的回执不一致')
+        actual=qa.get('presentation') or {}
+        if actual.get('output_sha256') and actual['output_sha256']!=sha(media):raise HTTPException(409,'工程回执属于其他视频版本')
+    return FileResponse(path,media_type='application/zip',filename=work['title']+'-可编辑工程.zip')
+
+
 @router.get("/api/works/{work_id}/cover")
 def cover(work_id: str, request: Request):
     c = catalog(request); w = call(c.get, work_id)

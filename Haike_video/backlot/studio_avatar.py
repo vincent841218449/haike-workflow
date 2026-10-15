@@ -85,6 +85,12 @@ def validate(studio, draft):
     from backlot.studio_storyboard import options, motion_options
     options(studio, draft)
     motion_options(draft)
+    if value.get('motion'):
+        music = value.get('music') or {'mode':'none'}  # Existing drafts used the visible no-BGM default.
+        if not isinstance(music, dict) or music.get('mode') not in {'none', 'track'}:
+            raise WorkError('请选择声音方案，未提交收费调用')
+        if music['mode'] == 'track':
+            studio.asset((music.get('asset') or {}).get('id'), draft['id'])
     if not draft["text"].strip() or len(draft["text"]) > 5000: raise WorkError("口播文案需要1至5,000字")
     image = value.get("portrait") or {}
     studio.asset(image.get("id"), draft["id"])
@@ -152,7 +158,12 @@ def frozen_request(studio, draft, quote_id, maximum):
     if maximum < public_quote(data)["known_max_micros"]: raise WorkError("费用上限低于已读取报价，未提交任务")
     # The original gateway quote expires server-side. Do not silently replace it before charging.
     from backlot.studio_presentation import selected
-    return {**data, "workflow_version": 3, "presentation":selected(draft), "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
+    from backlot.studio_template_registry import resolve
+    ref = resolve(draft)
+    presentation = selected(draft)
+    if ref and ref['runtime'] in {'adu-legacy','motiongit'}:
+        presentation.update(template_ref=ref, adapter='motiongit' if ref['runtime']=='motiongit' else 'adu-motion-video')
+    return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
 
 
 def public_media_address(host, port):
@@ -351,6 +362,18 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         p = state["prepared"]; draft = request["draft"]
         from backlot.studio_presentation import selected, verify
         if request.get('presentation'): verify(draft,request['presentation'])
+        if (request.get('template_ref') or {}).get('runtime') == 'motiongit':
+            from backlot.studio_presentation import verify_native
+            verify_native(request['presentation'],request['template_ref'])
+            from backlot.studio_motiongit import precheck
+            publish_progress('理解整篇原文，检查完整模板的可行表达')
+            precheck(studio,draft,output_dir)
+        if request.get('workflow_version', 1) >= 4 and (request.get('template_ref') or {}).get('runtime') == 'adu-legacy':
+            from backlot.studio_presentation import verify_native
+            from backlot.studio_motion_director import direct
+            verify_native(request['presentation'], request['template_ref'])
+            publish_progress('理解整篇原文，按所选原生模板编排')
+            direct(studio, draft, output_dir)
         asr = request.get("asr", {"provider": "gateway"})
         if asr["provider"] == "local-whisper":
             from backlot.studio_asr import configuration, identity
@@ -387,7 +410,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if needs_ai: publish_progress("分镜与素材已就绪", True)
         from backlot.studio_preflight import prepare
         if draft["input"].get("motion"): publish_progress("检查模板、素材与真实口播时长")
-        composition = prepare(studio, draft, output_dir, Path(p["audio_path"]), clock_cues, storyboard, cues if draft["input"].get("subtitles", True) else [])
+        composition = prepare(studio, draft, output_dir, Path(p["audio_path"]), clock_cues, storyboard, cues if draft["input"].get("subtitles", True) else [], legacy_variant=request.get('workflow_version', 1) <= 3)
         if composition["notice"]: publish_progress(composition["notice"])
         video = output_dir / "avatar-source.mp4"
         publish_progress("数字人生成与结果下载")
@@ -397,6 +420,14 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         publish_progress("数字人画面已就绪", True)
         from backlot.studio_composition import compose_avatar
         actual_presentation=selected(draft)
+        if composition['mode'] == 'motiongit':
+            from backlot.studio_motiongit import compose
+            from backlot.studio_presentation import verify_native
+            result=compose(studio,draft,output_dir,video,Path(p['audio_path']),cues if draft['input'].get('subtitles',True) else [],composition['segments'],on_progress=on_progress)
+            verify_native(result.get('result',{}).get('presentation'),request['template_ref'],rendered=True)
+            verify(draft,result['result']['presentation'])
+            result['result'].update(composition_mode='motion',requested_presentation=request['presentation'])
+            return result
         if composition['mode'] == 'instrument':
             from backlot.studio_composition import compose_instrument
             publish_progress('按仪器台演示合成蓝金光球、玻璃面板与本期素材')
@@ -411,8 +442,12 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             except WorkError as exc:
                 raise WorkError('所选模板合成未完成，声音与数字人已保留，不会改用其他模板。'+str(exc)[:300], 'template_incompatible') from exc
             if result.get("status") == "completed":
-                if result.get('result',{}).get('presentation'): verify(draft,result['result']['presentation'])
-                result.setdefault('result', {}).update(composition_mode='motion',presentation={**actual_presentation,'variant':'original','variant_name':'原版镜头组','adapter':'adu-motion-video'},requested_presentation=selected(draft))
+                if (request.get('template_ref') or {}).get('runtime') == 'adu-legacy':
+                    from backlot.studio_presentation import verify_native
+                    verify_native(result.get('result', {}).get('presentation'), request['template_ref'], rendered=True)
+                elif not result.get('result', {}).get('presentation'):
+                    result.setdefault('result', {})['presentation'] = {**actual_presentation,'variant':'original','variant_name':'原版镜头组','adapter':'adu-motion-video'}
+                result.setdefault('result', {}).update(composition_mode='motion',requested_presentation=request.get('presentation') or selected(draft))
                 verify(draft,result['result']['presentation'])
                 publish_progress("动效画面已合成", True)
                 publish_progress("成片核验完成，正在登记作品", True)

@@ -89,7 +89,7 @@ def test_local_recomposition_cannot_start_missing_paid_stage(rig):
 def test_wrong_style_from_renderer_is_not_registered_as_completed(rig,monkeypatch):
     _,project,request,gateway,_=rig
     request['draft']['input']['motion']={'style':'04-A','layout':'portrait'}
-    monkeypatch.setattr('backlot.studio_preflight.prepare',lambda *a:{'mode':'motion','draft':request['draft'],'notice':''})
+    monkeypatch.setattr('backlot.studio_preflight.prepare',lambda *a,**k:{'mode':'motion','draft':request['draft'],'notice':''})
     monkeypatch.setattr('backlot.studio_storyboard.compose_motion',lambda *a,**k:{'status':'completed','result':{'output_path':'wrong.mp4','presentation':{'id':'adu:03-A:portrait'}}})
     result=run_avatar(project,request,gateway)
     assert result['status']=='awaiting_human' and result['error']['code']=='template_mismatch'
@@ -133,7 +133,7 @@ def test_motion_group_can_cover_adjacent_material_scenes_but_cannot_skip_require
     body = {'segments':[{'scene_ids':['scene-1','scene-2'],'group':'group','values':{'media':{'asset_id':'a'}},'anchors':{'start':0}}]}
     monkeypatch.setattr('backlot.studio_storyboard.motion_options', lambda d: style)
     monkeypatch.setattr('backlot.studio_storyboard.TrialRelay', lambda *a: SimpleNamespace(call=lambda *args: {'choices':[{'message':{'content':json.dumps(body)}}]}))
-    cues = [{'startMs':0},{'startMs':1500}]
+    cues = [{'startMs':0,'text':'今天'},{'startMs':1500,'text':'讲工程结算。'}]
     normalized = select_motion(studio,draft,project,cues,{'scenes':scenes})
     assert len(normalized) == 1 and normalized[0]['text'] == '今天讲工程结算。' and normalized[0]['end'] == 3
     (project / 'motion-selection.json').unlink()
