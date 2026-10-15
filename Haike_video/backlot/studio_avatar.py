@@ -68,7 +68,7 @@ def validate_voice(value):
         from backlot.studio_voices import _system_catalogue
         system = _system_catalogue()
         if value.get('toneId') not in {v['id'] for v in system.presets()}:
-            raise WorkError('请选择阿里百炼官方系统音色，不会替换为默认配音')
+            raise WorkError('请选择官方系统音色，不会替换为默认配音')
 
 
 def tts_input(draft):
@@ -111,7 +111,7 @@ def quote(studio, draft):
         from backlot.studio_voices import _system_catalogue
         system = _system_catalogue()
         if not any(v.get('model') == system.MODEL and v.get('status') == 'available' for v in sdk.request('/capabilities').get('items', [])):
-            raise WorkError('当前配音服务尚未接通百炼系统音色；已选音色和素材保留，请启用服务后再制作')
+            raise WorkError('当前配音服务尚未接通系统音色；已选音色和素材保留，请启用服务后再制作')
     identity = "studioquote-" + uuid4().hex
     folder = studio.projects_root / draft["id"] / "assets/studio-quotes" / identity
     folder.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,7 @@ from uuid import uuid4
 from typing import Literal
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from backlot.studio import Studio, TEMPLATES, gateway_connection_message
 from backlot.work_api import catalog, call
@@ -75,15 +75,23 @@ def creation_task(job_id: str, request: Request):
 
 @router.get("/api/studio/voices")
 async def voice_library(request: Request):
-    from backlot import studio_voices
-    return await asyncio.to_thread(call, studio_voices.catalogue, studio(request))
+    from backlot import studio_voices, studio_voice_samples
+    value = await asyncio.to_thread(call, studio_voices.catalogue, studio(request))
+    studio_voice_samples.prefetch(studio(request), value.get('items', []))
+    return value
 
 
 @router.get("/api/studio/voices/{voice_id}/sample")
 async def voice_sample(voice_id: str, request: Request):
-    from backlot import studio_voices
+    from backlot import studio_voices, studio_voice_samples
     path = await asyncio.to_thread(call, studio_voices.sample, studio(request), voice_id)
-    return FileResponse(path, media_type="audio/wav")
+    official = studio_voice_samples.preset(voice_id) is not None
+    headers = {'Cache-Control': 'public, max-age=31536000, immutable' if official else 'private, no-store'}
+    response = FileResponse(path, media_type='audio/mpeg' if path.suffix == '.mp3' else 'audio/wav',
+                            stat_result=path.stat(), headers=headers)
+    if official and request.headers.get('if-none-match') == response.headers['etag']:
+        return Response(status_code=304, headers={**headers, 'ETag': response.headers['etag']})
+    return response
 
 
 @router.post("/api/studio/voices/samples")

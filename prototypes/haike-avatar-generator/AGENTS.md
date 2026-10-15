@@ -39,4 +39,5 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Four input cards use real readiness and inline errors; material multi-select keeps the four-item/80MB limits and preserves partial successful uploads. Keep local-only verification and service limitations explicit; current flow and evidence: ../../docs/PRODUCT_AVATAR_SIMPLE_UI.md.
 
 - Keep the default system voice list at 7 curated Alibaba Bailian presets in `../../api-platform/platform_app/bailian_system_voices.json`, with free official auditions. Do not expand the list without user direction. Existing personal voices retain their original model and identity.
+- Present voices with generic system/personal labels and style tags. Auditions use a persistent local cache, background warm-up and versioned browser-cache URLs. Supplier attribution stays in backend provenance and recording-transfer consent rather than voice badges or player labels.
 - Deploy and validate locally first. Cloud rollout and gateway synchronization require fresh explicit user authorization after local validation.

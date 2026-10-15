@@ -10,6 +10,7 @@ from uuid import uuid4
 from backlot.studio import timestamp, sdk_type, gateway_connection_message
 from backlot.studio_avatar import key_identity
 from backlot.work_catalog import WorkError
+from backlot import studio_voice_samples
 
 
 def catalogue(studio):
@@ -41,6 +42,8 @@ def _with_official(studio, value, capabilities=None):
         capabilities = studio.client().request('/capabilities').get('items', [])
     ready = any(v.get('model') == system.MODEL and v.get('status') == 'available' for v in capabilities)
     official = system.public_items(ready)
+    for voice in official:
+        voice.update(studio_voice_samples.describe(studio, voice))
     # The local curated list is authoritative even when a gateway exposes more presets.
     return {**value, 'items':official + [v for v in value.get('items', []) if v.get('model') != system.MODEL and v.get('sample_kind') != 'official'],
             'default_voice_id':system.identity(system.CATALOGUE['default_voice']),
@@ -54,7 +57,7 @@ def _legacy_catalogue(studio):
     except Exception:
         raise WorkError("暂时无法核对配音能力，请检查API连接后刷新") from None
     ready = any(v.get("model") == "haike/cosyvoice" and v.get("status") == "available" for v in capabilities)
-    return _with_official(studio, {"items": [{"id": "voice_gateway_default", "name": "CosyVoice · 原网关默认音色",
+    return _with_official(studio, {"items": [{"id": "voice_gateway_default", "name": "原网关默认音色",
                        "scope": "legacy", "language": "multilingual", "tags": ["历史配音"],
                        "status": "ready", "sample_status": "unavailable", "preview_ready": False,
                        "preview_hint": "当前服务暂不支持单独试听，可上传已有录音制作"}] if ready else [],
@@ -64,6 +67,8 @@ def _legacy_catalogue(studio):
 
 
 def sample(studio, voice_id):
+    if studio_voice_samples.preset(voice_id):
+        return studio_voice_samples.sample(studio, voice_id)
     voice = next((v for v in catalogue(studio).get("items", []) if v["id"] == voice_id), None)
     if not voice or voice.get("sample_status") != "succeeded":
         raise WorkError("此音色尚无试听，请先生成试听音频")

@@ -1,6 +1,6 @@
 # 音色资源库
 
-2026-10-15。当前项目运行于本地4188，系统音色精选为7个阿里百炼官方预置音色，可免费试听、选择并保存草稿。整个项目先本地部署和测试，未部署或修改广州云端；上线需本地验收通过后重新取得用户明确授权。原14755/14756隔离验收实例已归档停用。
+2026-10-15。当前项目运行于本地4188，系统音色精选为7个阿里百炼官方预置音色，可免费试听、选择并保存草稿。界面使用通用音色名称和风格标签，试听已支持本机持久缓存及后台预热。本轮音色功能仅在本地部署，广州网关业务代码未更新；上线需本地验收通过后重新取得用户明确授权。原14755/14756隔离验收实例已归档停用。
 
 当前正式网关尚无音色库及指定官方音色能力，因此本地明确提示「视频配音接入尚待验收」，不会用默认音色替代已选音色，也不会发起收费调用。旧草稿的「CosyVoice · 原网关默认音色」保留原配音路径，在新系统音色列表中隐藏。个人库、克隆功能暂未启用；网络/鉴权错误不会被伪装成可用音色。
 
@@ -16,7 +16,15 @@
 | 龙应笑 | 清甜活力女声 |
 | 龙嘉怡 | 知性粤语女声 |
 
-名单和官方示例链接固定在 `api-platform/platform_app/bailian_system_voices.json`；本地列表以这7项为准，即使网关发布更多预置音色也不自动扩充。全部绑定 `cosyvoice-v3-flash`，通过独立平台别名 `haike/cosyvoice-system` 报价；个人克隆继续绑定原 `haike/cosyvoice` / `cosyvoice-v3.5-flash`。官方示例直接播放，不创建试听任务或账单。模型与具体音色随报价冻结。
+名单和官方示例链接固定在 `api-platform/platform_app/bailian_system_voices.json`；本地列表以这7项为准，即使网关发布更多预置音色也不自动扩充。全部绑定 `cosyvoice-v3-flash`，通过独立平台别名 `haike/cosyvoice-system` 报价；个人克隆继续绑定原 `haike/cosyvoice` / `cosyvoice-v3.5-flash`。官方示例通过本机缓存播放，不创建试听任务或账单。模型与具体音色随报价冻结。
+
+## 本机试听缓存
+
+资源库、选音面板和播放器使用通用标签，移除供应商品牌标识；后台模型/来源及录音转交授权仍保留原合同。列表读取成功后后台最多3路预热7份公开示例；相同音频并发访问只下载一次。仅接受固定目录中的HTTPS示例，拒绝重定向，验证音频头并限制每份5MB；不携带海客Key。
+
+文件保存在本机忽略目录 `Haike_video/.backlot/voice-library/system-samples/`，重启后继续复用；源示例URL变化时自动生成新的缓存版本。播放器改用 `/api/studio/voices/{id}/sample?v=<version>`，支持Range、ETag/304和长期immutable浏览器缓存。公开系统示例跨账户共用；个人音色仍检查当前Key归属，保持账户缓存隔离及 `private, no-store` 响应。
+
+缓存逻辑位于 `Haike_video/backlot/studio_voice_samples.py`，回归入口为 `tests/backlot/test_studio_voice_samples.py`。预热失败不阻塞浏览列表，播放时可重新尝试；失败内容不会写成有效缓存。
 
 官方依据：[系统音色列表](https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list)、[CosyVoice v3 Flash](https://help.aliyun.com/zh/model-studio/cosyvoice-v3-flash)、[HTTP调用](https://help.aliyun.com/zh/model-studio/non-realtime-tts-user-guide)。本地源码采购价为1元/万字符，沿用成本×1.5的系统定价；生产费率尚未发布。
 
@@ -70,6 +78,8 @@ CosyVoice创建音色免费，仍经报价与确认流程保存同一请求意�
 
 ## 验证
 
-本轮本地验证：平台109项、工作台82项、前端26项通过，生产构建、源码检查与交接预算检查通过。7个官方示例逐一真实播放成功（readyState=4，无媒体错误）；选择龙三叔、保存草稿并刷新后文案和具体音色恢复。390px手机页面无横向溢出。截图位于忽略目录 `output/playwright/bailian-seven-voices-{library,mobile}.jpg`。HTTP合成适配、精确音色与报价冻结使用隔离数据库和假供应商验证，真实付费0；本轮未提交云端命令、上传源码或修改广州服务。
+本轮缓存验证：工作台91项、前端30项通过；并发去重、持久复用、无网关调用、版本更新、失败重试、Range/304及个人缓存隔离覆盖。7份试听均已真实缓存并从本机地址播放成功（readyState=4，无媒体错误），资源库可见文字不含供应商标识。21次直接本机HTTP读取约1.1–3.7毫秒，中位数1.61毫秒（不含播放器解码）。截图位于忽略目录 `output/playwright/voice-cache-generic-labels.jpg`。生产构建通过，无收费生成或云端更新。
+
+先前平台109项及具体模型/音色/报价冻结验证通过；选音草稿刷新恢复、390px无横向溢出记录见 `output/playwright/bailian-seven-voices-{library,mobile}.jpg`。
 
 独立环境已验证上传→报价→返回修改保留录音→确认→个人库→重命名→首次试听→缓存播放→制作页选择→保存草稿→刷新恢复。后台回归、权限/账本/并发/未知结果测试、前端合同、生产构建和源码检查通过。桌面1440×1000、平板900×900、手机390×844；无横向溢出，弹窗Esc/焦点返回通过。视觉记录见 `../prototypes/haike-avatar-generator/design-qa.md`。
