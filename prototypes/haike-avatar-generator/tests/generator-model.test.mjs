@@ -36,3 +36,11 @@ test('素材可选；上传后统一确认使用权即可自动制作',()=>{
   ai.materials[0].rights_confirmed=true;
   assert.equal(validateInputs({...ready(),ai},[]),null);
 });
+test('百炼系统音色使用独立模型，不回落到克隆声或未接通服务',()=>{
+  const voices=availableVoicesFromAccount({capabilities:{items:[{capability:'tts',model:'haike/cosyvoice-system',name:'百炼系统音色'}]}});
+  const input={...ready(),soundMode:'voice',voiceId:'haike/cosyvoice-system',toneId:'voice_bailian_cv3_longxiaochun_v3'};
+  const tone={id:input.toneId,model:input.voiceId,status:'ready',production_ready:true};
+  assert.equal(validateInputs(input,voices,[tone]),null);
+  assert.equal(validateInputs(input,voices,[{...tone,production_ready:false}]).field,'voice');
+  assert.equal(validateInputs({...input,voiceId:'haike/cosyvoice'},[{id:'haike/cosyvoice'}],[tone]).field,'voice');
+});

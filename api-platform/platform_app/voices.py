@@ -7,6 +7,7 @@ import re
 import secrets
 
 from . import adapters, providers
+from . import bailian_system_voices as system_voices
 from .store import Problem, canonical, digest, later, now, owned, uid
 
 TTS_MODEL = "haike/cosyvoice"
@@ -42,6 +43,16 @@ def sync_default(db, vault):
     return identity
 
 
+def sync_system(db, vault):
+    for item in system_voices.presets():
+        # Official preset identities do not depend on a merchant's credential.
+        db.execute("""INSERT INTO gateway_voices(id,user_id,name,provider_voice_id,target_model,
+                   provider_scope,language,tags_json,status,created_at)
+                   VALUES(?,NULL,?,?,?,?,?,?,'ready',?) ON CONFLICT(id) DO NOTHING""",
+                   (item['id'],item['name'],item['voice'],system_voices.TARGET_MODEL,
+                    'official-bailian',item['language'],canonical(item['tags']),now()))
+
+
 def resolve(db, user_id, voice_id, target_model=None, provider_scope=None):
     if not isinstance(voice_id, str) or not re.fullmatch(r"voice_[a-z0-9_]{1,64}", voice_id):
         raise Problem(422, "voice_id_invalid", "请选择音色库中的音色")
@@ -53,7 +64,7 @@ def resolve(db, user_id, voice_id, target_model=None, provider_scope=None):
         raise Problem(404, "voice_missing", "音色不存在、已停用或不属于当前账户，请重新选择")
     if target_model and row["target_model"] != target_model:
         raise Problem(409, "voice_model_changed", "此音色与当前配音模型不兼容，请重新选择")
-    if provider_scope and row["provider_scope"] != provider_scope:
+    if provider_scope and row["provider_scope"] not in {provider_scope, 'official-bailian'}:
         raise Problem(409, "voice_provider_changed", "音色所属百炼配置已变化，请联系管理员核对")
     return row
 
@@ -75,10 +86,14 @@ def catalogue(store, vault, user):
     capability = next((c for c in providers.catalogue(store, vault) if c["model"] == TTS_MODEL), {})
     clone = next((c for c in providers.catalogue(store, vault) if c["model"] == CLONE_MODEL), {})
     with store.write() as db:
-        default_voice_id = sync_default(db, vault)
+        configured_default_voice_id = sync_default(db, vault)
+        sync_system(db, vault)
         rows = db.execute("SELECT * FROM gateway_voices WHERE status='ready' AND (user_id IS NULL OR user_id=?) ORDER BY user_id IS NOT NULL,created_at DESC", (user["id"],)).fetchall()
-        items = [public(db, r, r["provider_scope"] == current_scope and r["target_model"] == model and capability.get("status") == "available") for r in rows]
-    return {"items": items, "default_voice_id": default_voice_id, "clone_ready": clone.get("status") == "available" and bool(getattr(vault, "public_origin", None)),
+        items = [public(db, r, r["provider_scope"] == current_scope and r["target_model"] == model and capability.get("status") == "available") for r in rows if r['provider_scope'] != 'official-bailian']
+        system = next((c for c in providers.catalogue(store, vault) if c['model'] == system_voices.MODEL), {})
+        items = system_voices.public_items(system.get('status') == 'available') + items
+        default_voice_id = system_voices.identity(system_voices.CATALOGUE['default_voice'])
+    return {"items": items, "default_voice_id": default_voice_id, "configured_default_voice_id":configured_default_voice_id, "clone_ready": clone.get("status") == "available" and bool(getattr(vault, "public_origin", None)),
             "clone_price_micros": "0", "sample_text": SAMPLE_TEXT,
             "clone_hint": "" if getattr(vault, "public_origin", None) else "克隆服务需要管理员配置可供百炼读取录音的 HTTPS 地址"}
 
@@ -136,6 +151,9 @@ def register_clone(db, job, quote, response):
 
 def preview_quote(store, vault, user, voice_id):
     from . import gateway
+    preset = next((v for v in system_voices.public_items(False) if v['id'] == voice_id), None)
+    if preset:
+        return {'sample_status':preset['sample_status'], 'cached':bool(preset['sample_url']), 'sample_url':preset['sample_url'], 'sample_kind':'official'}
     with store.read() as db:
         row = resolve(db, user["id"], voice_id, vault.models()[TTS_MODEL]["target_model"], scope(vault.load().get("bailian", {})))
         if row["sample_file"]:

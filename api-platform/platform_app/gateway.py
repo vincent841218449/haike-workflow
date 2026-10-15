@@ -146,7 +146,7 @@ def clean_input(db, user_id, model, value, info=None):
         text = value.get("text")
         maximum = 150 if model == "haike/tencent-tts" else 5000
         if (
-            set(value) - ({"text", "voice_id"} if model == "haike/cosyvoice" else {"text"})
+            set(value) - ({"text", "voice_id"} if model in {"haike/cosyvoice", "haike/cosyvoice-system"} else {"text"})
             or not isinstance(text, str)
             or not text.strip()
             or len(text) > maximum
@@ -154,13 +154,17 @@ def clean_input(db, user_id, model, value, info=None):
             raise Problem(422, "input_invalid", f"请输入 1–{maximum} 个字符的配音文本")
         characters = (
             providers.bailian_tts_characters(text)
-            if model == "haike/cosyvoice"
+            if model in {"haike/cosyvoice", "haike/cosyvoice-system"}
             else len(text)
         )
         if value.get("voice_id") is not None:
             voice = voices.resolve(db, user_id, value["voice_id"], (info or providers.MODELS[model])["target_model"])
             value["_voice"] = voice["provider_voice_id"]
             value["_provider_scope"] = voice["provider_scope"]
+            if voice['provider_scope'] == 'official-bailian':
+                value.pop('_provider_scope', None)
+        elif model == 'haike/cosyvoice-system':
+            raise Problem(422, 'voice_required', '请选择阿里百炼系统音色')
         return value, {"characters": characters}
     if capability == "assets":
         if (
@@ -207,6 +211,8 @@ def create_quote(store, vault, user, model, inputs, project):
     if current["status"] != "available":
         raise Problem(409, "model_unavailable", "模型尚未开通或成本价格尚未确认")
     with store.write() as db:
+        if model == 'haike/cosyvoice-system':
+            voices.sync_system(db, vault)
         inputs, usage = clean_input(db, user["id"], model, inputs, info)
         if info["provider"] == "bailian":
             provider_scope = voices.scope(vault.load()["bailian"])
@@ -216,6 +222,8 @@ def create_quote(store, vault, user, model, inputs, project):
                 if not getattr(vault, "public_origin", None):
                     raise Problem(409, "voice_storage_unavailable", "克隆服务的录音读取地址尚未配置，请联系管理员")
                 inputs["_provider_scope"] = provider_scope
+            if model == 'haike/cosyvoice-system':
+                inputs['_provider_scope'] = provider_scope
         if info.get("billing_mode") == "wallet_receipt":
             config = vault.load()[info["provider"]]
             limit = int(config["quote_cost_limit_micros"])

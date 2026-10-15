@@ -76,6 +76,13 @@ MODELS = {
         "capability": "tts",
         "meters": {"characters": 10000},
     },
+    "haike/cosyvoice-system": {
+        "name": "阿里百炼系统音色",
+        "provider": "bailian",
+        "target_model": "cosyvoice-v3-flash",
+        "capability": "tts",
+        "meters": {"characters": 10000},
+    },
     "haike/voice-clone": {
         "name": "CosyVoice 音色克隆",
         "provider": "bailian",
@@ -129,6 +136,10 @@ UNITS = {
     "requests": "次",
 }
 SOURCES = {
+    "haike/cosyvoice-system": (
+        "1000000",
+        "https://help.aliyun.com/zh/model-studio/cosyvoice-v3-flash",
+    ),
     "haike/voice-clone": (
         "0",
         "https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide",

@@ -60,10 +60,15 @@ def prepare_image(source, target):
 def validate_voice(value):
     if value.get("soundMode") == "voice" and value.get("voiceId") == "haike/tencent-tts":
         raise WorkError("腾讯精品配音已移除，请重新选择 CosyVoice，或上传已有音频")
-    if value.get("soundMode") == "voice" and value.get("voiceId") != "haike/cosyvoice":
+    if value.get("soundMode") == "voice" and value.get("voiceId") not in {"haike/cosyvoice", "haike/cosyvoice-system"}:
         raise WorkError("请选择网关提供的 CosyVoice 配音，或上传已有音频")
     if value.get("soundMode") == "voice" and value.get("toneId") is not None and (not isinstance(value["toneId"], str) or not re.fullmatch(r"voice_[a-z0-9_]{1,64}", value["toneId"])):
         raise WorkError("请选择音色库中的有效音色")
+    if value.get('soundMode') == 'voice' and value.get('voiceId') == 'haike/cosyvoice-system':
+        from backlot.studio_voices import _system_catalogue
+        system = _system_catalogue()
+        if value.get('toneId') not in {v['id'] for v in system.presets()}:
+            raise WorkError('请选择阿里百炼官方系统音色，不会替换为默认配音')
 
 
 def tts_input(draft):
@@ -102,6 +107,11 @@ def quote(studio, draft):
     needs_clock = draft["input"].get("subtitles", True) or draft["input"].get("ai", {}).get("enabled")
     asr = snapshot(studio) if needs_clock else {"provider": "gateway"}
     sdk = studio.client()
+    if draft['input'].get('soundMode') == 'voice' and draft['input'].get('voiceId') == 'haike/cosyvoice-system':
+        from backlot.studio_voices import _system_catalogue
+        system = _system_catalogue()
+        if not any(v.get('model') == system.MODEL and v.get('status') == 'available' for v in sdk.request('/capabilities').get('items', [])):
+            raise WorkError('当前配音服务尚未接通百炼系统音色；已选音色和素材保留，请启用服务后再制作')
     identity = "studioquote-" + uuid4().hex
     folder = studio.projects_root / draft["id"] / "assets/studio-quotes" / identity
     folder.mkdir(parents=True, exist_ok=True)

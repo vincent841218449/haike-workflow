@@ -71,8 +71,11 @@ def test_old_gateway_offers_explicit_default_without_claiming_cloning_or_auditio
         return {"items": [{"model": "haike/cosyvoice", "status": "available"}]}
     monkeypatch.setattr(client, "request", request)
     value = studio_voices.catalogue(studio)
-    voice = value["items"][0]
-    assert value["default_voice_id"] == voice["id"] == "voice_gateway_default"
+    official = [v for v in value['items'] if v.get('sample_kind') == 'official']
+    assert len(official) == 7 and value['default_voice_id'] == 'voice_bailian_cv3_longxiaochun_v3'
+    assert all(v['production_ready'] is False for v in official)
+    voice = next(v for v in value['items'] if v['id'] == 'voice_gateway_default')
+    assert voice['scope'] == 'legacy'
     assert not value["clone_ready"] and not voice["preview_ready"]
     from backlot.studio_avatar import tts_input
     assert tts_input({"text": "原文", "input": {"toneId": voice["id"]}}) == {"text": "原文"}
@@ -80,6 +83,37 @@ def test_old_gateway_offers_explicit_default_without_claiming_cloning_or_auditio
     with pytest.raises(WorkError, match="单独试听"):
         studio_voices.quote_preview(studio, voice["id"])
     assert client.intents == []
+
+
+def test_system_model_uses_exact_preset_and_requires_its_own_capability(rig, monkeypatch):
+    studio, client = rig
+    monkeypatch.setattr(client,'request',lambda path:{'items':[{'model':'haike/cosyvoice-system','status':'available'}]} if path=='/capabilities' else {'items':[]})
+    value=studio_voices.catalogue(studio)
+    tone=next(v for v in value['items'] if v['id']==value['default_voice_id'])
+    assert tone['production_ready'] and tone['sample_kind']=='official'
+    from backlot.studio_avatar import validate_voice, tts_input
+    selected={'soundMode':'voice','voiceId':tone['model'],'toneId':tone['id']}
+    validate_voice(selected)
+    assert tts_input({'text':'原文','input':selected})=={'text':'原文','voice_id':tone['id']}
+    with pytest.raises(WorkError,match='官方系统音色'):
+        validate_voice({**selected,'toneId':'voice_gateway_default'})
+    assert client.intents==[]
+
+
+def test_curated_catalogue_hides_extra_gateway_presets_but_preserves_personal_voices(rig, monkeypatch):
+    studio, client = rig
+    def request(path):
+        if path == '/capabilities':
+            return {'items': [{'model': 'haike/cosyvoice-system', 'status': 'available'}]}
+        return {'items': [
+            {'id': 'voice_bailian_cv3_longhouge_v3', 'scope': 'system', 'model': 'haike/cosyvoice-system', 'sample_kind': 'official'},
+            {'id': 'voice_owned', 'scope': 'personal', 'model': 'haike/cosyvoice'},
+        ]}
+    monkeypatch.setattr(client, 'request', request)
+    value = studio_voices.catalogue(studio)
+    assert len([v for v in value['items'] if v.get('sample_kind') == 'official']) == 7
+    assert 'voice_bailian_cv3_longhouge_v3' not in {v['id'] for v in value['items']}
+    assert any(v['id'] == 'voice_owned' for v in value['items'])
 
 
 def test_unavailable_gateway_does_not_silently_replace_a_personal_voice(rig, monkeypatch):

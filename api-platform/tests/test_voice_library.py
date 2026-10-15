@@ -109,17 +109,18 @@ def test_selected_voice_is_frozen_and_provider_changes_block_unconfirmed_quotes(
 
 def test_changing_default_never_retargets_an_existing_library_identity(env):
     store, client, _, _, _, vault, headers, _ = rig(env)
-    old = client.get('/v2/voices', headers=headers).json()['default_voice_id']
+    old = client.get('/v2/voices', headers=headers).json()['configured_default_voice_id']
     vault.update('bailian', {'voice': 'cosyvoice-v3.5-flash-new-default'})
     changed = client.get('/v2/voices', headers=headers).json()
-    assert changed['default_voice_id'] != old
+    assert changed['configured_default_voice_id'] != old
     q = real_quote(client, headers, inputs={'text': '你好', 'voice_id': old})
     with store.read() as db:
         row = db.execute('SELECT snapshot FROM gateway_quotes WHERE id=?', (q['id'],)).fetchone()
         assert json.loads(row['snapshot'])['provider_config']['voice'] == 'test-cloned-voice'
     vault.update('bailian', {'voice': 'test-cloned-voice'})
     restored = client.get('/v2/voices', headers=headers).json()
-    assert restored['default_voice_id'] == old and len(restored['items']) == 2
+    assert restored['configured_default_voice_id'] == old
+    assert len([v for v in restored['items'] if v.get('sample_kind')!='official']) == 2
 
 
 def test_existing_system_audition_import_creates_no_bill_or_new_job(env):
@@ -208,7 +209,7 @@ def test_audition_cache_does_not_charge_again_and_is_private(env, monkeypatch):
 def test_only_one_audition_can_be_accepted_at_a_time(env):
     store, client, _, _, _, _, headers, _ = rig(env)
     fund(env)
-    identity = client.get('/v2/voices', headers=headers).json()['items'][0]['id']
+    identity = next(v['id'] for v in client.get('/v2/voices', headers=headers).json()['items'] if v.get('sample_kind')!='official')
     one = client.post(f'/v2/voices/{identity}/preview-quote', headers=headers).json()['quote']
     two = client.post(f'/v2/voices/{identity}/preview-quote', headers=headers).json()['quote']
     assert submit(client, headers, one).status_code == 200

@@ -35,3 +35,6 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 - The default form has script, voice, portrait and optional image/video materials. Fresh projects start with empty user content, voice synthesis and automatic storyboarding. Keep template/layout, uploaded audio and manual storyboard controls under optional settings.
 - 「制作视频」saves inputs, reads the commercial quote and enqueues once within the fee cap displayed beside the button, then opens `/tasks?task=<job_id>`. Material rights use one collective checkbox. No required preview or confirmation dialog; over-budget quotes stop without increasing the cap. Unknown submissions preserve their revision/quote and recover the original task, including after refresh.
+
+- Keep the default system voice list at 7 curated Alibaba Bailian presets in `../../api-platform/platform_app/bailian_system_voices.json`, with free official auditions. Do not expand the list without user direction. Existing personal voices retain their original model and identity.
+- Deploy and validate locally first. Cloud rollout and gateway synchronization require fresh explicit user authorization after local validation.

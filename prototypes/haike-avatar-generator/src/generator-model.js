@@ -6,7 +6,7 @@ export const TEMPLATES = [
 ];
 export function availableVoicesFromAccount(account) {
   return (account?.capabilities?.items || [])
-    .filter(v => v.capability === "tts" && v.model === "haike/cosyvoice")
+    .filter(v => v.capability === "tts" && ["haike/cosyvoice", "haike/cosyvoice-system"].includes(v.model))
     .map(v => ({ id: v.model, name: v.name, model: v.model, rate: 1 }));
 }
 export function defaultVoiceId(current, voices) {
@@ -19,7 +19,8 @@ export function validateInputs(input, availableVoices, availableTones) {
   if ([...input.text].length > 5000) return { field: "text", message: "口播文案最多5,000字，请精简后再试。" };
   if (input.soundMode === "audio" && !input.audio) return { field: "audio", message: "请选择或上传一份口播音频。" };
   if (input.soundMode === "voice" && input.voiceId === "haike/tencent-tts") return { field: "voice", message: "腾讯精品配音已移除，请重新选择 CosyVoice，或上传已有音频。" };
-  if (input.soundMode === "voice" && (input.voiceId !== "haike/cosyvoice" || !availableVoices.some(v => v.id === input.voiceId))) return { field: "voice", message: "请在API设置连接海客Key，再选择可用的 CosyVoice 配音。" };
+  if (input.soundMode === "voice" && (!["haike/cosyvoice", "haike/cosyvoice-system"].includes(input.voiceId) || !availableVoices.some(v => v.id === input.voiceId))) return { field: "voice", message: "当前配音服务尚未接通所选音色，请检查API设置或联系管理员启用。" };
+  if (input.soundMode === 'voice' && availableTones?.some(v=>v.id===input.toneId && ((v.model && v.model!==input.voiceId)||v.production_ready===false))) return {field:'voice',message:'所选音色暂不能用于制作，已保留选择；请先接通对应配音服务。'};
   if (input.soundMode === 'voice' && availableTones && !availableTones.some(v => v.id === input.toneId && v.status === 'ready')) return { field: 'voice', message: '请选择当前音色库中的可用音色；原音色不可用时不会自动替换。' };
   if (!["audio", "voice"].includes(input.soundMode)) return { field: "audio", message: "请选择声音来源。" };
   if (!input.portrait) return { field: "portrait", message: "请上传人物正面图片。" };

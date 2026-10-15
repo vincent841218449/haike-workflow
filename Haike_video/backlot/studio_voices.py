@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from uuid import uuid4
 
-from backlot.studio import timestamp
+from backlot.studio import timestamp, sdk_type
 from backlot.studio_avatar import key_identity
 from backlot.work_catalog import WorkError
 
@@ -26,7 +26,26 @@ def catalogue(studio):
             raise WorkError("音色库返回了无效的音色标识，请联系管理员核对")
         if voice.get("sample_url"):
             voice["sample_url"] = "/api/studio/voices/" + voice["id"] + "/sample"
-    return value
+    return _with_official(studio, value)
+
+
+def _system_catalogue():
+    sdk_type()  # Adds the bundled API module path, without loading credentials.
+    from platform_app import bailian_system_voices
+    return bailian_system_voices
+
+
+def _with_official(studio, value, capabilities=None):
+    system = _system_catalogue()
+    if capabilities is None:
+        capabilities = studio.client().request('/capabilities').get('items', [])
+    ready = any(v.get('model') == system.MODEL and v.get('status') == 'available' for v in capabilities)
+    official = system.public_items(ready)
+    # The local curated list is authoritative even when a gateway exposes more presets.
+    return {**value, 'items':official + [v for v in value.get('items', []) if v.get('model') != system.MODEL and v.get('sample_kind') != 'official'],
+            'default_voice_id':system.identity(system.CATALOGUE['default_voice']),
+            'mode':'bailian_system', 'system_source':system.CATALOGUE['source'],
+            'system_hint':'' if ready else '7 个系统音色可免费试听并保存选择；视频配音接入尚待验收，暂不能使用这些音色制作视频。'}
 
 
 def _legacy_catalogue(studio):
@@ -35,13 +54,13 @@ def _legacy_catalogue(studio):
     except Exception:
         raise WorkError("暂时无法核对配音能力，请检查API连接后刷新") from None
     ready = any(v.get("model") == "haike/cosyvoice" and v.get("status") == "available" for v in capabilities)
-    return {"items": [{"id": "voice_gateway_default", "name": "CosyVoice · 网关默认音色",
-                       "scope": "system", "language": "multilingual", "tags": ["现有配音"],
+    return _with_official(studio, {"items": [{"id": "voice_gateway_default", "name": "CosyVoice · 原网关默认音色",
+                       "scope": "legacy", "language": "multilingual", "tags": ["历史配音"],
                        "status": "ready", "sample_status": "unavailable", "preview_ready": False,
                        "preview_hint": "当前服务暂不支持单独试听，可上传已有录音制作"}] if ready else [],
             "default_voice_id": "voice_gateway_default" if ready else None, "clone_ready": False,
-            "clone_hint": "当前服务可使用已配置的默认配音；个人音色、克隆及单独试听尚未启用。本次仅运行本地项目，未更新云端服务。默认音色由服务配置决定。",
-            "mode": "gateway_default"}
+            "clone_hint": "个人音色及克隆功能暂未启用。",
+            "mode": "gateway_default"}, capabilities)
 
 
 def sample(studio, voice_id):
