@@ -77,6 +77,26 @@ def creation_task(job_id: str, request: Request):
         raise HTTPException(404, "未找到这条创作任务") from exc
 
 
+@router.post('/api/studio/tasks/{job_id}/continue')
+def continue_video(job_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    if set(data) != {'confirmed', 'revision'} or data.get('confirmed') is not True:
+        raise HTTPException(422, '请确认继续原视频制作')
+    from backlot.server import _ensure_production_queue
+    from backlot.production_queue import ProductionQueueConflict, ProductionQueueError
+    from backlot.studio_avatar import key_identity
+    queue = _ensure_production_queue(request.app)
+    try:
+        job = queue.get(job_id, include_private=True)
+        if job.get('frozen_request', {}).get('key_identity') != key_identity(studio(request)):
+            raise HTTPException(409, '请恢复原API账户连接后继续制作')
+        return queue.continue_actual_usage(job_id, data.get('revision'))
+    except ProductionQueueConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ProductionQueueError as exc:
+        raise HTTPException(404, '未找到这条创作任务') from exc
+
+
 @router.get("/api/studio/voices")
 async def voice_library(request: Request):
     from backlot import studio_voices, studio_voice_samples
@@ -420,7 +440,8 @@ def generate(draft_id: str, request: Request, data: dict = Body(...)):
     s = studio(request); d = call(s.draft, draft_id)
     if data.get("revision") != d["revision"]: raise HTTPException(409, "制作内容已更新，请重新确认")
     template = call(s.template, d["template_id"])
-    if data.get("confirmed") is not True: raise HTTPException(422, "请确认本次制作及费用上限")
+    if data.get("confirmed") is not True: raise HTTPException(422, "请确认本次视频制作")
+    if data.get('billing_policy') not in (None, 'actual_usage'): raise HTTPException(422, '制作计费方式无效')
     kind = template["kind"]
     if template["id"] == "avatar-motion-adu-v1":
         from backlot.studio_motion import freeze
@@ -431,7 +452,9 @@ def generate(draft_id: str, request: Request, data: dict = Body(...)):
         frozen = {"draft": d, "render_id": "studio-" + str(d["revision"])}
     else:
         from backlot.studio_avatar import frozen_request
-        frozen = call(frozen_request, s, d, data.get("quote_id"), data.get("max_charge_micros"))
+        # Old browser payloads may still carry a numeric budget. Every new
+        # creation uses actual usage; existing idempotent jobs stay frozen below.
+        frozen = call(frozen_request, s, d, data.get("quote_id"))
     from backlot.server import _ensure_production_queue
     render_id = "studio-" + str(d["revision"])
     project_dir = s.projects_root / draft_id

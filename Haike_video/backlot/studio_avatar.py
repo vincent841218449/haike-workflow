@@ -153,7 +153,7 @@ def public_quote(data):
             "needs_audio_quote": data["draft"]["input"]["soundMode"] == "voice", "ai_trial": data["draft"]["input"].get("ai", {}).get("enabled", False), "items": [{"stage": k, "model": q["model"], "max_charge_micros": q["max_charge_micros"], "billing_source": q.get("billing_source", "gateway")} for k, q in data["quotes"].items()] + ([{"stage": "asr", "model": "local/whisper", "max_charge_micros": "0"}] if data.get("asr", {}).get("provider") == "local-whisper" else [])}
 
 
-def frozen_request(studio, draft, quote_id, maximum):
+def frozen_request(studio, draft, quote_id, maximum=None):
     # New submissions cannot reuse a retired-model quote. Already queued requests
     # keep their original execution state and resume through the native queue.
     validate_voice(draft["input"])
@@ -161,8 +161,9 @@ def frozen_request(studio, draft, quote_id, maximum):
     if not row: raise WorkError("请先读取本次制作报价")
     data = json.loads(row[0])
     if data["draft"] != draft or data["key_identity"] != key_identity(studio): raise WorkError("内容或Key已改变，请重新读取报价")
-    if type(maximum) is not int or not 1 <= maximum <= 1000000000: raise WorkError("请填写有效费用上限，最高1,000元")
-    if maximum < public_quote(data)["known_max_micros"]: raise WorkError("费用上限低于已读取报价，未提交任务")
+    from backlot.studio_billing import authorization
+    billing = authorization(maximum)
+    if maximum is not None and maximum < public_quote(data)["known_max_micros"]: raise WorkError("费用上限低于已读取报价，未提交任务")
     # The original gateway quote expires server-side. Do not silently replace it before charging.
     from backlot.studio_presentation import selected
     from backlot.studio_template_registry import resolve
@@ -170,7 +171,7 @@ def frozen_request(studio, draft, quote_id, maximum):
     presentation = selected(draft)
     if ref and ref['runtime'] in {'adu-legacy','motiongit'}:
         presentation.update(template_ref=ref, adapter='motiongit' if ref['runtime']=='motiongit' else 'adu-motion-video')
-    return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, "max_charge_micros": maximum, "render_id": "studio-" + str(draft["revision"])}
+    return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, **billing, "render_id": "studio-" + str(draft["revision"])}
 
 
 def public_media_address(host, port):
@@ -339,8 +340,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if stage not in state["stages"]:
             q = request["quotes"].get(stage) or sdk.quote(model, inputs, request["draft"]["id"])
             committed = request.get('inherited_charge_micros', 0) + sum(int(s["quote"]["max_charge_micros"]) for s in state["stages"].values())
-            if committed + int(q["max_charge_micros"]) > request["max_charge_micros"]:
-                raise WorkError("后续报价与原调用合计超过本次总费用上限，已完成产物保留；未提交这一步", "budget_exceeded")
+            from backlot.studio_billing import check_total
+            check_total(request, committed + int(q["max_charge_micros"]))
             state["stages"][stage] = {"quote": q}; save()
         s = state["stages"][stage]
         if not s.get("job"):

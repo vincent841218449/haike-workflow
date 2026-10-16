@@ -10,7 +10,7 @@ import {nativeTemplateCards} from './template-library.js';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
 import {AvatarMaterials} from './AvatarMaterials.jsx';
-import {chargeLimitMicros, enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from './avatar-submit.js';
+import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from './avatar-submit.js';
 import {DouyinRecovery} from './DouyinRecovery.jsx';
 import { VoiceLibrary, useVoiceLibrary } from './VoiceLibrary.jsx';
 import {CreationStep as Step, PreparationStrip, AvatarVoiceField, AvatarPortraitField, SubmissionStatus} from './AvatarCreationFields.jsx';
@@ -40,10 +40,9 @@ function BasicAvatar() {
   const [serverDraft, setServerDraft] = useState(null);
   const [storyboard,setStoryboard]=useState(null),[motionCard,setMotionCard]=useState(null);
   const [motionError,setMotionError]=useState(''),[templateReload,setTemplateReload]=useState(0);
-  const [quote, setQuote] = useState(null), [budget, setBudget] = useState('10.00'), [job, setJob] = useState(null);
+  const [quote, setQuote] = useState(null), [job, setJob] = useState(null);
   const uploaded = useRef(new WeakMap());
   const pendingSubmission = useRef(null), submissionBusy = useRef(false);
-  const restoredBudget = useRef(false);
   const materialBusy = useRef(false);
   const [uncertain, setUncertain] = useState(false);
   const [submitPhase, setSubmitPhase] = useState(''), [uploading, setUploading] = useState(null);
@@ -74,13 +73,6 @@ function BasicAvatar() {
   const portraitUrl = useAssetUrl(input.portrait, assetPath("presenter.png"));
   const update = patch => { setInput(previous => ({ ...previous, ...patch })); setSaved(false); setError(null); setQuote(null); };
   const updateLayout = patch => {setLayout(old=>({...old,...patch}));setSaved(false);setQuote(null);setError(null);};
-  useEffect(()=>{if(!restoredBudget.current&&job?.max_charge_micros&&!pendingSubmission.current){setBudget((job.max_charge_micros/1000000).toFixed(2));restoredBudget.current=true;}},[job?.job_id]);
-  useEffect(()=>{
-    const previous=new URLSearchParams(location.search).get('resume_task');
-    if(!previous)return;let live=true;
-    api(`/api/studio/tasks/${encodeURIComponent(previous)}`).then(r=>{if(live&&r.task.max_charge_micros)setBudget((r.task.max_charge_micros/1000000).toFixed(2));}).catch(()=>{});
-    return()=>{live=false;};
-  },[]);
   useEffect(() => {
     if (draftLoading || !voiceLibrary.data) return;
     const defaultTone = defaultProductionTone(voiceLibrary.data, voices);
@@ -106,7 +98,7 @@ function BasicAvatar() {
   useEffect(() => {
     let live = true;
     const id = new URLSearchParams(location.search).get('draft');
-    const fromServer = async id => {const d=await api(`/api/studio/drafts/${id}`);if(live){setServerDraft(d);setLayout(d.layout);const pending=readSubmission(sessionStorage,id);if(pending){pendingSubmission.current=pending;setUncertain(true);setBudget((pending.maximum/1000000).toFixed(2));}}try{const r=await api(`/api/studio/drafts/${id}/avatar-job`);if(live){setJob(r.job);if(pendingSubmission.current&&r.job?.parent_job_id===`studio-${pendingSubmission.current.quote.revision}`){pendingSubmission.current=null;rememberSubmission(sessionStorage,null);setUncertain(false);}}if(!r.job){const p=await api(`/api/studio/drafts/${id}/ai-preview`);if(live)setStoryboard(p.plan);}}catch{}return {version:1,input:{...d.input,templateId:d.template_id,text:d.text,title:d.title}};};
+    const fromServer = async id => {const d=await api(`/api/studio/drafts/${id}`);if(live){setServerDraft(d);setLayout(d.layout);const pending=readSubmission(sessionStorage,id);if(pending){pendingSubmission.current=pending;setUncertain(true);}}try{const r=await api(`/api/studio/drafts/${id}/avatar-job`);if(live){setJob(r.job);if(pendingSubmission.current&&r.job?.parent_job_id===`studio-${pendingSubmission.current.quote.revision}`){pendingSubmission.current=null;rememberSubmission(sessionStorage,null);setUncertain(false);}}if(!r.job){const p=await api(`/api/studio/drafts/${id}/ai-preview`);if(live)setStoryboard(p.plan);}}catch{}return {version:1,input:{...d.input,templateId:d.template_id,text:d.text,title:d.title}};};
     const q=new URLSearchParams(location.search);
     const restore = id ? fromServer(id) : q.has('new')||q.has('style')||q.has('template')?Promise.resolve(null):readDraft().then(d=>d?.studioDraftId?fromServer(d.studioDraftId):d);
     restore.then(draft => {
@@ -270,10 +262,10 @@ function BasicAvatar() {
     try {
       if (!pendingSubmission.current) {
         setSubmitPhase('保存内容…');
-        const maximum=chargeLimitMicros(budget), d=await persistServer();
-        setSubmitPhase('核对费用…');
+        const d=await persistServer();
+        setSubmitPhase('准备制作…');
         const q=await api(`/api/studio/drafts/${d.id}/quote`,{revision:d.revision});
-        setQuote(q); pendingSubmission.current={draft:d,quote:q,maximum,resumeTask:new URLSearchParams(location.search).get('resume_task')||(!['queued','running','paused'].includes(job?.status)?job?.job_id:undefined)};
+        setQuote(q); pendingSubmission.current={draft:d,quote:q,billingPolicy:'actual_usage',resumeTask:new URLSearchParams(location.search).get('resume_task')||(!['queued','running','paused'].includes(job?.status)?job?.job_id:undefined)};
         rememberSubmission(sessionStorage,pendingSubmission.current);
       }
       setSubmitPhase(uncertain ? '恢复原提交…' : '加入队列…');
@@ -285,7 +277,7 @@ function BasicAvatar() {
       setUncertain(!!e.submissionUncertain);setError({field:'api',message:e.message});
     } finally {submissionBusy.current=false;setSaving(false);setSubmitPhase('');}
   }
-  useEffect(()=>{if(!job||!['queued','running'].includes(job.status))return;const timer=setInterval(()=>api(`/api/production-queue/jobs/${job.job_id}`).then(setJob).catch(e=>setError({message:e.message})),2500);return()=>clearInterval(timer);},[job?.job_id,job?.status]);
+  useEffect(()=>{if(!job||!(['queued','running'].includes(job.status)||job.status==='ambiguous'&&job.error?.code==='provider_pending'))return;const timer=setInterval(()=>api(`/api/production-queue/jobs/${job.job_id}`).then(setJob).catch(e=>setError({message:e.message})),2500);return()=>clearInterval(timer);},[job?.job_id,job?.status]);
   async function retry(){setSaving(true);try{setJob(await api(`/api/production-queue/jobs/${job.job_id}/retry`,{}));}catch(e){setError({message:e.message});}finally{setSaving(false);}}
   async function skipDouyin(){setSaving(true);try{setJob(await api(`/api/studio/ai/jobs/${job.job_id}/skip-douyin`,{confirmed:true}));}catch(e){setError({message:e.message});}finally{setSaving(false);}}
   const seconds = Math.round(input.audio?.duration || 0);
@@ -293,7 +285,7 @@ function BasicAvatar() {
   const models = availableModels(accountState);
   const blocked = accountState === null ? '正在读取模型能力…' : accountState.error ? accountState.message || '暂时无法验证模型能力' : !models.has('haike/avatar') ? '数字人模型尚未开通' : input.soundMode==='voice'&&selectedTone?.production_ready===false ? '已选系统音色，配音服务待接通；可以试听并保存草稿' : (input.subtitles||input.ai?.enabled) && !accountState.local_asr?.ready && !models.has('haike/tencent-asr') ? '字幕识别尚未开通' : '';
   const templateBlocked=input.motion ? motionError || (!currentMotion?'正在核对所选模板…':'') : '';
-  const inProgress = ['queued','running'].includes(job?.status);
+  const inProgress = ['queued','running'].includes(job?.status) || job?.status==='ambiguous' && job?.error?.code==='provider_pending';
   const readiness = creationReadiness(input, voices, voiceLibrary.data?.items || [], job);
   const audioMismatch = knownAudioMismatch(input, job);
   const fallbackTone = defaultProductionTone(voiceLibrary.data, voices);
@@ -327,7 +319,6 @@ function BasicAvatar() {
         {more&&<div id="more-fields" className="settings-fields">
 
           <div className="sound-tabs" role="group" aria-label="声音来源"><button aria-pressed={input.soundMode==="voice"} className={input.soundMode==="voice"?"active":""} onClick={()=>update({soundMode:"voice"})}>音色配音</button><button aria-pressed={input.soundMode==="audio"} className={input.soundMode==="audio"?"active":""} onClick={()=>update({soundMode:"audio"})}>使用已有音频</button></div>
-          <Field label="本次制作费用上限（元）" hint="配音、数字人与识别合计；超过上限暂停，保留已完成内容。"><input type="number" min=".01" max="1000" step=".01" value={budget} onChange={e=>setBudget(e.target.value)}/></Field>
           {input.motion&&<Field label="背景音乐" hint="使用所选模板的原生动作音效；可添加自己的配乐，无需另行审核。"><select value={input.music?.mode||'none'} onChange={e=>update({music:e.target.value==='none'?{mode:'none'}:{mode:'track',asset:input.music?.asset,offset:0}})}><option value="none">不使用背景音乐</option><option value="track">使用自己的音乐</option></select>{input.music?.mode==='track'&&<><input type="file" accept=".mp3,.wav,.m4a" aria-label="上传背景音乐" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;setSaving(true);try{const d=await persistServer();const asset=await upload(d.id,file,'audio');update({music:{mode:'track',asset,offset:0}});}catch(e){setError({field:'music',message:e.message});}finally{setSaving(false);}}}/><small>{input.music.asset?.name||'尚未上传音乐'}</small></>}</Field>}
           <Field label="视频标题"><input value={input.title} maxLength={36} placeholder="自动取文案首句，建议16字以内" onChange={e=>update({title:e.target.value})}/></Field><div className="layout-fields"><Field label="标题字号"><select value={layout.title_size} onChange={e=>updateLayout({title_size:Number(e.target.value)})}>{[48,54,60,66].map(n=><option key={n} value={n}>{n}px</option>)}</select></Field><Field label="强调色"><input type="color" value={layout.accent} onChange={e=>updateLayout({accent:e.target.value})}/></Field></div><label className="checkbox-row"><input type="checkbox" checked={input.subtitles} onChange={e=>update({subtitles:e.target.checked})}/>显示字幕</label>
           <details><summary>素材与分镜细节（可选）</summary><AiMaterials value={input.ai} busy={saving||draftLoading} onFile={importMaterial} onPlan={planPreview} onChange={ai=>{update({ai});setStoryboard(null);}} plan={storyboard}/></details>
@@ -336,13 +327,13 @@ function BasicAvatar() {
       </fieldset>
       <SubmissionStatus phase={submitPhase} uncertain={uncertain}/>
       <div className="notice-stack avatar-notices"><Notice message={!['text','voice','portrait','materials','audio'].includes(error?.field) ? error?.message : ''} error/></div>
-      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',canceled:'已取消'})[job.status]||job.status}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
+      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',awaiting_human:'等待处理',ambiguous:'等待供应商返回',cancelled:'已取消',canceled:'已取消'})[job.status]||'等待处理'}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
       <DouyinRecovery job={job} onJob={setJob}/>
     </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}>
       {selectedSample&&<><div className="poster-frame"><TemplateCover key={selectedSample.id} template={selectedSample}/></div>{selectedSample.sourceLabel&&<p className="template-source-label">{selectedSample.sourceLabel}</p>}<p className="preview-note">{input.motion?selectedSample.description:template.sample?'现有真实样片，制作时使用你的内容。':'模板布局示意，制作时使用你的内容。'}</p>{selectedSample.demo&&<Button className="preview-play" onClick={()=>setModal('sample')}><Play size={16}/>播放所选模板样片</Button>}</>}
       {input.motion&&!selectedSample&&(motionError?<Notice message={motionError} error><Button onClick={()=>setTemplateReload(v=>v+1)}>重新读取模板</Button></Notice>:<p className="helper" role="status">正在读取所选模板预览…</p>)}
     </PreviewPanel>
-    <ActionBar note={<><strong>本次费用上限 ¥{budget}</strong>{!inProgress&&!uncertain&&(blocked||templateBlocked||!readiness.ready)?<span className="creation-action-hint">{blocked||templateBlocked||<button type="button" onClick={()=>focusProblem({field:readiness.missing[0].id,message:readiness.message})}>{readiness.message}<ArrowRight size={13}/></button>}</span>:<span>提交后自动制作，在创作任务查看进度</span>}</>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!(blocked||templateBlocked)&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>
+    <ActionBar note={<><strong>按实际使用结算</strong>{!inProgress&&!uncertain&&(blocked||templateBlocked||!readiness.ready)?<span className="creation-action-hint">{blocked||templateBlocked||<button type="button" onClick={()=>focusProblem({field:readiness.missing[0].id,message:readiness.message})}>{readiness.message}<ArrowRight size={13}/></button>}</span>:<span>提交后自动制作，在创作任务查看进度</span>}</>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!(blocked||templateBlocked)&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>
     <input hidden type="file" ref={textUpload} accept=".txt,.docx" onChange={importText} aria-label="文案文件"/><input hidden type="file" ref={audioUpload} accept=".wav,.mp3,.m4a,.ogg" onChange={importAudio} aria-label="音频文件"/>
     <audio ref={audio} src={audioUrl} onEnded={()=>setPlaying(false)} onError={()=>setPlaying(false)}/>
     <div className={`toast ${toast?"visible":""}`} role="status">{toast&&<><CheckCircle2 size={18}/>{toast}</>}</div>

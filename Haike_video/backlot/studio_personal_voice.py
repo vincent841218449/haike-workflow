@@ -309,7 +309,7 @@ def catalogue(studio):
         state = preview_state(studio, data)
         result.append({"id": voice_id, "name": data["name"], "scope": "personal", "model": MODEL,
             "language": data["language"], "tags": data["tags"], "status": "ready" if ready else "unavailable",
-            "production_ready": ready, "production_hint": "本地专属音色，配音费用计入视频上限。",
+            "production_ready": ready, "production_hint": "本地专属音色，按实际使用结算。",
             "sample_status": state["status"], "sample_url": "/api/studio/voices/" + voice_id + "/sample" if state["status"] == "succeeded" else None,
             "created_at": data["created_at"]})
     return result

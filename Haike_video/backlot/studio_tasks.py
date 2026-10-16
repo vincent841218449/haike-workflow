@@ -83,9 +83,9 @@ def task_view(studio, job, scheduled_paths=()):
             pass
     scheduled = complete and result.get('output_path') in scheduled_paths
     return {
-        "id": job["job_id"], "project_id": job["project_id"], "title": title, "excerpt": excerpt,
+        "id": job["job_id"], "revision": job.get('revision'), "project_id": job["project_id"], "title": title, "excerpt": excerpt,
         "type": category, "type_label": label, "status": job["status"],
-        "status_label": "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
+        "status_label": "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
         "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
         "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
@@ -100,12 +100,14 @@ def task_view(studio, job, scheduled_paths=()):
         "error": "" if provider_wait else str(error.get("message") or "") if isinstance(error, dict) else str(error),
         "error_code": error.get('code'), "provider_wait": provider_wait,
         "max_charge_micros": (job.get('frozen_request') or {}).get('max_charge_micros'),
+        "billing_policy": (job.get('frozen_request') or {}).get('billing_policy', 'limited'),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else result.get('notice') or "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
         "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation,
+                    "continue": job['kind'] == 'studio_avatar' and job['status'] == 'awaiting_human' and error.get('code') == 'budget_exceeded' and not job.get('cancel_requested'),
                     "pause": job["status"] == "queued", "resume": job["status"] == "paused",
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
-                    "edit_label": "按文案配音或替换录音" if error.get('code') == 'audio_script_mismatch' else "调整总费用上限" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
+                    "edit_label": "按文案配音或替换录音" if error.get('code') == 'audio_script_mismatch' else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }
 
 

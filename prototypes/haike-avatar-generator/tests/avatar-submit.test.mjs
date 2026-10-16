@@ -1,20 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {chargeLimitMicros, enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from '../src/avatar-submit.js';
+import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from '../src/avatar-submit.js';
 
-const submission = () => ({draft:{id:'studio-test'},quote:{id:'quote-a',revision:3,known_max_micros:10000},maximum:10000000});
-test('一键提交冻结报价、版本与已展示的费用上限，跳转具体创作任务', async()=>{
+const submission = () => ({draft:{id:'studio-test'},quote:{id:'quote-a',revision:3,known_max_micros:13000000},billingPolicy:'actual_usage'});
+test('一键提交冻结报价和版本，按实际使用制作，不要求视频总预算', async()=>{
   const calls=[],job={job_id:'queue-a',parent_job_id:'studio-3',status:'queued'};
   assert.equal(await enqueueAvatar(async(...args)=>{calls.push(args);return job;},submission()),job);
-  assert.deepEqual(calls,[['/api/studio/drafts/studio-test/generate',{revision:3,quote_id:'quote-a',max_charge_micros:10000000,confirmed:true}]]);
+  assert.deepEqual(calls,[['/api/studio/drafts/studio-test/generate',{revision:3,quote_id:'quote-a',billing_policy:'actual_usage',confirmed:true}]]);
   assert.equal(taskUrl(job),'/tasks?task=queue-a');
 });
-test('预算不足时不提交，也不自动增加用户已确认的上限', async()=>{
-  let calls=0;
-  await assert.rejects(enqueueAvatar(async()=>calls++,{...submission(),maximum:1}),/超过/);
-  assert.equal(calls,0);
-  for(const value of ['',0,-1,'bad',Infinity,1001]) assert.throws(()=>chargeLimitMicros(value));
-  assert.equal(chargeLimitMicros('10.00'),10000000);
+test('旧页面丢响应的提交仍恢复原参数，不能悄悄升级旧冻结请求', async()=>{
+  const calls=[];
+  await enqueueAvatar(async(path,body)=>{calls.push(body);return {job_id:'original'};},{...submission(),maximum:10000000});
+  assert.equal(calls[0].max_charge_micros,10000000);
+  assert.equal(calls[0].billing_policy,undefined);
 });
 test('提交响应丢失时查回同版本原任务，旧版本不能冒充成功',async()=>{
   const job={job_id:'existing',parent_job_id:'studio-3'};
@@ -48,5 +47,6 @@ test('修正输入后沿原创作继续，刷新和提交均保留显式关联',
   const restored=readSubmission(storage,s.draft.id),calls=[];
   await enqueueAvatar(async(path,body)=>{calls.push(body);return {job_id:'PQ-next'};},restored);
   assert.equal(calls[0].resume_task,'PQ-original');
-  assert.equal(calls[0].max_charge_micros,10000000);
+  assert.equal(calls[0].billing_policy,'actual_usage');
+  assert.equal(calls[0].max_charge_micros,undefined);
 });

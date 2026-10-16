@@ -1,11 +1,3 @@
-export function chargeLimitMicros(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < .01 || amount > 1000) {
-    throw new Error('制作费用上限需要在0.01至1,000元之间，请在更多设置中调整。');
-  }
-  return Math.round(amount * 1000000);
-}
-
 export function taskUrl(job) {
   return `/tasks?task=${encodeURIComponent(job.job_id)}`;
 }
@@ -16,27 +8,24 @@ export function rememberSubmission(storage, submission) {
   storage.setItem(pendingKey, JSON.stringify({
     draft: {id: submission.draft.id},
     quote: {id: submission.quote.id, revision: submission.quote.revision, known_max_micros: submission.quote.known_max_micros},
-    maximum: submission.maximum,
+    ...(submission.maximum !== undefined ? {maximum: submission.maximum} : {billingPolicy:'actual_usage'}),
     resumeTask: submission.resumeTask,
   }));
 }
 export function readSubmission(storage, draftId) {
   try {
     const value = JSON.parse(storage.getItem(pendingKey));
-    return value?.draft?.id === draftId && value.quote?.id && Number.isInteger(value.quote.revision) && Number.isInteger(value.maximum) ? value : null;
+    return value?.draft?.id === draftId && value.quote?.id && Number.isInteger(value.quote.revision) && (value.billingPolicy === 'actual_usage' || Number.isInteger(value.maximum)) ? value : null;
   } catch {return null;}
 }
 
 // Retrying a lost response must reuse the frozen draft revision and quote.
 export async function enqueueAvatar(request, submission) {
   const {draft, quote, maximum, resumeTask} = submission;
-  if (Number(quote.known_max_micros) > maximum) {
-    throw new Error(`当前报价超过本次费用上限，请在更多设置中调整后重新制作。`);
-  }
   try {
     return await request(`/api/studio/drafts/${draft.id}/generate`, {
       revision: quote.revision, quote_id: quote.id,
-      max_charge_micros: maximum, confirmed: true,
+      ...(maximum !== undefined ? {max_charge_micros:maximum} : {billing_policy:'actual_usage'}), confirmed: true,
       ...(resumeTask ? {resume_task:resumeTask} : {}),
     });
   } catch (error) {

@@ -598,6 +598,33 @@ class ProductionQueue:
     def resume(self, job_id: str) -> dict[str, Any]:
         return self._transition(job_id, {"paused"}, "queued", "等待统一调度", "resumed")
 
+    def continue_actual_usage(self, job_id: str, revision: int) -> dict[str, Any]:
+        """Explicitly authorize a budget-blocked video, atomically, on its original ID."""
+        if type(revision) is not int or revision < 1:
+            raise ProductionQueueConflict('请读取当前制作记录后继续')
+        with self._connection(immediate=True) as connection:
+            row = connection.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone()
+            if row is None: raise ProductionQueueError('生产任务不存在')
+            frozen = _decode(row['frozen_request'], {})
+            receipts = frozen.get('billing_policy_changes', [])
+            if any(r.get('queue_revision') == revision and r.get('policy') == 'actual_usage' for r in receipts):
+                return self._public_row(row)  # Lost responses cannot enqueue or authorize twice.
+            if row['revision'] != revision:
+                raise ProductionQueueConflict('制作记录已更新，请刷新后继续')
+            if row['kind'] != 'studio_avatar' or row['status'] != 'awaiting_human' or _decode(row['error_json'], {}).get('code') != 'budget_exceeded' or row['cancel_requested']:
+                raise ProductionQueueConflict('当前任务无需解除原预算限制，请查看实际制作状态')
+            link = connection.execute('SELECT creation_id FROM production_creation_links WHERE job_id=?', (job_id,)).fetchone()
+            root = link['creation_id'] if link else job_id
+            if connection.execute('SELECT 1 FROM production_creation_links l JOIN production_jobs j ON j.job_id=l.job_id WHERE l.creation_id=? AND j.created_at>?', (root, row['created_at'])).fetchone():
+                raise ProductionQueueConflict('这条创作已有更新的制作记录，请继续当前版本')
+            now = _now()
+            receipt = {'at': now, 'policy': 'actual_usage', 'previous_max_charge_micros': frozen.get('max_charge_micros'), 'queue_revision': revision}
+            frozen.update(billing_policy='actual_usage', max_charge_micros=None, billing_policy_changes=[*receipts, receipt])
+            connection.execute("UPDATE production_jobs SET frozen_request=?,status='queued',stage='已恢复原任务，等待继续制作',error_json='{}',safe_resume_point=NULL,retryable=0,worker_id=NULL,lease_expires_at=NULL,finished_at=NULL,updated_at=?,revision=revision+1 WHERE job_id=?", (_json(frozen), now, job_id))
+            self._event(connection, job_id, 'billing_authorized', row['status'], 'queued', {'stage':'已取消原视频总预算限制，复用已有配音和字幕继续', **receipt})
+            updated = connection.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone()
+        return self._public_row(updated)
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._connection(immediate=True) as connection:
             row = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()

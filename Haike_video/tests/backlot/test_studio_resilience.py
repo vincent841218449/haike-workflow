@@ -135,6 +135,25 @@ def test_ancestor_reserved_cost_counts_before_any_new_avatar_call(rig):
     assert not any(e[0] == 'confirm' and e[1] == 'haike/avatar' for e in events)
 
 
+def test_actual_usage_continues_beyond_ten_yuan_with_original_quote_and_intent(rig):
+    _, project, request, gateway, events = rig
+    request.update(billing_policy='actual_usage',max_charge_micros=None,inherited_charge_micros=999_000_000)
+    request['quotes']['avatar']['max_charge_micros']=13_200_000
+    original_confirm=gateway.confirm
+    def confirm(quote,maximum,identity):
+        assert maximum==int(quote['max_charge_micros'])
+        return original_confirm(quote,maximum,identity)
+    gateway.confirm=confirm
+    gateway.status='submission_unknown'
+    assert run_avatar(project,request,gateway)['status']=='ambiguous'
+    assert run_avatar(project,request,gateway)['status']=='ambiguous'
+    gateway.status='succeeded'
+    assert run_avatar(project,request,gateway)['status']=='completed'
+    assert len([e for e in events if e[:2]==('confirm','haike/avatar')])==1
+    state=json.loads((project/'renders/test/gateway-state.json').read_text())
+    assert state['stages']['avatar']['quote']['max_charge_micros']==13_200_000
+
+
 def test_motion_group_can_cover_adjacent_material_scenes_but_cannot_skip_required_assets(rig, monkeypatch):
     from backlot.studio_storyboard import select_motion
     studio, project, request, _, _ = rig
@@ -178,8 +197,12 @@ def test_continuation_reuses_artifacts_and_counts_unknown_ancestor_once(rig):
     assert len(state['stages'])==2 and (project/'renders/new/avatar-source.mp4').read_bytes()==b'paid-avatar'
     assert continue_request(studio,queue,next_request,second['job_id']) == frozen
     over=deepcopy(next_request);over['render_id']='over';over['max_charge_micros']=209
-    with pytest.raises(WorkError,match='总上限'):continue_request(studio,queue,over,second['job_id'])
+    with pytest.raises(WorkError,match='上限'):continue_request(studio,queue,over,second['job_id'])
     assert not (project/'renders/over/gateway-state.json').exists()
+    unlimited=deepcopy(over);unlimited.update(render_id='actual',billing_policy='actual_usage',max_charge_micros=None)
+    continued=continue_request(studio,queue,unlimited,second['job_id'])
+    assert continued['inherited_charge_micros']==100 and continued['max_charge_micros'] is None
+    assert (project/'renders/actual/avatar-source.mp4').read_bytes()==b'paid-avatar'
     switched=deepcopy(next_request);switched.update(key_identity='another-account',render_id='other-account')
     with pytest.raises(WorkError,match='原API账户'):continue_request(studio,queue,switched,second['job_id'])
     third=queue.submit(project_id=request['draft']['id'],kind='studio_avatar',source='workbench',priority='normal',parent_job_id='new',frozen_request=frozen)

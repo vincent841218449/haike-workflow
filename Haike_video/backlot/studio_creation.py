@@ -1,4 +1,4 @@
-"""Continue an explicit creation with artifact reuse and one aggregate budget."""
+"""Continue an explicit creation with artifact and durable charge-intent reuse."""
 from copy import deepcopy
 import hashlib
 import json
@@ -68,8 +68,8 @@ def continue_request(studio, queue, request, previous_id):
     inherited = sum(amount for key, amount in commitments.items() if key not in copied)
     committed = inherited + sum(int(v['quote']['max_charge_micros']) for v in reused.values())
     new_known = sum(int(v['max_charge_micros']) for k, v in request['quotes'].items() if k not in reused)
-    if committed + new_known > request['max_charge_micros']:
-        raise WorkError('历史原调用及后续报价合计超过本次总上限；已完成内容保留，请调整总上限后继续', 'budget_exceeded')
+    from backlot.studio_billing import check_total
+    check_total(request, committed + new_known)
     request = {**request, 'inherited_charge_micros': inherited,
                'continuation': {'previous_job_id': previous_id, 'creation_id': members[0]['creation_id']}}
     receipt = target / 'continuation.json'

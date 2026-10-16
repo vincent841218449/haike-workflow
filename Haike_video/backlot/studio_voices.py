@@ -48,7 +48,7 @@ def _with_official(studio, value, capabilities=None):
     for voice in official:
         voice.update(studio_voice_samples.describe(studio, voice))
         if local:
-            voice['production_hint'] = '本地配音已接通，费用计入本次上限；按供应商实际账单结算。'
+            voice['production_hint'] = '本地配音已接通，按实际使用结算。'
     # The local curated list is authoritative even when a gateway exposes more presets.
     own = personal.catalogue(studio)
     clone = personal.configuration_status(studio)
