@@ -118,6 +118,56 @@ def test_unknown_provider_is_automatic_wait_and_reuses_one_intent(rig):
     assert ('wait', 'avatar', 3600) in events
 
 
+def test_new_app_default_does_not_switch_an_already_accepted_gateway_intent(rig,monkeypatch):
+    _,project,request,gateway,events=rig
+    gateway.status='submission_unknown'
+    assert run_avatar(project,request,gateway)['status']=='ambiguous'
+    def unexpected(*args,**kwargs):raise AssertionError('legacy frozen request must retain its provider')
+    monkeypatch.setattr('backlot.studio_avatar_app.produce',unexpected)
+    gateway.status='succeeded'
+    assert run_avatar(project,request,gateway)['status']=='completed'
+    assert len([e for e in events if e[:2]==('confirm','haike/avatar')])==1
+
+
+def test_local_app_producer_resumes_without_confirming_gateway_avatar(rig,monkeypatch):
+    _,project,request,gateway,events=rig
+    request['avatar_execution']={'route':'local-runninghub-ai-app'}
+    request['prepared']['portrait_path']=str(project/'portrait.jpg')
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *a:None)
+    count=[]
+    def local(studio,execution,folder,audio,portrait,cues,**kwargs):
+        count.append(1)
+        if len(count)==2:(folder/'avatar-source.mp4').write_bytes(b'original-app-result')
+        return {'id':'localavatar-original','status':'running' if len(count)==1 else 'succeeded'}
+    monkeypatch.setattr('backlot.studio_avatar_app.produce',local)
+    assert run_avatar(project,request,gateway)['status']=='ambiguous'
+    assert run_avatar(project,request,gateway)['status']=='completed'
+    assert not any(e[:2]==('confirm','haike/avatar') for e in events)
+    assert (project/'drive.wav').read_bytes()==b'original-narration'
+
+
+def test_template_continuation_copies_unfinished_app_cache_without_new_paid_intent(rig):
+    from copy import deepcopy
+    from backlot.production_queue import ProductionQueue
+    from backlot.studio_creation import continue_request
+    studio,project,request,_,_=rig
+    request.update(billing_policy='actual_usage',max_charge_micros=None,avatar_execution={'identity':'original-provider','profile':{'app_id':'2006270540499128322'}})
+    (project/'project.json').write_text('{"title":"原视频"}')
+    folder=project/'renders/test';(folder/'avatar-app').mkdir(parents=True)
+    checkpoint={'id':'original-local-stage','chunks':[{'task_id':'original-provider-task','status':'running'}]}
+    atomic_private(folder/'avatar-app/state.json',checkpoint)
+    atomic_private(folder/'gateway-state.json',{'prepared':request['prepared'],'stages':{'avatar':{'quote':{'max_charge_micros':None},'job':{'id':'original-local-stage','status':'running'}}}})
+    queue=ProductionQueue(project.parent.parent/'queue.sqlite3',studio.projects_root)
+    old=queue.submit(project_id=project.name,kind='studio_avatar',source='codex',priority='normal',parent_job_id='original',frozen_request=request)
+    queue.claim_next('w');queue.finish(old['job_id'],'w',status='ambiguous',stage='等待原分段',error={'code':'provider_pending'})
+    new=deepcopy(request);new.update(id='new-presentation-quote',render_id='new',avatar_execution={'identity':'new-default'})
+    new['draft']['layout']['title_size']=48
+    result=continue_request(studio,queue,new,old['job_id'])
+    assert result['avatar_execution']==request['avatar_execution']
+    assert json.loads((project/'renders/new/avatar-app/state.json').read_text())==checkpoint
+    assert result['inherited_charge_micros']==0  # Unknown supplier usage is not fabricated as a customer debit.
+
+
 def test_billing_pending_with_actual_artifact_continues_without_faking_settlement(rig):
     _, project, request, gateway, _ = rig
     gateway.status = 'submission_unknown'; gateway.artifact = True

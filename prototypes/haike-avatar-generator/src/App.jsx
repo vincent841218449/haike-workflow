@@ -283,7 +283,7 @@ function BasicAvatar() {
   const seconds = Math.round(input.audio?.duration || 0);
   const audioTime = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   const models = availableModels(accountState);
-  const blocked = accountState === null ? '正在读取模型能力…' : accountState.error ? accountState.message || '暂时无法验证模型能力' : !models.has('haike/avatar') ? '数字人模型尚未开通' : input.soundMode==='voice'&&selectedTone?.production_ready===false ? '已选系统音色，配音服务待接通；可以试听并保存草稿' : (input.subtitles||input.ai?.enabled) && !accountState.local_asr?.ready && !models.has('haike/tencent-asr') ? '字幕识别尚未开通' : '';
+  const blocked = accountState === null ? '正在读取模型能力…' : accountState.error ? accountState.message || '暂时无法验证模型能力' : accountState.local_avatar?.enabled&&!accountState.local_avatar.ready ? '稳定版数字人尚未配置本机服务凭据，请联系管理员' : !models.has('haike/avatar') ? '数字人模型尚未开通' : input.soundMode==='voice'&&selectedTone?.production_ready===false ? '已选系统音色，配音服务待接通；可以试听并保存草稿' : (input.subtitles||input.ai?.enabled) && !accountState.local_asr?.ready && !models.has('haike/tencent-asr') ? '字幕识别尚未开通' : '';
   const templateBlocked=input.motion ? motionError || (!currentMotion?'正在核对所选模板…':'') : '';
   const inProgress = ['queued','running'].includes(job?.status) || job?.status==='ambiguous' && job?.error?.code==='provider_pending';
   const readiness = creationReadiness(input, voices, voiceLibrary.data?.items || [], job);
@@ -310,6 +310,7 @@ function BasicAvatar() {
         </Step>
         <Step number="3" field="portrait" ready={readiness.fields[2].ready} error={fieldError('portrait')} title="数字人图片" helper="上传一张清晰的人物正面照" className="portrait-step">
           <AvatarPortraitField value={input.portrait} url={portraitUrl} busy={saving||draftLoading||uncertain} invalid={!!fieldError('portrait')} onFile={importPortrait} onRemove={()=>update({portrait:null})}/>
+          {accountState?.local_avatar?.ready&&<p className="helper after-input">稳定版数字人 · 长口播自动分段，完成后合为一条视频。</p>}
         </Step>
         <Step number="4" field="materials" optional ready={!!input.ai?.materials?.length && input.ai.materials.every(m=>m.rights_confirmed)} error={fieldError('materials')} title="视频素材" helper="有想展示的产品、场景或画面？一起放进来" className="materials-step">
           <AvatarMaterials value={input.ai} busy={saving||draftLoading||uncertain} uploading={uploading} onFiles={importMaterials} onChange={ai=>{update({ai});setStoryboard(null);}}/>

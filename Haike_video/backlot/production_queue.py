@@ -625,6 +625,54 @@ class ProductionQueue:
             updated = connection.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone()
         return self._public_row(updated)
 
+    def replace_avatar(self, job_id: str, *, revision: int, previous_intent: str,
+                       approval_ref: str, maximum: int) -> dict[str, Any]:
+        """Operator-only reissue after explicit consent; normal retry never calls this.
+
+        Persist consent in the queue before a worker changes its stage journal.
+        Replaying the same human reply cannot authorize a second paid attempt.
+        """
+        approval_ref = _validate_identifier(approval_ref, '重新生成授权')
+        if type(revision) is not int or not re.fullmatch(r'call_[a-f0-9]{32}', previous_intent) or type(maximum) is not int or maximum <= 0:
+            raise ProductionQueueConflict('重新生成需要当前记录、原意图和明确报价授权')
+        with self._connection(immediate=True) as db:
+            row = db.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone()
+            if row is None: raise ProductionQueueError('生产任务不存在')
+            frozen = _decode(row['frozen_request'], {})
+            receipts = frozen.get('avatar_replacements', [])
+            existing = next((r for r in receipts if r['approval_ref'] == approval_ref), None)
+            if existing:
+                if existing['previous_intent'] != previous_intent or existing['maximum'] != maximum:
+                    raise ProductionQueueConflict('同一次授权不能更换原请求或报价')
+                return self._public_row(row)
+            if row['revision'] != revision or row['kind'] != 'studio_avatar' or row['status'] != 'ambiguous' or row['cancel_requested'] or _decode(row['error_json'], {}).get('code') != 'provider_pending':
+                raise ProductionQueueConflict('制作状态已改变，请核对当前请求后再重新生成')
+            if self._latest_creation_job(db, row) != job_id:
+                raise ProductionQueueConflict('这条创作已有更新的制作，请继续当前版本')
+            project = (self.projects_root / row['project_id']).resolve()
+            render = (project / 'renders' / str(frozen.get('render_id', ''))).resolve()
+            if not project.is_relative_to(self.projects_root.resolve()) or not render.is_relative_to(project / 'renders'):
+                raise ProductionQueueConflict('原制作目录无效')
+            state = json.loads((render / 'gateway-state.json').read_text())
+            stage = state.get('stages', {}).get('avatar', {})
+            job = stage.get('job') or {}
+            if stage.get('intent') != previous_intent or job.get('status') != 'submission_unknown' or job.get('upstream_id') or job.get('media_artifact_available') or (job.get('result') or {}).get('video_url') or (render / 'avatar-source.mp4').exists():
+                raise ProductionQueueConflict('原请求已改变或已有可查询结果，不应重新付费生成')
+            now = _now()
+            intent = 'call_' + hashlib.sha256(f'{job_id}:{previous_intent}:{approval_ref}'.encode()).hexdigest()[:32]
+            receipt = {'at':now, 'approval_ref':approval_ref, 'previous_intent':previous_intent,
+                       'previous_job_id':job['id'], 'intent':intent, 'maximum':maximum}
+            frozen['avatar_replacements'] = [*receipts, receipt]
+            db.execute("UPDATE production_jobs SET frozen_request=?,status='queued',stage='已授权重新生成一次数字人，复用原配音与字幕',error_json='{}',safe_resume_point=NULL,finished_at=NULL,updated_at=?,revision=revision+1 WHERE job_id=?", (_json(frozen),now,job_id))
+            self._event(db, job_id, 'avatar_replacement_authorized', 'ambiguous', 'queued', receipt)
+            return self._public_row(db.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone())
+
+    def _latest_creation_job(self, db, row):
+        link = db.execute('SELECT creation_id FROM production_creation_links WHERE job_id=?', (row['job_id'],)).fetchone()
+        root = link['creation_id'] if link else row['job_id']
+        latest = db.execute('SELECT j.job_id FROM production_creation_links l JOIN production_jobs j ON j.job_id=l.job_id WHERE l.creation_id=? ORDER BY j.created_at DESC LIMIT 1', (root,)).fetchone()
+        return latest['job_id'] if latest else row['job_id']
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._connection(immediate=True) as connection:
             row = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()

@@ -20,16 +20,22 @@ const Video: React.FC<Props> = p => {
   const landscape=p.outputLayout==='landscape';
   const currentText=scene?.text||points[current]||p.text;
   const pageText=currentText.length>90?currentText.slice(0,90)+'…':currentText;
+  const chapterTitle=scene?.label||p.title;
+  const chapterCues=card&&scene?p.captions.filter(c=>c.startMs>=scene.start*1000&&c.startMs<scene.end*1000):[];
+  const foundCue=chapterCues.findIndex(c=>c.endMs>ms);
+  const pageStart=Math.floor((foundCue<0?Math.max(0,chapterCues.length-1):foundCue)/3)*3;
+  const cardText=scene?.kind==='text'&&chapterCues.length?chapterCues.slice(pageStart,pageStart+3).map(c=>c.text).join(''):pageText;
+  const chapterSummary=currentText.split(/[。！？\n]/).find(s=>s.trim())||currentText;
   return <AbsoluteFill style={{fontFamily:'"PingFang SC","Microsoft YaHei",sans-serif',color:card?'#242c3b':'#fff',background:card?'linear-gradient(135deg,#cde1fb 0%,#f9edd0 48%,#bea6e0 77%,#f9ded6 100%)':'#081629'}}>
     {landscape?<><div style={{position:'absolute',left:100,top:55}}><Brand/></div><h1 style={{position:'absolute',left:100,top:140,width:1280,fontSize:p.titleSize,lineHeight:1.3,textWrap:'balance'}}>{p.title}</h1><Avatar style={{left:1510,top:130,width:260,height:260}}/><div style={{position:'absolute',left:100,top:300,width:1280,height:550,borderRadius:26,background:'#fff',color:'#242c3b',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center'}}>{scene?.src?visual:<div style={{padding:50,fontSize:44}}>{pageText}</div>}</div></>:card?<div style={{position:'absolute',inset:'72px 64px 70px',borderRadius:42,background:'#fff',padding:44,boxShadow:'0 10px 40px #55608022'}}>
       <div style={{display:'flex',alignItems:'center',gap:20}}><Brand/><span style={{fontSize:24,color:'#7a8390'}}>创作工作流</span></div>
       <section style={{position:'absolute',left:48,right:48,top:130,height:640,borderRadius:32,background:'#f6f7fa',padding:32,boxSizing:'border-box'}}>
         <div style={{color:p.accent,fontSize:24,marginBottom:24}}>0{current+1} / {count} · 内容讲解</div>
-        <h1 style={{margin:'0 0 32px',fontSize:p.titleSize,lineHeight:1.3,overflowWrap:'anywhere'}}>{p.title}</h1>
-        {scene?.src?<div style={{position:'relative',height:370}}>{visual}</div>:<div style={{fontSize:38,lineHeight:1.75,color:'#596273',overflowWrap:'anywhere'}}>{pageText}</div>}
+        <h1 style={{margin:'0 0 32px',fontSize:p.titleSize,lineHeight:1.3,overflowWrap:'anywhere'}}>{chapterTitle}</h1>
+        {scene?.src?<div style={{position:'relative',height:370}}>{visual}</div>:<div style={{fontSize:38,lineHeight:1.75,color:'#596273',overflowWrap:'anywhere'}}>{cardText}</div>}
       </section>
       <Avatar style={{left:44,top:812,width:320,height:320}}/>
-      <div style={{position:'absolute',left:410,top:850,right:48,fontSize:30,lineHeight:1.7}}><div style={{color:'#8a909b',fontSize:22}}>海客创作 · {current+1} / {count}</div><strong style={{color:p.accent,fontSize:38}}>你的内容，清晰表达</strong><p style={{margin:'16px 0',fontSize:26}}>数字人口播<br/>按模板组织内容</p></div>
+      <div style={{position:'absolute',left:410,top:850,right:48,fontSize:30,lineHeight:1.7}}><div style={{color:'#8a909b',fontSize:22}}>海客创作 · {current+1} / {count}</div><strong style={{color:p.accent,fontSize:38}}>{chapterTitle}</strong><p style={{margin:'16px 0',fontSize:26}}>{chapterSummary.length>42?chapterSummary.slice(0,42)+'…':chapterSummary}</p></div>
     </div>:<>
       <div style={{position:'absolute',left:125,top:120}}><Brand/></div>
       <div style={{position:'absolute',left:full?80:125,top:full?320:420,width:full?650:540}}><h1 style={{fontSize:p.titleSize,lineHeight:1.35,margin:0,overflowWrap:'anywhere',textWrap:'balance'}}>{p.title}</h1></div>

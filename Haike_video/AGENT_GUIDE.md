@@ -58,7 +58,7 @@ Preview and final render must share the same timeline, subtitle, avatar geometry
 
 - State the exact provider and model/instance before a paid or materially expensive call. Never silently substitute providers or models.
 - If several eligible providers exist, follow the project/user selection. If none is explicit, surface the supported choices instead of guessing a costly route.
-- New RunningHub production defaults to paid-accepted workflow `2094449979141218305` with profile `infinitetalk_448x560_exact_clock_v2` on Plus 48GB (`instanceType=plus`). For a two-presenter parent job, persist both task IDs before polling so the two provider jobs run concurrently; the global parent-video queue remains single-lane. The final PCM16 mono WAV is aligned once to the 25FPS frame clock and its exact frame count is submitted to node 35. Frozen legacy Standard/Lite jobs keep their recorded instance and sequencing contract.
+- 4188 local new avatar requests use AI app `2006270540499128322`; read `../docs/PRODUCT_RUNNINGHUB_AI_APP.md` for segmented execution and receipts. Accepted gateway jobs keep their original IDs. Other legacy RunningHub production retains workflow `2094449979141218305`, Plus48GB and the 25fps PCM16 mono clock; persist both presenter IDs before polling a two-presenter job. The global parent queue remains single-lane.
 - Enforce project and daily budgets before submission. A paid operation must be recoverable and auditable.
 - Failures must preserve completed artifacts and record: stage, provider, error class, retryability, safe resume point, and user-facing Chinese remediation.
 - All user-facing UI messages are Chinese; map raw backend errors to actionable Chinese descriptions.

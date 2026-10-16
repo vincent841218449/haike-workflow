@@ -263,6 +263,12 @@ def motion_project(draft_id: str, revision: int, request: Request):
 def settings(request: Request): return call(studio(request).settings)
 
 
+@router.get('/api/studio/avatar/provider')
+def avatar_provider(request: Request):
+    from backlot.studio_avatar_app import public_status
+    return call(public_status,studio(request))
+
+
 @router.get("/api/studio/ai/status")
 def ai_status(request: Request):
     from backlot.studio_storyboard import status
@@ -393,7 +399,12 @@ async def account(request: Request):
         try:
             sdk = studio(request).client()
             from backlot.studio_asr import status
-            return {"summary": sdk.request("/account/summary"), "capabilities": sdk.request("/capabilities"), "local_asr": status(studio(request))}
+            from backlot.studio_avatar_app import public_status
+            avatar=public_status(studio(request));capabilities=sdk.request('/capabilities')
+            if avatar['enabled']:
+                capabilities={**capabilities,'items':[v for v in capabilities.get('items',[]) if (v.get('model') or v.get('id'))!='haike/avatar']}
+                if avatar['ready']:capabilities['items'].append({'id':'haike/avatar','model':'haike/avatar','name':avatar['name'],'capability':'avatar','status':'available','billing_source':'local-provider'})
+            return {"summary": sdk.request("/account/summary"), "capabilities": capabilities, "local_asr": status(studio(request)), 'local_avatar':avatar}
         except Exception as error:
             raise WorkError(gateway_connection_message(error, "无法读取账户，请到API设置检查连接"), "unavailable") from None
     return await asyncio.to_thread(call, read)

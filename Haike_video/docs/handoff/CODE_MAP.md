@@ -8,7 +8,7 @@
 - 新前端：仓库根prototypes/haike-avatar-generator/src/{StudioApp,App}.jsx；UI构建backlot/ui/avatar-generator；共享navigation.*和haike-brand.css。
 - 路由：/graphic、/avatar、/resources、/tasks、/calendar、/settings；/projects兼容跳转。旧独立UI已归档移除。workbench.*保留历史项目维护。
 - 图文：studio_render.py复用scripts/template_video/build_923.py和_paths.py，参数化safe_v2/9秒/三景、资产指纹、文字边界和FFmpeg完整解码。
-- 口播：studio_avatar.py统一Key报价/持久意图/ASR时钟；studio_billing.py按实际使用计费，旧预算经队列continue_actual_usage原子恢复；studio_composition.py和templates/studio-avatar-v1三模板。旧模板3基线不改。
+- 口播：studio_avatar.py冻结/ASR；studio_avatar_app.py新AI应用分段/缓存/拼接，tools/avatar/runninghub_ai_app.py官方V2；studio_billing.py实际用量，队列continue_actual_usage/replace_avatar审计恢复；studio_composition.py三模板。根docs/PRODUCT_RUNNINGHUB_AI_APP.md。
 - 音色：studio_voices.py；studio_personal_voice.py克隆/恢复，studio_voice_reference.py长录音，studio_system_voice.py配音，studio_voice_audition.py免费试听，studio_speech_rate.py语速。前端VoiceLibrary/SpeechRateControl；网关platform_app/voices.py。合同根docs/PRODUCT_VOICE_LIBRARY.md。
 - AI分镜/素材：studio_storyboard.py原文/词级时钟/路由；studio_chat_gateway.py统一Key免费报价/持久意图/恢复。云端sponsored.py原子账户/平台次数配额，Token账单成本未知；生图暂停。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用；test_studio_{storyboard,chat_gateway}.py。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。

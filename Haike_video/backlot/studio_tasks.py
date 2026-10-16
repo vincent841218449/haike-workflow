@@ -121,17 +121,24 @@ def creation_view(studio, queue, job, scheduled):
         value['edit_url']=task_view(studio,latest,scheduled)['edit_url']
     success = next((m for m in reversed(members) if m['status'] == 'completed' and m.get('result', {}).get('work_id')), None)
     value['latest_success_id'] = success['job_id'] if success else None
-    pending = False
+    pending, current_pending = False, False
     # Billing receipts do not decide whether a playable artifact is complete.
     for member in members:
         render = member.get('frozen_request', {}).get('render_id')
         if not render or Path(render).name != render: continue
         path = studio.projects_root / member['project_id'] / 'renders' / render / 'gateway-state.json'
         try:
-            stages = json.loads(path.read_text()).get('stages', {})
-            pending |= any(s.get('job', {}).get('reconciliation_pending') is True or s.get('job', {}).get('status') == 'submission_unknown' for s in stages.values())
+            saved=json.loads(path.read_text())
+            def unresolved(s):
+                j=s.get('job',{})
+                return j.get('reconciliation_pending') is True or j.get('status')=='submission_unknown' or j.get('status')=='succeeded' and j.get('cost_status')=='supplier_bill_pending'
+            active=list(saved.get('stages',{}).values())
+            archived=[h['stage'] for h in saved.get('stage_history',[])]
+            current_pending |= member['job_id']==latest['job_id'] and any(unresolved(s) for s in active)
+            pending |= any(unresolved(s) for s in [*active,*archived])
         except (OSError, ValueError): pass
     value['billing_pending'] = pending
+    value['billing_pending_scope'] = 'current' if current_pending else 'previous_attempt' if pending else None
     return value
 
 
