@@ -135,9 +135,8 @@ def clean_input(db, user_id, model, value, info=None):
         if images > 12 or image_bytes > 6 * 1024 * 1024:
             raise Problem(422, "input_invalid", "单次视觉调用最多12张代表帧、总计6MB")
         size = len(canonical(messages).encode())
-        if size > 60000:
-            raise Problem(422, "input_invalid", "对话文本过长")
-        # A conservative byte bound; settlement always uses the upstream token receipt.
+        # Bytes estimate the quote, not admissibility. Keep the full template/text;
+        # settlement always uses the upstream token receipt.
         return {"messages": messages, "max_output_tokens": maximum}, {
             "input_tokens": size * 2 + 1024 + images * 32768,
             "output_tokens": maximum,

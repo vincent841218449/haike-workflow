@@ -231,7 +231,10 @@ def create_app(db_path=None, worker_enabled=True, testing=False, public_origin=N
                     },
                     status_code=403,
                 )
-            if len(await request.body()) > (
+            # Quotes carry full template/context messages. Do not reintroduce a
+            # text byte ceiling through the generic request-body check.
+            quote_request = request.url.path.rstrip("/") == "/v2/quotes"
+            if not quote_request and len(await request.body()) > (
                 5 * 1024 * 1024 if request.url.path == "/v2/files" else 100000
             ):
                 return JSONResponse(

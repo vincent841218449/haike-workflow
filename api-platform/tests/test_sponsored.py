@@ -4,7 +4,7 @@ import pytest
 from test_commerce import enable, real_quote
 from test_platform import key, submit
 
-from platform_app import domain, gateway, providers, sponsored
+from platform_app import adapters, domain, gateway, providers, sponsored
 from platform_app.store import Problem
 
 RULE = {"costs": {"input_tokens": "0", "output_tokens": "0"}, "multiplier": "1.5",
@@ -35,6 +35,39 @@ def test_sponsored_receipt_has_tokens_zero_charge_and_unknown_procurement(env):
     assert bill["estimated_cost_micros"] is None and bill["estimated_profit_micros"] is None
     assert bill["billing"]["lines"][0]["quantity"] == 232
     assert bill["billing"]["lines"][0]["unit_cost_micros"] is None
+    assert domain.verify_ledger(store)["ok"]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_large_template_request_reaches_provider_intact_once(env, monkeypatch, structured):
+    store, _, customer, _, _, user, _ = env
+    vault, headers = setup(env)
+    text = "完整模板动作说明、原文与语义依据。" * 4000
+    content = [{"type": "text", "text": text}] if structured else text
+    messages = [{"role": "system", "content": "按所选模板编排，不截断原文。"},
+                {"role": "user", "content": content}]
+    calls = []
+
+    def fake_http(url, request_headers, body):
+        calls.append(body)
+        assert body["messages"] == messages
+        return {"usage": {"prompt_tokens": 23000, "completion_tokens": 12},
+                "choices": [{"message": {"content": "完整编排结果"}, "finish_reason": "stop"}]}
+
+    monkeypatch.setattr(adapters, "http", fake_http)
+    response = customer.post("/v2/quotes", headers=headers, json={
+        "model": "haike/text", "input": {"messages": messages, "max_output_tokens": 6500}})
+    assert len(response.request.content) > 100000
+    assert response.status_code == 200, response.text
+    quote = response.json()
+    job = submit(customer, headers, quote).json()
+    assert submit(customer, headers, quote).json()["id"] == job["id"]
+    assert gateway.execute_one(store, adapters.Adapter(vault, store.path.parent / "files"))
+    assert len(calls) == 1
+    result = gateway.get_job(store, user, job["id"])
+    assert result["status"] == "succeeded"
+    assert result["charged_micros"] == "0"
+    assert result["result"]["choices"][0]["message"]["content"] == "完整编排结果"
     assert domain.verify_ledger(store)["ok"]
 
 
