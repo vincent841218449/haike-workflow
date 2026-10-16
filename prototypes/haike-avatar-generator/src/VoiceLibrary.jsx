@@ -4,6 +4,8 @@ import { api } from './studio-api.js';
 import { Button, Dialog, EmptyState, Field, Heading, Notice } from './ui.jsx';
 import { auditionPresentation, canSubmitFreeClone, filterVoices, operationState, referencePresentation, voiceLabel } from './voice-model.js';
 import './voices.css';
+import {SpeechRateControl} from './SpeechRateControl.jsx';
+import {applyAuditionRate, speechRate} from './speech-rate.js';
 
 const money = value => `¥${(Number(value || 0) / 1000000).toFixed(6).replace(/0+$/, '').replace(/\.$/, '.00')}`;
 const activeStates = new Set(['queued', 'running', 'submitting', 'polling', 'accepted']);
@@ -88,7 +90,7 @@ function VoiceGrid({ items, selectedId, playingId, onPlay, onChoose, onRename, b
   </article>)}</div>;
 }
 
-export function VoiceLibrary({ picker = false, library, selectedId, onChoose, onClose, initialAudition }) {
+export function VoiceLibrary({ picker = false, library, selectedId, onChoose, onClose, initialAudition, rate, onRateChange }) {
   const ownLibrary = useVoiceLibrary(!library);
   const current = library || ownLibrary;
   const [scope, setScope] = useState('system'), [search, setSearch] = useState(''), [language, setLanguage] = useState('all');
@@ -98,6 +100,9 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
   const [playingId, setPlayingId] = useState(''), [playerVoice, setPlayerVoice] = useState(null), [pendingPlay, setPendingPlay] = useState('');
   const player = useRef(null), firstPlay = useRef(false);
+  const [localRate, setLocalRate] = useState(1);
+  const playbackRate = speechRate(rate === undefined ? localRate : rate);
+  const changeRate = onRateChange || setLocalRate;
   const voices = current.data?.items || [], filtered = filterVoices(voices, { scope, search, language });
   const systemCount = voices.filter(v => v.scope === 'system').length, personalCount = voices.filter(v => v.scope === 'personal').length;
   const select = voice => onChoose ? onChoose(voice) : location.assign(`/avatar?tone=${encodeURIComponent(voice.id)}`);
@@ -127,9 +132,11 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
     if (activePlayer && activePlayer !== audio) activePlayer.pause();
     activePlayer = audio;
     if (audio.error) audio.load();
+    applyAuditionRate(audio, playbackRate);
     audio.play().catch(() => { setPlayingId(''); setMessage('试听已准备好，请点击播放器播放。'); });
     return () => { audio.pause(); if (activePlayer === audio) activePlayer = null; };
   }, [playerVoice]);
+  useEffect(() => { applyAuditionRate(player.current, playbackRate); }, [playbackRate, playerVoice]);
   useEffect(() => {
     if (!pendingPlay) return;
     const ready = voices.find(v => v.id === pendingPlay && v.sample_status === 'succeeded');
@@ -196,7 +203,7 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
     {!current.loading && !current.data && <EmptyState icon={AudioLines} title="音色库暂时无法连接" action={<Button href="/settings">检查 API 设置<ArrowRight size={16}/></Button>}>连接海客Key后，系统音色和你的个人音色会自动同步。</EmptyState>}
     {current.loading ? <div className="voice-loading" role="status"><AudioLines size={25}/><p>正在读取你的音色库…</p></div> : current.data && (filtered.length ? <VoiceGrid busy={busy} items={filtered} selectedId={selectedId} playingId={playingId} onPlay={play} onChoose={select} onRename={voice => { setEditing(voice); setNewName(voice.name); setView('rename'); setError(''); }}/> : <EmptyState icon={Mic2} title={search || language !== 'all' ? '没有找到匹配的音色' : scope === 'personal' ? '让视频拥有你自己的声音' : '还没有可用的系统音色'} action={scope === 'personal' && !search && <Button disabled={!current.data.clone_ready} onClick={() => setView('clone')}><Plus size={16}/>克隆第一个音色</Button>}>{search || language !== 'all' ? '换一个关键词，或清除语言筛选后再试。' : scope === 'personal' ? '上传一段清晰录音，克隆后的音色只属于你的账户，可反复试听和用于口播。' : '管理员发布可用音色后，会显示在这里。'}</EmptyState>)}
     {current.operations.filter(item => item.job?.status !== 'succeeded').length > 0 && <section className="voice-jobs" aria-live="polite"><h3>音色任务</h3>{current.operations.filter(item => item.job?.status !== 'succeeded').map(item => <article key={item.id}><Clock3 size={18}/><div><strong>{item.name} · {item.kind === 'clone' ? '音色克隆' : '生成试听'}</strong><p>{item.job?.message || operationState(item.job?.status)}</p></div><Button disabled={busy} onClick={() => query(item)}>刷新进度</Button></article>)}</section>}
-    {playerVoice && <div className="voice-player"><span className="voice-mark"><Headphones size={20}/></span><div><strong>{playerVoice.name}</strong><small>{playerVoice.sample_kind==='official'?'免费试听 · 自动使用本机缓存':'免费试听 · 已保存到本机'}</small></div><audio key={playerVoice.id} ref={player} controls preload="auto" src={playerVoice.sample_url} onPlay={() => { if (activePlayer && activePlayer !== player.current) activePlayer.pause(); activePlayer = player.current; setPlayingId(playerVoice.id); }} onPause={() => setPlayingId('')} onEnded={() => setPlayingId('')} onError={() => { setPlayingId(''); setError('原试听暂时无法播放，请再次点击“试听”恢复原音频，不会重新生成或收费。'); }}/></div>}
+    {playerVoice && <div className="voice-player"><span className="voice-mark"><Headphones size={20}/></span><div><strong>{playerVoice.name}</strong><small>{playerVoice.sample_kind==='official'?'免费试听 · 自动使用本机缓存':'免费试听 · 已保存到本机'}</small></div><audio key={playerVoice.id} ref={player} controls preload="auto" src={playerVoice.sample_url} onLoadedMetadata={()=>applyAuditionRate(player.current, playbackRate)} onPlay={() => { if (activePlayer && activePlayer !== player.current) activePlayer.pause(); activePlayer = player.current; applyAuditionRate(player.current, playbackRate); setPlayingId(playerVoice.id); }} onPause={() => setPlayingId('')} onEnded={() => setPlayingId('')} onError={() => { setPlayingId(''); setError('原试听暂时无法播放，请再次点击“试听”恢复原音频，不会重新生成或收费。'); }}/><SpeechRateControl compact value={playbackRate} onChange={changeRate}/></div>}
   </>;
   const confirmation = <div className="voice-confirm"><span className="voice-mark"><CheckCircle2 size={27}/></span><h3>创建你的专属音色</h3><dl className="summary-list"><div><dt>音色</dt><dd>{operation?.name}</dd></div><div><dt>本次克隆费用上限</dt><dd className="voice-price">{money(operation?.quote?.max_charge_micros)}</dd></div><div><dt>存放位置</dt><dd>个人音色库 · 仅你可见</dd></div></dl><Notice message="固定样例试听免费，视频配音费用在制作时确认。"/><Notice message={error} error/><div className="voice-form-actions"><Button disabled={busy} onClick={() => setView('clone')}>返回修改</Button><Button variant="primary" loading={busy} onClick={confirm}>确认并克隆<ArrowRight size={16}/></Button></div></div>;
   const renameForm = <form className="voice-clone-form" onSubmit={rename}><Field label="音色名称"><input autoFocus required maxLength={48} value={newName} onChange={e => setNewName(e.target.value)}/></Field><p className="helper">修改名称不会重新克隆，也不会改变已经提交的视频。</p><Notice message={error} error/><div className="voice-form-actions"><Button type="button" onClick={closeView}>取消</Button><Button type="submit" variant="primary" loading={busy} disabled={!newName.trim()}>保存名称</Button></div></form>;

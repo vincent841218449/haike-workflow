@@ -1,3 +1,4 @@
+import {isSpeechRate} from './speech-rate.js';
 export function canProduceVoice(voice, models) {
   return !!voice && voice.status === 'ready' && voice.production_ready !== false &&
     models.some(model => model.id === (voice.model || 'haike/cosyvoice'));
@@ -20,7 +21,7 @@ export function creationReadiness(input, models, tones, job) {
   const fields = [
     {id:'text', label:'文案', ready:!!input.text.trim() && [...input.text].length <= 5000},
     {id:'voice', label:input.soundMode === 'audio' ? '声音' : '音色', ready:input.soundMode === 'audio' ? !!input.audio && !knownAudioMismatch(input, job) :
-      canProduceVoice(tones.find(v => v.id === input.toneId), models)},
+      canProduceVoice(tones.find(v => v.id === input.toneId), models) && isSpeechRate(input.rate)},
     {id:'portrait', label:'人物图片', ready:!!input.portrait},
   ];
   const missing=fields.filter(v=>!v.ready);

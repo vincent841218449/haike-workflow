@@ -192,7 +192,7 @@ def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, 
     studio, client, seen = rig
     draft = studio.save_draft({"template_id": "avatar-safe-circle-v1", "title": "测试", "text": "你好。",
         "input": {"soundMode": "voice", "voiceId": local.MODEL, "toneId": "voice_bailian_cv3_" + voice,
-                  "subtitles": False}})
+                  "subtitles": False, "rate": 1.15}})
     q = quote(client, voice)
     remote_calls = []
     monkeypatch.setattr(client.remote, "upload", lambda *args: {"id": "audio-file"}, raising=False)
@@ -205,6 +205,7 @@ def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, 
                 "result": {"video_url": "https://example.test/avatar.mp4"}}
     monkeypatch.setattr(client.remote, "wait", wait_for_avatar)
     def prepare(source, target, rate=1):
+        assert rate == 1.15
         target.write_bytes(source.read_bytes()); return .1
     monkeypatch.setattr(studio_avatar, "prepare_audio", prepare)
     def compose(directory, *args, **kwargs):

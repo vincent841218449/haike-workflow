@@ -158,6 +158,9 @@ class Studio:
             if template["id"] == "avatar-motion-adu-v1":
                 allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode"}
             if set(value["input"]) - allowed: raise WorkError("制作内容包含不支持的字段；API Key只能保存在API设置")
+            if template["kind"] == "avatar" and value["input"].get("soundMode") == "voice" and "rate" in value["input"]:
+                from backlot.studio_speech_rate import speech_rate
+                speech_rate(value["input"]["rate"])
             if len(json.dumps(value)) > (300000 if template["id"] == "avatar-motion-adu-v1" else 60000): raise WorkError("制作内容过大")
             db.execute("INSERT INTO studio_drafts VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data=excluded.data",
                        (draft_id, revision, json.dumps(value, ensure_ascii=False)))

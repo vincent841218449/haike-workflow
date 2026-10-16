@@ -38,6 +38,8 @@ def renew_if_expired(sdk, quote):
 
 
 def prepare_audio(source, target, rate=1):
+    from backlot.studio_speech_rate import speech_rate
+    rate = speech_rate(rate)
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     ffmpeg, _ = resolve_ffmpeg_pair()
     info = media_probe(source)
@@ -58,6 +60,9 @@ def prepare_image(source, target):
 
 
 def validate_voice(value):
+    if value.get("soundMode") == "voice":
+        from backlot.studio_speech_rate import speech_rate
+        speech_rate(value.get("rate", 1))
     if value.get("soundMode") == "voice" and value.get("voiceId") == "haike/tencent-tts":
         raise WorkError("腾讯精品配音已移除，请重新选择 CosyVoice，或上传已有音频")
     if value.get("soundMode") == "voice" and value.get("voiceId") not in {"haike/cosyvoice", "haike/cosyvoice-system"}:
@@ -97,9 +102,7 @@ def validate(studio, draft):
     if value.get("soundMode") == "audio":
         audio = studio.asset((value.get("audio") or {}).get("id"), draft["id"])
         if media_probe(audio)["duration"] > 120: raise WorkError("数字人口播音频最长120秒")
-    elif value.get("soundMode") == "voice":
-        if value.get("rate", 1) not in {.8, 1, 1.2, 1.5}: raise WorkError("配音语速不支持")
-    else: raise WorkError("请选择已有音频或网关配音")
+    elif value.get("soundMode") != "voice": raise WorkError("请选择已有音频或网关配音")
     title = draft["title"]
     maximum = 120 if value.get("motion") else 36 if draft["template_id"].startswith("avatar-template3") else 16
     if len(title) > maximum: raise WorkError(f"当前版式标题最多{maximum}字，请在排版配置中缩短")

@@ -1,3 +1,4 @@
+import {isSpeechRate} from './speech-rate.js';
 export const EXAMPLE_TEXT = "海客科技，让创作更简单。一个接口，连接配音、数字人和创作工作流。";
 export const TEMPLATES = [
   { id: "avatar-safe-circle-v1", name: "模板1 · 圆框口播", ratio: "9:16", description: "素材卡片", poster: "template1-layout.png", kind: "布局示意" },
@@ -17,6 +18,7 @@ export function validateInputs(input, availableVoices, availableTones) {
   if (!TEMPLATES.some(t => t.id === input.templateId)) return { field: "template", message: "请选择一个可用模板。" };
   if (!input.text.trim()) return { field: "text", message: "请上传文案，或在文案框中粘贴内容。" };
   if ([...input.text].length > 5000) return { field: "text", message: "口播文案最多5,000字，请精简后再试。" };
+  if (input.soundMode === 'voice' && !isSpeechRate(input.rate)) return {field:'voice',message:'配音语速需为0.80–1.50倍，每次调整0.05倍。'};
   if (input.soundMode === "audio" && !input.audio) return { field: "audio", message: "请选择或上传一份口播音频。" };
   if (input.soundMode === "voice" && input.voiceId === "haike/tencent-tts") return { field: "voice", message: "腾讯精品配音已移除，请重新选择 CosyVoice，或上传已有音频。" };
   if (input.soundMode === "voice" && (!["haike/cosyvoice", "haike/cosyvoice-system"].includes(input.voiceId) || !availableVoices.some(v => v.id === input.voiceId))) return { field: "voice", message: "当前配音服务尚未接通所选音色，请检查API设置或联系管理员启用。" };
