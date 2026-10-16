@@ -210,6 +210,11 @@ class ProductionQueueWorker:
     def inspect_parent(self, job: dict[str, Any]) -> dict[str, Any]:
         project_dir = self._project_dir(job)
         if job["kind"] in {"studio_graphic", "studio_avatar", "studio_motion"}:
+            if job['kind'] == 'studio_avatar' and job['frozen_request'].get('workflow_version', 1) >= 2:
+                # File existence cannot prove template identity or a complete
+                # export after a crash. Re-enter the frozen producer: its
+                # receipts validate caches without resubmitting paid stages.
+                return {'status':'queued', 'stage':'自动恢复原制作，复核原模板、产物与模型请求', 'safe_resume_point':'studio_avatar'}
             if job['frozen_request'].get('runtime')=='motiongit' or (job['frozen_request'].get('template_ref') or {}).get('runtime')=='motiongit':
                 return {'status':'queued','stage':'自动核对原生工程、成片版本与输入摘要','safe_resume_point':job['kind']}
             filename = {"studio_graphic": "graphic-preview.mp4", "studio_avatar": "avatar-preview.mp4", "studio_motion": "motion-preview.mp4"}[job["kind"]]
@@ -224,8 +229,6 @@ class ProductionQueueWorker:
             report = output.parent / "qa.json"
             if output.is_file() and report.is_file():
                 return {"status": "completed", "stage": "合成完成，等待人工审核", "result": {"output_path": str(output), "qa_status": "pending"}}
-            if job['kind'] == 'studio_avatar' and job['frozen_request'].get('workflow_version', 1) >= 2:
-                return {'status':'queued', 'stage':'自动恢复原制作，复用已完成声音、素材与模型请求', 'safe_resume_point':'studio_avatar'}
             return {"status": "failed", "stage": "制作中断，原调用与产物保留，可恢复此任务", "retryable": True, "safe_resume_point": job["kind"]}
         if job["kind"] == "commentary_presenter":
             from backlot.commentary_presenter_job import inspect

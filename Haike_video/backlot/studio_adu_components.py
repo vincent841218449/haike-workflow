@@ -555,7 +555,7 @@ def compose(studio, draft, folder, video, audio, plan):
     verify_native(actual, draft["input"]["templateRef"], rendered=True)
     import zipfile
 
-    archive = folder / "motion-project.zip"
+    archive = folder / "editable-project.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
         for file in project.rglob("*"):
             if file.is_file():
@@ -568,6 +568,7 @@ def compose(studio, draft, folder, video, audio, plan):
             "media_validation": media_qa,
             "engineering": str(project),
             "archive": str(archive),
+            "archive_sha256": sha(archive),
             "human_review": "pending",
             "actual_source_components": True,
             "fixed_authored_scene_replay": False,
