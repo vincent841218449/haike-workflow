@@ -23,8 +23,11 @@ export function creationReadiness(input, models, tones, job) {
       canProduceVoice(tones.find(v => v.id === input.toneId), models)},
     {id:'portrait', label:'人物图片', ready:!!input.portrait},
   ];
-  return {fields, completed:fields.filter(v => v.ready).length,
-    ready:fields.every(v => v.ready) && materials.length <= 4 && (!input.ai?.enabled || materials.every(v => v.rights_confirmed))};
+  const missing=fields.filter(v=>!v.ready);
+  if(materials.length>4 || (input.ai?.enabled && materials.some(v=>!v.rights_confirmed)))
+    missing.push({id:'materials',label:materials.length>4?'素材数量（最多4份）':'素材使用确认'});
+  return {fields, missing, completed:fields.filter(v => v.ready).length, ready:missing.length===0,
+    message:missing.length?`还需：${missing.map(v=>v.label).join('、')}`:'准备好了，可以制作'};
 }
 
 export function materialSelection(files, existingCount) {

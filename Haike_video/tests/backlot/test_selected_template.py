@@ -60,3 +60,23 @@ def test_instrument_preserves_required_materials_and_complete_script():
     assert instrument_plan(draft,storyboard)['scene_ids']==['scene-1']
     scene['text']='删掉原文'
     with pytest.raises(WorkError,match='完整保留原文'):instrument_plan(draft,storyboard)
+
+
+def test_one_click_quote_rejects_component_only_template_before_supplier_access(monkeypatch):
+    from backlot import studio_avatar
+    monkeypatch.setattr(studio_avatar,'validate',lambda *a:None)
+    class NoSupplier:
+        def client(self):pytest.fail('invalid template must not access a supplier')
+    with pytest.raises(WorkError,match='不能用于一键口播'):
+        studio_avatar.quote(NoSupplier(),{'input':{'motion':{'style':'quick','layout':'landscape'}}})
+
+
+def test_one_click_quote_verifies_selected_version_before_upload_or_quote(monkeypatch):
+    from backlot import studio_avatar,studio_template_registry
+    monkeypatch.setattr(studio_avatar,'validate',lambda *a:None)
+    def changed(draft):raise WorkError('模板版本已改变','template_mismatch')
+    monkeypatch.setattr(studio_template_registry,'resolve',changed)
+    class NoSupplier:
+        def client(self):pytest.fail('changed template must not upload private portrait or quote')
+    with pytest.raises(WorkError,match='版本已改变'):
+        studio_avatar.quote(NoSupplier(),{'input':{'motion':{'style':'04-A','layout':'portrait'}}})

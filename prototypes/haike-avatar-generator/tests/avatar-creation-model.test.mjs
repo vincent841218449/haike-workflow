@@ -19,6 +19,15 @@ test('四项输入的就绪状态涵盖可选素材的授权，已有录音不�
   assert.equal(creationReadiness({...input,soundMode:'audio',audio:{}},[],[]).ready,true);
   assert.equal(creationReadiness({...input,toneId:preview.id},models,[preview]).ready,false);
 });
+
+test('准备提示指出所有缺项，并为素材问题提供可操作定位',()=>{
+  const state=creationReadiness({text:'',soundMode:'voice',toneId:'missing',portrait:null,ai:{enabled:true,materials:[{}]}},[],[]);
+  assert.deepEqual(state.missing.map(v=>v.id),['text','voice','portrait','materials']);
+  assert.equal(state.message,'还需：文案、音色、人物图片、素材使用确认');
+  const tooMany=creationReadiness({text:'文案',soundMode:'audio',audio:{},portrait:{},ai:{materials:Array(5).fill({rights_confirmed:true})}},[],[]);
+  assert.equal(tooMany.ready,false);assert.equal(tooMany.missing[0].id,'materials');
+  assert.match(tooMany.message,/最多4份/);
+});
 test('批量素材在上传前核对剩余容量和全部文件，不截断或上传半个无效批次',()=>{
   const f=name=>({name,size:100});
   assert.deepEqual(materialSelection([f('a.jpg'),f('b.MOV')],2).map(f=>f.name),['a.jpg','b.MOV']);

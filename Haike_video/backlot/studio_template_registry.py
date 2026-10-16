@@ -63,9 +63,7 @@ def resolve(draft):
             raise WorkError('所选完整模板版本或画幅已改变，请重新选择', 'template_mismatch')
         return ref
     if motion['style'] == 'quick':
-        from backlot.studio_motion import COMMIT
-        return {'schema': 'haike-template-ref/1', 'runtime': 'adu-quick', 'mode': 'quick-start',
-                'style': 'quick', 'layout': motion['layout'], 'engine_commit': COMMIT}
+        raise WorkError('轻量动画组件需要配置分镜，不能用于一键口播；请选择完整动效模板，原内容已保留', 'template_incompatible')
     ref = legacy_ref(motion['style'], motion['layout'])
     supplied = draft['input'].get('templateRef')
     if supplied is not None and supplied != ref:

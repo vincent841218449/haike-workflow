@@ -109,6 +109,10 @@ def validate(studio, draft):
 
 def quote(studio, draft):
     validate(studio, draft)
+    # Verify the real author package before uploading the portrait or quoting providers.
+    # Rechecked when freezing, so a stale or forged UI selection is never authority.
+    from backlot.studio_template_registry import resolve
+    resolve(draft)
     from backlot.studio_asr import snapshot
     asr = snapshot(studio)  # Verify real speech before avatar spending in every new creation.
     sdk = studio.client()

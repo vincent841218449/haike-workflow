@@ -19,8 +19,15 @@ TYPES = {"studio_graphic": ("graphic", "图文视频"), "studio_avatar": ("avata
 
 def task_view(studio, job, scheduled_paths=()):
     category, label = TYPES.get(job["kind"], ("other", "视频制作"))
+    # Rendering kind describes the worker, not the UI in which the user created it.
+    # Automatic native recompositions keep the simple avatar draft and inputs.
+    try:
+        draft = (job.get('frozen_request') or {}).get('draft') or studio.draft(job["project_id"])
+    except WorkError:
+        draft = None
+    manual_motion = category == 'motion' and (draft is None or draft.get('template_id') == 'avatar-motion-adu-v1')
     route = "/graphic" if category == "graphic" else "/avatar" if category in {"avatar", "motion"} else "/tasks"
-    edit_url = route + "?draft=" + quote(job["project_id"], safe="") + ("&mode=motion" if category == "motion" else "") if category != "other" else route
+    edit_url = route + "?draft=" + quote(job["project_id"], safe="") + ("&mode=motion" if manual_motion else "") if category != "other" else route
     progress = job.get("progress") or json.loads(job.get('progress_json') or '{}')
     observed = progress.get("basis") == "steps" and progress.get("total", 0) > 0
     complete = job["status"] == "completed"
@@ -43,7 +50,7 @@ def task_view(studio, job, scheduled_paths=()):
     ratio, template_name, version_id, media_url, approved, excerpt = None, "", None, None, False, ""
     # Drafts may be archived; queue history remains readable without modifying them.
     try:
-        draft = (job.get('frozen_request') or {}).get('draft') or studio.draft(job["project_id"])
+        if draft is None: raise WorkError('原草稿已归档')
         excerpt = str(draft.get('text') or '')[:180]
         title = draft.get('title') or title
         template = next((t for t in TEMPLATES if t['id'] == draft.get('template_id')), {})

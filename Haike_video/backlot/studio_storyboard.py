@@ -579,7 +579,7 @@ def select_motion(studio, draft, folder, cues, storyboard, *, attempt=0, diagnos
     if attempt: stage += f'-repair-{attempt}'
     r = relay.call(stage, {"model": CHAT_MODEL, "messages": [{"role":"system","content":system},{"role":"user","content":json.dumps(contract,ensure_ascii=False)}], "max_completion_tokens":6500,"stream":False})
     try: body = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", r["choices"][0]["message"]["content"].strip()))
-    except (ValueError, KeyError, IndexError, TypeError): raise WorkError("AI动效绑定未通过，原结果保留，请进入专业编辑复核") from None
+    except (ValueError, KeyError, IndexError, TypeError): raise WorkError("AI动效绑定未通过，原结果已保留；可在创作任务查看原因或更换模板") from None
     if not isinstance(body, dict): raise WorkError("AI动效分镜格式无效")
     segments = body.get("segments")
     if segments == [] and set(body) == {"segments"}:

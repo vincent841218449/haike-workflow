@@ -6,6 +6,8 @@ import { api, upload } from "./studio-api.js";
 import { ActionBar, Button, Dialog as Modal, Field, Heading, Notice, PreviewPanel, availableModels } from './ui.jsx';
 import {Motion} from './Motion.jsx';
 import {AvatarTemplatePicker} from './AvatarTemplatePicker.jsx';
+import {nativeTemplateCards} from './template-library.js';
+import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
 import {AvatarMaterials} from './AvatarMaterials.jsx';
 import {chargeLimitMicros, enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from './avatar-submit.js';
@@ -36,8 +38,8 @@ function BasicAvatar() {
   const voiceLibrary = useVoiceLibrary();
   const [auditionTone, setAuditionTone] = useState('');
   const [serverDraft, setServerDraft] = useState(null);
-  const [storyboard,setStoryboard]=useState(null),[motionPreview,setMotionPreview]=useState(null);
-  const [motionName,setMotionName]=useState('');
+  const [storyboard,setStoryboard]=useState(null),[motionCard,setMotionCard]=useState(null);
+  const [motionError,setMotionError]=useState(''),[templateReload,setTemplateReload]=useState(0);
   const [quote, setQuote] = useState(null), [budget, setBudget] = useState('10.00'), [job, setJob] = useState(null);
   const uploaded = useRef(new WeakMap());
   const pendingSubmission = useRef(null), submissionBusy = useRef(false);
@@ -47,6 +49,8 @@ function BasicAvatar() {
   const [submitPhase, setSubmitPhase] = useState(''), [uploading, setUploading] = useState(null);
   const [layout, setLayout] = useState({ title_size: 60, accent: "#316dd6" });
   const [input, setInput] = useState(initial);
+  const currentMotion=!!input.motion && !!motionCard && motionCard.id===input.motion.style && motionCard.choice.motion.layout===input.motion.layout;
+  const motionName=currentMotion?motionCard.name:'';
   const [voices, setVoices] = useState([]);
   const [voiceStatus, setVoiceStatus] = useState("loading");
   const [accountState, setAccountState] = useState(null);
@@ -54,7 +58,6 @@ function BasicAvatar() {
   const [modal, setModal] = useState(null);
   const [more, setMore] = useState(()=>location.hash==='#more-fields');
   const [playing, setPlaying] = useState(false);
-  const [samplePlaying, setSamplePlaying] = useState(false);
   const [toast, setToast] = useState("");
   const [error, setError] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -65,6 +68,7 @@ function BasicAvatar() {
   const audioTicket = useRef(0), imageTicket = useRef(0), textTicket = useRef(0);
   const templateGrid = useRef(null);
   const template = TEMPLATES.find(t => t.id === input.templateId) || TEMPLATES[2];
+  const selectedSample=input.motion?(currentMotion?motionCard:null):{...template,image:assetPath(template.poster),demo:template.sample?assetPath(template.sample):null};
   const selectedTone = voiceLibrary.data?.items.find(v => v.id === input.toneId);
   const audioUrl = useAssetUrl(input.audio, assetPath("narration.wav"));
   const portraitUrl = useAssetUrl(input.portrait, assetPath("presenter.png"));
@@ -113,7 +117,17 @@ function BasicAvatar() {
     }).catch(() => { if (live) setToast("未能读取本地草稿，你可以继续填写并重新保存。"); }).finally(() => { if (live) setDraftLoading(false); });
     return () => { live = false; };
   }, []);
-  useEffect(()=>{setMotionPreview(null);setMotionName('');if(!input.motion)return;let live=true;api(`/api/studio/motion/catalog?layout=${input.motion.layout}`).then(c=>{if(!live)return;const s=c.styles.find(s=>s.id===input.motion.style);setMotionPreview(s?.preview);setMotionName(`${s?.name||input.motion.style}${s?.template_ref?.runtime==='motiongit'?'':' · 原生镜头组'}`);}).catch(()=>{});return()=>{live=false;};},[input.motion?.style,input.motion?.layout]);
+  useEffect(()=>{
+    setMotionCard(null);setMotionError('');if(!input.motion)return;let live=true;
+    api(`/api/studio/motion/catalog?layout=${input.motion.layout}`).then(c=>{
+      if(!live)return;
+      const card=nativeTemplateCards(c,input.motion.layout,input.motion).find(s=>s.id===input.motion.style);
+      if(!card)throw new Error('所选模板暂不可用，请重新选择；文案与素材已保留。');
+      if(input.templateRef&&input.templateRef.fingerprint!==card.choice.templateRef.fingerprint)throw new Error('所选模板版本已更新，请重新选择以使用当前版本；原内容已保留。');
+      setMotionCard(card);
+    }).catch(e=>{if(live)setMotionError(e.message);});
+    return()=>{live=false;};
+  },[input.motion?.style,input.motion?.layout,input.templateRef,templateReload]);
   useEffect(()=>{if(!serverDraft||!job)return;const revision=Number(job.parent_job_id?.replace('studio-',''));api(`/api/studio/drafts/${serverDraft.id}/storyboard${Number.isInteger(revision)&&revision>0?'?revision='+revision:''}`).then(r=>setStoryboard(r.plan)).catch(()=>{});},[job?.status,job?.stage,serverDraft?.id]);
   useEffect(() => {
     if (!toast) return;
@@ -278,6 +292,7 @@ function BasicAvatar() {
   const audioTime = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
   const models = availableModels(accountState);
   const blocked = accountState === null ? '正在读取模型能力…' : accountState.error ? accountState.message || '暂时无法验证模型能力' : !models.has('haike/avatar') ? '数字人模型尚未开通' : input.soundMode==='voice'&&selectedTone?.production_ready===false ? '已选系统音色，配音服务待接通；可以试听并保存草稿' : (input.subtitles||input.ai?.enabled) && !accountState.local_asr?.ready && !models.has('haike/tencent-asr') ? '字幕识别尚未开通' : '';
+  const templateBlocked=input.motion ? motionError || (!currentMotion?'正在核对所选模板…':'') : '';
   const inProgress = ['queued','running'].includes(job?.status);
   const readiness = creationReadiness(input, voices, voiceLibrary.data?.items || [], job);
   const audioMismatch = knownAudioMismatch(input, job);
@@ -287,7 +302,7 @@ function BasicAvatar() {
   return <main className="workspace creation-workspace avatar-creation">
     <Heading title="数字人口播" helper="给文案一个声音，让你的数字人开口讲。"><div className="creation-header-actions"><Button href="/tasks" variant="text">创作任务<ArrowRight size={15}/></Button>{serverDraft&&<Button href="/avatar?new=1">新建视频</Button>}</div></Heading>
     {blocked&&!blocked.startsWith('已选系统')&&<div className="creation-connection"><Notice message={blocked} error={accountState!==null}><Button variant="text" disabled={accountState===null} onClick={()=>{setConnectionVersion(v=>v+1);voiceLibrary.reload();}}>重新检查连接</Button><a href="/settings">查看 API 设置<ArrowRight size={14}/></a></Notice></div>}
-    <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} selectedName={motionName} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setSamplePlaying(false);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
+    <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} selectedName={motionName} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
     {input.motion&&<p className="helper">使用所选模板的原生动作，系统自动编排和检查。声音方案：{input.music?.mode==='track'?`原声 + ${input.music.asset?.name||'已选配乐'} + 动作音效`:'原声与动作音效（无背景音乐）'}。</p>}
     <PreparationStrip state={readiness}/>
     <div className="editor-shell avatar-editor"><section className="editor-content" aria-label="填写制作内容" aria-busy={draftLoading}>
@@ -321,14 +336,17 @@ function BasicAvatar() {
       </fieldset>
       <SubmissionStatus phase={submitPhase} uncertain={uncertain}/>
       <div className="notice-stack avatar-notices"><Notice message={!['text','voice','portrait','materials','audio'].includes(error?.field) ? error?.message : ''} error/></div>
-      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已合成 · 待审核',failed:'需要处理',canceled:'已取消'})[job.status]||job.status}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看并审核成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
+      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',canceled:'已取消'})[job.status]||job.status}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
       <DouyinRecovery job={job} onJob={setJob}/>
-    </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}><div className="poster-frame"><img src={motionPreview||assetPath(template.poster)} alt={`${motionName||template.name} · 版式参考`}/></div><p className="preview-note">{input.motion?'上游风格参考，可能只展示局部镜头；按本期原文、素材与实际时钟调用原生动作。':template.sample?"现有真实样片，生成后使用你的内容。":"模板布局示意，生成后使用你的内容。"}</p>{!input.motion&&template.sample&&<Button className="preview-play" onClick={()=>{setModal("sample");setSamplePlaying(true);}}><Play size={16}/>播放样片</Button>}{input.motion&&<Button href="/avatar?mode=motion">进入专业分镜编辑</Button>}</PreviewPanel>
-    <ActionBar note={<><strong>本次费用上限 ¥{budget}</strong><span>按实际调用结算 · 提交后自动制作，在创作任务查看进度</span></>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!blocked&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>
+    </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}>
+      {selectedSample&&<><div className="poster-frame"><TemplateCover key={selectedSample.id} template={selectedSample}/></div>{selectedSample.sourceLabel&&<p className="template-source-label">{selectedSample.sourceLabel}</p>}<p className="preview-note">{input.motion?selectedSample.description:template.sample?'现有真实样片，制作时使用你的内容。':'模板布局示意，制作时使用你的内容。'}</p>{selectedSample.demo&&<Button className="preview-play" onClick={()=>setModal('sample')}><Play size={16}/>播放所选模板样片</Button>}</>}
+      {input.motion&&!selectedSample&&(motionError?<Notice message={motionError} error><Button onClick={()=>setTemplateReload(v=>v+1)}>重新读取模板</Button></Notice>:<p className="helper" role="status">正在读取所选模板预览…</p>)}
+    </PreviewPanel>
+    <ActionBar note={<><strong>本次费用上限 ¥{budget}</strong>{!inProgress&&!uncertain&&(blocked||templateBlocked||!readiness.ready)?<span className="creation-action-hint">{blocked||templateBlocked||<button type="button" onClick={()=>focusProblem({field:readiness.missing[0].id,message:readiness.message})}>{readiness.message}<ArrowRight size={13}/></button>}</span>:<span>提交后自动制作，在创作任务查看进度</span>}</>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!(blocked||templateBlocked)&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>
     <input hidden type="file" ref={textUpload} accept=".txt,.docx" onChange={importText} aria-label="文案文件"/><input hidden type="file" ref={audioUpload} accept=".wav,.mp3,.m4a,.ogg" onChange={importAudio} aria-label="音频文件"/>
     <audio ref={audio} src={audioUrl} onEnded={()=>setPlaying(false)} onError={()=>setPlaying(false)}/>
     <div className={`toast ${toast?"visible":""}`} role="status">{toast&&<><CheckCircle2 size={18}/>{toast}</>}</div>
-    {modal==="sample"&&<Modal title={`${template.name} · 真实样片`} wide onClose={()=>{setModal(null);setSamplePlaying(false);}} footer={<Button href={assetPath(template.sample)} download="海客科技-模板3-现有样片.mp4">下载现有样片</Button>}><video className="sample-video" controls autoPlay={samplePlaying} poster={assetPath(template.poster)} src={assetPath(template.sample)}/><p className="helper">项目现有7秒样片，用于查看版式。</p></Modal>}
+    {modal==='sample'&&selectedSample&&<Modal title={`${selectedSample.name} · 模板样片`} wide onClose={()=>setModal(null)} footer={<Button onClick={()=>setModal(null)}>返回制作</Button>}><TemplateSample key={selectedSample.id} template={selectedSample}/></Modal>}
     {modal==="audio"&&<Modal title="上传口播录音" description="录音内容应与文案一致；已有录音无需重复配音。" onClose={()=>setModal(null)} footer={<><Button onClick={()=>setModal(null)}>取消</Button><Button variant="primary" onClick={()=>audioUpload.current.click()}><Upload size={17}/>上传音频</Button></>}><div className="library-audio"><Music2 size={24}/><span><strong>项目样音 · 仅试听</strong><small>海客介绍口播 · 6.56秒</small></span></div><audio controls preload="none" src={assetPath('narration.wav')} aria-label="试听项目样音"/><p className="helper">制作时使用你上传的录音，或选择音色按文案配音。支持WAV、MP3、M4A、OGG；50 MB以内，最长120秒。</p></Modal>}
     {modal==='voices'&&<VoiceLibrary picker library={voiceLibrary} selectedId={input.toneId} initialAudition={auditionTone} onClose={()=>setModal(null)} onChoose={voice=>{chooseTone(voice);setToast(`已选择「${voice.name}」，文案和人物图片保持原样。`);}}/>}
   </main>;

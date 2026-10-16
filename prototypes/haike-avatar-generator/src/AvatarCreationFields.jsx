@@ -11,7 +11,8 @@ export function CreationStep({number, title, helper, children, action, className
 }
 
 export function PreparationStrip({state}) {
-  return <nav className="creation-preparation" aria-label="制作准备"><div><ListChecks size={17}/><strong>{state.ready ? '准备好了，可以制作' : state.completed === 3 ? '确认素材使用权后即可制作' : `已完成 ${state.completed} / 3 项必填`}</strong></div><div className="preparation-links">{state.fields.map(field => <a key={field.id} href={`#creation-${field.id}`} className={field.ready ? 'ready' : ''}>{field.ready && <Check size={12}/>} {field.label}</a>)}</div></nav>;
+  const links=[...state.fields,...state.missing.filter(v=>v.id==='materials')];
+  return <nav className="creation-preparation" aria-label="制作准备"><div><ListChecks size={17}/><strong role="status">{state.message}</strong></div><div className="preparation-links">{links.map(field => <a key={field.id} href={`#creation-${field.id}`} className={field.ready ? 'ready' : ''}>{field.ready && <Check size={12}/>} {field.label}</a>)}</div></nav>;
 }
 
 export function AvatarVoiceField({voice, loading, ready, error, fallback, onChooseFallback, onChoose, onAudition}) {

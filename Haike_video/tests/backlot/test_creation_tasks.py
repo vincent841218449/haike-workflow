@@ -31,6 +31,21 @@ def submit(queue, draft, n=1, kind="studio_graphic"):
                         parent_job_id=f"studio-{n}", frozen_request={"confirmed": True})
 
 
+@pytest.mark.parametrize('template_id,manual', [('avatar-safe-circle-v1',False),('avatar-motion-adu-v1',True)])
+def test_worker_kind_does_not_send_automatic_avatar_users_to_manual_editor(setup,template_id,manual):
+    studio,_,queue,client=setup
+    draft=studio.save_draft({'template_id':template_id,'text':'原文','input':{}})
+    project=studio.projects_root/draft['id'];project.mkdir()
+    (project/'project.json').write_text(json.dumps({'title':'返回入口验收'}))
+    job=queue.submit(project_id=draft['id'],kind='studio_motion',source='workbench',priority='normal',
+        parent_job_id='native-test',frozen_request={'draft':draft})
+    # A newer edit must not change the original creation interface in its history.
+    studio.save_draft({**draft,'template_id':'avatar-motion-adu-v1' if not manual else 'avatar-safe-circle-v1'})
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['edit_url'].startswith('/avatar?draft='+draft['id'])
+    assert ('mode=motion' in task['edit_url']) is manual
+
+
 def test_explicit_creation_collapses_before_filters_counts_and_pages(setup):
     _, draft, queue, client = setup
     jobs = []

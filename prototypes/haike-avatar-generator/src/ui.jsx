@@ -58,7 +58,7 @@ export function UploadField({label = '上传图片 / 视频', ariaLabel = label,
     <input hidden ref={input} type="file" accept={accept} onChange={e => {choose(e.target.files[0]); e.target.value = '';}}/>
   </div>;
 }
-export function Dialog({title, description, onClose, children, wide = false, busy = false, footer}) {
+export function Dialog({title, description, onClose, children, wide = false, busy = false, footer, className = ''}) {
   const ref = useRef(null), titleId = useId(), descriptionId = useId();
   useEffect(() => {
     const dialog = ref.current, previous = document.activeElement, oldOverflow = document.body.style.overflow;
@@ -66,7 +66,7 @@ export function Dialog({title, description, onClose, children, wide = false, bus
     return () => {dialog.close(); document.body.style.overflow = oldOverflow; if(previous?.isConnected) previous.focus();};
   }, []);
   const close = () => {if(!busy) onClose();};
-  return <dialog ref={ref} className={`modal ${wide ? 'wide' : ''}`} aria-labelledby={titleId}
+  return <dialog ref={ref} className={`modal ${wide ? 'wide' : ''} ${className}`} aria-labelledby={titleId}
     aria-describedby={description ? descriptionId : undefined} aria-busy={busy || undefined}
     onCancel={e => {e.preventDefault(); close();}} onClick={e => {if(e.target === ref.current) close();}}>
     <header className="modal-heading"><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId} className="helper">{description}</p>}</div>

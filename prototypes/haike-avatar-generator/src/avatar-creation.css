@@ -1,4 +1,6 @@
 .avatar-creation .page-heading {margin-bottom:18px;align-items:center}
+@media(min-width:1101px) {.avatar-creation .preview-panel {max-height:calc(100dvh - 140px);overflow-y:auto}.avatar-creation .poster-frame>img,.avatar-creation .poster-frame>video {max-height:min(380px,calc(100dvh - 360px));object-fit:contain}.avatar-creation .preview-play {scroll-margin-block:100px}}
+.creation-action-hint {color:#985027}.creation-action-hint>button {display:inline-flex;align-items:center;gap:5px;background:transparent;border:0;padding:3px 0;color:inherit;text-align:left;font-size:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.creation-action-hint>button:focus-visible {outline:2px solid #bd652b;outline-offset:3px}
 .creation-header-actions {display:flex;align-items:center;gap:8px;flex:none}.creation-header-actions .button {font-size:12px;min-height:38px;padding:8px 12px}
 .creation-connection {margin-bottom:14px}.creation-connection .notice>div {min-width:0}.creation-connection .notice .button {font-size:12px;padding:4px 8px;min-height:30px;margin-left:4px}.creation-connection .notice a {display:inline-flex;align-items:center;gap:5px;font-size:12px}
 .avatar-creation .page-title {display:block}.avatar-creation .page-title p {margin-top:7px;font-size:14px}
