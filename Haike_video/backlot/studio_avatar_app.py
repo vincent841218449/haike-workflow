@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import shutil
 import subprocess
+import sys
 import wave
+from array import array
 from uuid import uuid4
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,12 +139,49 @@ def _shorten_failed_inputs(state, cache, audio, cues):
     return True
 
 
-def _verify_clip(path, frames):
+def _reference_correlation(path, reference, frames):
+    """Verify the entire original audio at zero offset before trimming a tail."""
+    from lib.ffmpeg_locator import resolve_ffmpeg_pair
+    ffmpeg,_=resolve_ffmpeg_pair()
+    count=frames*960
+    try:
+        with wave.open(str(reference),'rb') as source:
+            if source.getparams()[:3]!=(1,2,24000) or source.getnframes()!=count:
+                raise WorkError('分段原音轨时钟不一致，未接受供应商额外时长')
+            original=source.readframes(count)
+        decoded=subprocess.run([ffmpeg,'-v','error','-i',str(path),'-vn','-t',str(frames/25),
+                                '-ac','1','-ar','24000','-f','s16le','-'],capture_output=True,timeout=60)
+    except (OSError,wave.Error,subprocess.SubprocessError):
+        raise WorkError('供应商视频无法核对原音轨，已保留原结果') from None
+    if decoded.returncode or len(decoded.stdout)!=len(original):
+        raise WorkError('供应商视频缺少完整原音轨，已保留原结果')
+    a=array('h');a.frombytes(original)
+    b=array('h');b.frombytes(decoded.stdout)
+    if sys.byteorder!='little': a.byteswap();b.byteswap()
+    def correlation(x,y):
+        aa=sum(v*v for v in x);bb=sum(v*v for v in y)
+        return sum(u*v for u,v in zip(x,y))/math.sqrt(aa*bb) if aa and bb else 0
+    score=correlation(a,b)
+    # Whole-track similarity alone can conceal a local lead-in or lost ending.
+    quarters=[correlation(a[start:end],b[start:end]) for start,end in
+              [(i*count//4,(i+1)*count//4) for i in range(4)]
+              if any(a[start:end])]
+    if score<.98 or not quarters or min(quarters)<.95:
+        raise WorkError('供应商额外时长无法与原音轨从开头完整对应，已保留原结果')
+    return score
+
+
+def _verify_clip(path, frames, reference=None):
     info = media_probe(path)
     video = info.get('video')
     stream_duration=float(video.get('duration',info['duration'])) if video else 0
     if not video or abs(stream_duration-frames/25) > .5:
-        raise WorkError('数字人分段结果与原语音时长不一致，已保留供应商原结果')
+        extra=stream_duration-frames/25
+        if not video or reference is None or not .5<extra<=1.2+1e-6:
+            raise WorkError('数字人分段结果与原语音时长不一致，已保留供应商原结果')
+        score=_reference_correlation(path,reference,frames)
+        info['tail_padding']={'seconds':round(extra,6),'audio_correlation':score,
+                              'source_frames':frames,'policy':'original_audio_zero_offset'}
     return info
 
 
@@ -262,21 +303,30 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
             candidates=[]
             for i,video in enumerate(chunk['results']):
                 candidate=cache/f"video-{chunk['index']:03d}-{i:02d}.mp4"
+                reference=cache/f"audio-{chunk['index']:03d}.wav"
+                frames=chunk['end_frame']-chunk['start_frame']
                 try:
+                    # Revalidate bytes previously rejected by an older timing
+                    # contract before fetching the same paid result again.
+                    if not candidate.is_file():
+                        for archived in sorted(cache.glob(candidate.stem+'.invalid*.mp4')):
+                            try: _verify_clip(archived,frames,reference)
+                            except WorkError: continue
+                            shutil.copyfile(archived,candidate);break
                     if not candidate.is_file(): download_result(video['url'],candidate)
                 except WorkError as exc:
                     if exc.code != 'unavailable': raise
                     continue
                 except OSError:
                     continue
-                try: info=_verify_clip(candidate,chunk['end_frame']-chunk['start_frame'])
+                try: info=_verify_clip(candidate,frames,reference)
                 except WorkError:
                     # Retain bad bytes, then retry the original paid result.
                     invalid=candidate.with_suffix('.invalid.mp4')
                     if invalid.exists(): invalid=candidate.with_suffix('.invalid-'+uuid4().hex[:8]+'.mp4')
                     candidate.replace(invalid)
                     continue
-                candidates.append((info['video']['width']*info['video']['height'],candidate))
+                candidates.append((info['video']['width']*info['video']['height'],candidate,info))
             if not candidates:
                 chunk['download_failures']=chunk.get('download_failures',0)+1
                 state.update(status='running',message=f"数字人第 {position+1} 段已生成，正在重新查询并下载原结果")
@@ -284,7 +334,8 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 if chunk['download_failures']>=3:
                     raise WorkError('数字人原结果连续三次下载或解码未通过，原任务号和片段保留；请修复下载连接后继续原任务', 'unavailable')
                 return result()
-            selected=max(candidates,key=lambda v:v[0])[1]
+            _,selected,info=max(candidates,key=lambda v:v[0])
+            if info.get('tail_padding'): chunk['tail_padding']=info['tail_padding']
             chunk.update(status='succeeded',video_file=selected.name,video_sha256=sha(selected)); save()
         _stitch(cache,state,audio,target)
         state.update(status='succeeded',output_sha256=sha(target),message=None); save()
