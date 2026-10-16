@@ -737,7 +737,24 @@ class ProductionQueue:
             template_recheck = (row['status']=='awaiting_human' and row['kind']=='studio_avatar'
                 and row['safe_resume_point']=='studio_avatar_input'
                 and _decode(row['error_json'],{}).get('code')=='template_incompatible')
-            if not (material_confirmation or template_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
+            avatar_recheck=False
+            if (row['status']=='failed' and row['kind']=='studio_avatar'
+                and row['safe_resume_point']=='studio_avatar'
+                and _decode(row['error_json'],{}).get('code')=='invalid'):
+                # Compatibility with the old producer's blanket failure code.
+                # Retry only re-enters the producer; it re-queries the original
+                # provider ID before deciding whether short inputs are safe.
+                frozen=_decode(row['frozen_request'],{})
+                project=(self.projects_root/row['project_id']).resolve()
+                render=(project/'renders'/str(frozen.get('render_id',''))).resolve()
+                if project.is_relative_to(self.projects_root.resolve()) and render.is_relative_to(project/'renders'):
+                    try:
+                        from backlot.studio_avatar_app import long_failure_recoverable
+                        state=json.loads((render/'avatar-app/state.json').read_text())
+                        avatar_recheck=(state.get('execution')==frozen.get('avatar_execution')
+                                        and bool(frozen.get('avatar_execution')) and long_failure_recoverable(state))
+                    except (OSError,ValueError,KeyError,TypeError): pass
+            if not (material_confirmation or template_recheck or avatar_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(

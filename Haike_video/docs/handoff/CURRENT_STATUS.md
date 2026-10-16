@@ -36,7 +36,7 @@
 ## 下一步
 
 1. ADu扩大原生镜头组、长文案及另一台电脑的真实验收；已交付组件片不充当固定编舞样片，工程按版本下载。
-2. 本机AI显式direct修复旧网关长请求，03-A原组件试片过；原数字人仍生成。根docs/tasks/2026-10-16-production-resilience.md。
+2. 本机AI显式direct，03-A原组件试片过；原数字人首段805，短段恢复。根docs/tasks/2026-10-16-production-resilience.md。
 3. 登录发布账号、完善发布资料后确认实际排期；云端全天候调度尚未部署。
 4. 原遗留OpenCV/ASR旧测试、长直播/歌舞真值等未在本轮改动，保留于旧状态记录。
 5. GPT视觉分镜早前云端验收见PRODUCT_AI_STORYBOARD.md。生图暂停，本轮口播已完成待核账。新机预装Whisper依赖/模型，不分发供应商Key。

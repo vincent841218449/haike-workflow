@@ -86,6 +86,55 @@ def _split_audio(audio, path, start, end):
             target.writeframes(samples)
 
 
+def long_failure_recoverable(state):
+    """One bounded recovery for a confirmed long-running failure, never pending.
+
+    805 alone does not prove a timeout. Combined with 55+ minutes of runtime,
+    shorter remaining inputs are a conservative recovery with the same app and
+    quality. Keep the failed request and unknown billing; never call it free.
+    """
+    if state.get('recovery') or state.get('status') != 'failed': return False
+    chunks=state.get('chunks',[])
+    failed=[c for c in chunks if c.get('status')=='failed']
+    if len(failed)!=1: return False
+    chunk=failed[0]
+    if not chunk.get('task_id') or str(chunk.get('error_code'))!='805': return False
+    if chunk['end_frame']-chunk['start_frame']<=625: return False
+    if any(c is not chunk and c.get('status')!='succeeded'
+           and (c.get('status')!='queued' or c.get('task_id')) for c in chunks): return False
+    try:
+        elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(chunk['submitted_at'])).total_seconds()
+    except (KeyError,TypeError,ValueError): return False
+    return elapsed>=3300
+
+
+def _shorten_failed_inputs(state, cache, audio, cues):
+    if not long_failure_recoverable(state): return False
+    original=state['chunks']
+    if (original[0]['start_frame']!=0 or original[-1]['end_frame']!=state['total_frames']
+        or any(a['end_frame']!=b['start_frame'] for a,b in zip(original,original[1:]))):
+        raise WorkError('原数字人分段时钟不完整，未提交恢复调用')
+    chunks=[];index=max(c['index'] for c in original)+1
+    for chunk in original:
+        if chunk['status']=='succeeded' or chunk['end_frame']-chunk['start_frame']<=625:
+            chunks.append(chunk);continue
+        start,end=chunk['start_frame'],chunk['end_frame']
+        count=(end-start+624)//625
+        maximum=(end-start+count-1)//count
+        local_cues=[{'endMs':c['endMs']-start*40} for c in cues]
+        for part in frame_segments(end-start,local_cues,maximum):
+            new={'index':index,'status':'queued','start_frame':start+part['start_frame'],
+                 'end_frame':start+part['end_frame']}
+            _split_audio(audio,cache/f'audio-{index:03d}.wav',new['start_frame'],new['end_frame'])
+            chunks.append(new);index+=1
+    failed=[c for c in original if c['status']=='failed']
+    state.update(chunks=chunks,failed_attempts=[*state.get('failed_attempts',[]),*failed],
+        recovery={'reason':'terminal_805_after_55m','at':datetime.now(timezone.utc).isoformat(),
+                  'max_segment_frames':625,'previous_chunks':original},status='running',
+        message='原数字人分段已明确失败，已保留原记录并自动改为短分段继续；原配音与已完成片段复用')
+    return True
+
+
 def _verify_clip(path, frames):
     info = media_probe(path)
     video = info.get('video')
@@ -151,10 +200,11 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
             atomic_private(path,state)
         def save(): atomic_private(path,state)
         def result():
-            ids = [c['task_id'] for c in state['chunks'] if c.get('task_id')]
+            attempts=[*state.get('failed_attempts',[]),*state['chunks']]
+            ids = [c['task_id'] for c in attempts if c.get('task_id')]
             unknown = state['status'] == 'submission_unknown'
-            receipts=[c['billing'] for c in state['chunks'] if c.get('billing')]
-            known=len(receipts)==len(state['chunks']) and all(any(r.get('provider_usage',{}).get(k) is not None for k in ('consume_money','consume_coins')) for r in receipts)
+            receipts=[c['billing'] for c in attempts if c.get('billing')]
+            known=len(receipts)==len(attempts) and all(any(r.get('provider_usage',{}).get(k) is not None for k in ('consume_money','consume_coins')) for r in receipts)
             return {'id':state['id'],
                     'status':state['status'], 'upstream_id':ids[-1] if ids else None, 'upstream_ids':ids,
                     'billing_source':'local-provider', 'cost_status':'provider_usage_recorded' if known else 'supplier_bill_pending',
@@ -165,19 +215,19 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
         if state['status']=='succeeded':
             if not target.is_file() or sha(target)!=state['output_sha256']: raise WorkError('数字人缓存缺失或已改变，不会重新付费生成')
             return result()
-        for chunk in state['chunks']:
+        for position,chunk in enumerate(state['chunks']):
             if chunk['status']=='succeeded': continue
             if chunk['status'] in {'submitting','submission_unknown'}:
                 state.update(status='submission_unknown',message='原数字人分段提交回执不明，需核对该请求；系统未重复提交')
                 chunk['status']='submission_unknown'; save(); return result()
-            if chunk['status']=='failed':
+            if chunk['status']=='failed' and not chunk.get('task_id'):
                 state.update(status='failed',message='数字人应用未完成当前分段，已完成片段与原配音保留'); save(); return result()
-            if on_progress: on_progress(f"数字人分段 {chunk['index']+1}/{len(state['chunks'])}：正在生成")
+            if on_progress: on_progress(f"数字人分段 {position+1}/{len(state['chunks'])}：正在生成")
             if not chunk.get('task_id'):
                 if not state.get('image_file'): state['image_file']=client.upload(portrait); save()
                 if not chunk.get('audio_file'):
                     chunk['audio_file']=client.upload(cache/f"audio-{chunk['index']:03d}.wav"); save()
-                if on_progress: on_progress(f"数字人分段 {chunk['index']+1}/{len(state['chunks'])}：输入已就绪")
+                if on_progress: on_progress(f"数字人分段 {position+1}/{len(state['chunks'])}：输入已就绪")
                 chunk.update(status='submitting',submitted_at=datetime.now(timezone.utc).isoformat()); save()
                 try:
                     receipt = client.submit(state['image_file'],chunk['audio_file'])
@@ -196,11 +246,17 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
             if queried['task_id'] != chunk['task_id']: raise WorkError('数字人查询回执编号不一致，未关联其他任务')
             if queried.get('billing'): chunk['billing']=queried['billing']
             if queried['status'] in {'FAILED','FAIL','CANCELLED','CANCELED','ERROR'}:
-                chunk.update(status='failed',error_code=queried.get('error_code'))
-                state.update(status='failed',message='数字人应用生成失败，原配音和已完成分段保留'); save(); return result()
+                chunk.update(status='failed',error_code=queried.get('error_code'),provider_status=queried['status'],
+                             failure_details=queried.get('failure_details',{}))
+                code=str(queried.get('error_code') or '未提供')
+                state.update(status='failed',message=f'RunningHub 数字人第 {position+1} 段生成失败（错误码 {code}），原配音和已完成分段保留')
+                save()
+                if queried['status'] in {'FAILED','FAIL','ERROR'} and _shorten_failed_inputs(state,cache,audio,cues):
+                    save()
+                return result()
             if queried['status'] not in {'SUCCESS','SUCCEEDED','COMPLETED'}:
                 done=sum(c['status']=='succeeded' for c in state['chunks'])
-                state.update(status='running',message=f"数字人第 {chunk['index']+1}/{len(state['chunks'])} 段正在生成，已完成 {done} 段"); save(); return result()
+                state.update(status='running',message=f"数字人第 {position+1}/{len(state['chunks'])} 段正在生成，已完成 {done} 段"); save(); return result()
             chunk['results']=queried['videos']; save()
             chunk['phase']='downloading'
             candidates=[]
@@ -223,7 +279,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 candidates.append((info['video']['width']*info['video']['height'],candidate))
             if not candidates:
                 chunk['download_failures']=chunk.get('download_failures',0)+1
-                state.update(status='running',message=f"数字人第 {chunk['index']+1} 段已生成，正在重新查询并下载原结果")
+                state.update(status='running',message=f"数字人第 {position+1} 段已生成，正在重新查询并下载原结果")
                 save()
                 if chunk['download_failures']>=3:
                     raise WorkError('数字人原结果连续三次下载或解码未通过，原任务号和片段保留；请修复下载连接后继续原任务', 'unavailable')

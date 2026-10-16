@@ -78,6 +78,26 @@ def test_submit_is_idempotent_and_public_payload_redacts_secrets(tmp_path: Path)
     assert private["frozen_request"] == {"confirmed": True, "nested": {"budget": 5}}
 
 
+@pytest.mark.parametrize('code,old,allowed', [('805',True,True),('805',False,False),('401',True,False)])
+def test_retry_only_rechecks_confirmed_long_avatar_failure(tmp_path,code,old,allowed):
+    queue,projects=_queue(tmp_path)
+    execution={'route':'local-runninghub-ai-app','profile':{'app_id':'2006270540499128322'}}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+                     parent_job_id='draft-one',frozen_request={'render_id':'render-one','avatar_execution':execution})
+    folder=projects/'alpha/renders/render-one/avatar-app';folder.mkdir(parents=True)
+    from datetime import datetime,timezone
+    (folder/'state.json').write_text(json.dumps({'status':'failed','execution':execution,'chunks':[
+        {'index':0,'status':'failed','task_id':'original-task','error_code':code,'start_frame':0,'end_frame':1120,
+         'submitted_at':'2026-01-01T00:00:00+00:00' if old else datetime.now(timezone.utc).isoformat()}]}))
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='failed',stage='供应商明确失败',error={'code':'invalid'},
+                 safe_resume_point='studio_avatar',retryable=False)
+    if allowed:
+        assert queue.retry(job['job_id'])['status']=='queued'
+    else:
+        with pytest.raises(ProductionQueueConflict): queue.retry(job['job_id'])
+
+
 def test_priority_then_fifo_and_single_global_execution_lease(tmp_path: Path) -> None:
     queue, _ = _queue(tmp_path)
     normal = _submit(queue, project_id="alpha", parent_job_id="RP-normal", priority="normal")

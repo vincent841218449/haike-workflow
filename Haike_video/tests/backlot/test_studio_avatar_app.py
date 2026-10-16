@@ -245,3 +245,92 @@ def test_explicit_provider_rejection_never_resubmits_or_runs_later_segments(app_
     client.submit=reject
     assert run(app_rig)['status']=='failed'
     assert run(app_rig)['status']=='failed' and len(client.calls)==1
+
+
+def test_terminal_long_running_805_is_split_once_and_keeps_original_receipt(app_rig):
+    client=app_rig[5];client.query_failure=True
+    assert run(app_rig)['status']=='running'
+    path=app_rig[2]/'avatar-app/state.json'
+    state=json.loads(path.read_text())
+    state['chunks'][0]['submitted_at']='2026-01-01T00:00:00+00:00'
+    path.write_text(json.dumps(state))
+    original_poll=client.poll
+    client.poll=lambda task:{'task_id':task,'status':'FAILED','error_code':'805','videos':[],
+                             'billing':{'cost_status':'unknown','provider_usage':{}}}
+    result=run(app_rig)
+    assert result['status']=='running' and len(client.calls)==1
+    state=json.loads(path.read_text())
+    assert state['failed_attempts'][0]['task_id']=='1'
+    assert state['failed_attempts'][0]['error_code']=='805'
+    assert state['recovery']['reason']=='terminal_805_after_55m'
+    assert all(c['end_frame']-c['start_frame']<=625 for c in state['chunks'])
+    assert state['chunks'][0]['start_frame']==0 and state['chunks'][-1]['end_frame']==2727
+    assert all(a['end_frame']==b['start_frame'] for a,b in zip(state['chunks'],state['chunks'][1:]))
+    with wave.open(str(app_rig[3])) as source: expected=source.readframes(source.getnframes())
+    actual=b''
+    for chunk in state['chunks']:
+        with wave.open(str(path.parent/f"audio-{chunk['index']:03d}.wav")) as source:
+            actual+=source.readframes(source.getnframes())
+    assert actual==expected
+    client.query_failure=False;client.poll=original_poll
+    result=run(app_rig)
+    assert result['status']=='succeeded' and len(client.calls)==6
+    assert result['upstream_ids']==['1','2','3','4','5','6']
+    assert result['cost_status']=='supplier_bill_pending'
+    assert run(app_rig)['status']=='succeeded' and len(client.calls)==6
+
+
+@pytest.mark.parametrize('status,code,old',[
+    ('RUNNING','805',True),('FAILED','401',True),('FAILED','805',False),
+    ('CANCELLED','805',True),('FAILED','433',True),
+])
+def test_shortening_never_replays_pending_cancelled_or_unrelated_failures(app_rig,status,code,old):
+    client=app_rig[5];client.query_failure=True
+    run(app_rig)
+    path=app_rig[2]/'avatar-app/state.json'
+    state=json.loads(path.read_text())
+    if old: state['chunks'][0]['submitted_at']='2026-01-01T00:00:00+00:00'
+    path.write_text(json.dumps(state))
+    client.poll=lambda task:{'task_id':task,'status':status,'error_code':code,'videos':[]}
+    result=run(app_rig)
+    assert result['status']==('running' if status=='RUNNING' else 'failed')
+    assert len(client.calls)==1 and 'recovery' not in json.loads(path.read_text())
+
+
+def test_failed_shortened_attempt_is_not_automatically_submitted_again(app_rig):
+    client=app_rig[5];client.query_failure=True
+    run(app_rig)
+    path=app_rig[2]/'avatar-app/state.json'
+    state=json.loads(path.read_text());state['recovery']={'reason':'terminal_805_after_55m'}
+    state['chunks'][0]['submitted_at']='2026-01-01T00:00:00+00:00'
+    path.write_text(json.dumps(state))
+    client.poll=lambda task:{'task_id':task,'status':'FAILED','error_code':'805','videos':[]}
+    assert run(app_rig)['status']=='failed'
+    assert run(app_rig)['status']=='failed' and len(client.calls)==1
+
+
+def test_late_success_on_failed_checkpoint_reuses_original_result(app_rig):
+    client=app_rig[5];client.query_failure=True
+    run(app_rig)
+    path=app_rig[2]/'avatar-app/state.json'
+    state=json.loads(path.read_text());state['status']='failed'
+    state['chunks'][0].update(status='failed',error_code='805',submitted_at='2026-01-01T00:00:00+00:00')
+    path.write_text(json.dumps(state));client.query_failure=False
+    assert run(app_rig)['status']=='succeeded' and len(client.calls)==3
+    assert 'recovery' not in json.loads(path.read_text())
+
+
+def test_shortening_preserves_already_successful_chunks(app_rig):
+    client=app_rig[5];original_poll=client.poll
+    client.poll=lambda task:original_poll(task) if task=='1' else {'task_id':task,'status':'RUNNING','videos':[]}
+    assert run(app_rig)['status']=='running' and len(client.calls)==2
+    path=app_rig[2]/'avatar-app/state.json';state=json.loads(path.read_text())
+    completed=state['chunks'][0].copy()
+    state['chunks'][1]['submitted_at']='2026-01-01T00:00:00+00:00'
+    path.write_text(json.dumps(state))
+    client.poll=lambda task:{'task_id':task,'status':'FAILED','error_code':'805','videos':[]}
+    assert run(app_rig)['status']=='running' and len(client.calls)==2
+    assert json.loads(path.read_text())['chunks'][0]==completed
+    client.poll=original_poll
+    assert run(app_rig)['status']=='succeeded' and len(client.calls)==5
+    assert json.loads(path.read_text())['chunks'][0]==completed

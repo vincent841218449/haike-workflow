@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-from tools.avatar.runninghub_avatar import RunningHubAvatarError, billing_evidence
+from tools.avatar.runninghub_avatar import RunningHubAvatarError, billing_evidence, _safe_failure_details
 
 
 class RunningHubAIAppClient:
@@ -77,4 +77,5 @@ class RunningHubAIAppClient:
                   and (str(v.get('outputType','')).lower() in {'mp4','video'} or v['url'].split('?')[0].lower().endswith('.mp4'))]
         return {'status':state, 'task_id':str(value.get('taskId') or task_id), 'videos':videos,
                 'error_code':value.get('errorCode'), 'message':value.get('errorMessage'),
+                'failure_details':_safe_failure_details(value),
                 'billing':billing_evidence(value)}
