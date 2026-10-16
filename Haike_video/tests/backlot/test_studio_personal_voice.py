@@ -221,6 +221,68 @@ def test_account_isolation_rename_and_preview_cache(rig):
         with pytest.raises(WorkError): action()
 
 
+def test_preview_survives_restart_and_plays_offline_without_new_quote_or_charge(rig, monkeypatch):
+    studio, client, seen = rig
+    identity = complete(studio, prepare(studio))["voice_id"]
+    operation = studio_voices.quote_preview(studio, identity)["operation"]
+    studio_voices.confirm(studio, operation["id"], True)
+    original = studio_voices.sample(studio, identity).read_bytes()
+    restarted = Studio(studio.projects_root)
+    client = system.SystemVoiceClient(restarted, client.remote)
+    monkeypatch.setattr(restarted, "client", lambda: client)
+    monkeypatch.setattr("backlot.studio_avatar.download_result", lambda *a: pytest.fail("cached playback must stay offline"))
+    # Playback depends on the original account, not live supplier credentials.
+    (studio.projects_root.parent / ".env.secrets.local").write_text("")
+    for _ in range(3):
+        assert studio_voices.quote_preview(restarted, identity) == {"cached": True}
+        path = studio_voices.sample(restarted, identity)
+        assert path.read_bytes() == original and path.stat().st_mode & 0o777 == 0o600
+        assert studio_voices.catalogue(restarted)["items"][-1]["sample_status"] == "succeeded"
+    assert sum(k == "tts" for k, _ in seen) == 1
+    with restarted.db() as db:
+        assert db.execute("SELECT COUNT(*) FROM studio_voice_operations WHERE json_extract(data,'$.kind')='sample'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("damage", ["missing", "invalid", "different-wav"])
+def test_preview_repairs_original_result_without_resynthesizing(rig, monkeypatch, damage):
+    studio, client, seen = rig
+    identity = complete(studio, prepare(studio))["voice_id"]
+    operation = studio_voices.quote_preview(studio, identity)["operation"]
+    confirmed = studio_voices.confirm(studio, operation["id"], True)
+    path = studio_voices.sample(studio, identity)
+    original = path.read_bytes()
+    if damage == "missing": path.unlink()
+    else: path.write_bytes(b"invalid" if damage == "invalid" else wav(3))
+    downloads = []
+    def restore(url, target):
+        downloads.append(url); target.write_bytes(original)
+    monkeypatch.setattr("backlot.studio_avatar.download_result", restore)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        assert all(value == original for value in pool.map(lambda _: studio_voices.sample(studio, identity).read_bytes(), range(3)))
+    assert downloads == ["https://example.test/tts.wav"]
+    assert studio_voices.query(studio, confirmed["id"])["job"]["status"] == "succeeded"
+    assert studio_voices.quote_preview(studio, identity) == {"cached": True}
+    assert sum(k == "tts" for k, _ in seen) == 1
+
+
+@pytest.mark.parametrize("result", ["expired", "changed-audio", "invalid-audio"])
+def test_unavailable_original_cannot_trigger_another_paid_preview(rig, monkeypatch, result):
+    studio, client, seen = rig
+    identity = complete(studio, prepare(studio))["voice_id"]
+    operation = studio_voices.quote_preview(studio, identity)["operation"]
+    studio_voices.confirm(studio, operation["id"], True)
+    studio_voices.sample(studio, identity).unlink()
+    def unavailable(url, target):
+        if result == "expired": raise OSError("original signed result expired")
+        target.write_bytes(wav(3) if result == "changed-audio" else b"not audio")
+    monkeypatch.setattr("backlot.studio_avatar.download_result", unavailable)
+    for _ in range(2):
+        assert studio_voices.quote_preview(studio, identity) == {"cached": True}
+        with pytest.raises(WorkError, match="不会重新生成或收费"):
+            studio_voices.sample(studio, identity)
+    assert sum(k == "tts" for k, _ in seen) == 1
+
+
 def test_frozen_credentials_and_rejected_clone(rig, monkeypatch):
     studio, _, seen = rig
     operation = prepare(studio); studio_voices.confirm(studio, operation["id"], True)

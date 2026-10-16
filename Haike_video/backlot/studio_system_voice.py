@@ -10,9 +10,9 @@ import base64
 import hashlib
 import json
 import re
+import threading
 import wave
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import requests
@@ -24,6 +24,7 @@ MODEL = "haike/cosyvoice-system"
 TARGET_MODEL = "cosyvoice-v3-flash"
 ROUTE = "local-system-voice"
 COST_PER_10000_MICROS = 1_000_000
+_cache_guard, _cache_locks = threading.Lock(), {}
 
 
 def configuration(studio):
@@ -54,6 +55,20 @@ def status(studio):
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+def _audio_digest(path):
+    if path.is_symlink() or not 44 < path.stat().st_size <= 25 * 1024 * 1024:
+        raise ValueError("invalid audio cache")
+    with wave.open(str(path), "rb") as audio:
+        if not audio.readframes(1):
+            raise ValueError("empty audio cache")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _playback_lock(path):
+    with _cache_guard:
+        return _cache_locks.setdefault(path, threading.Lock())
 
 
 class SystemVoiceClient:
@@ -109,6 +124,48 @@ class SystemVoiceClient:
     def _lock(self, identity):
         from lib.bailian_speech import operation_lock
         return operation_lock(self._path(identity).with_suffix(".lock"))
+
+    def _cache_audio(self, job):
+        """Keep a private, verified result; repair only from the original receipt."""
+        from backlot.studio_avatar import download_result
+        if not re.fullmatch(r"localtts-[a-f0-9]{32}", job["id"]):
+            raise WorkError("原配音结果编号无效")
+        target = self.root / (job["id"] + ".wav")
+        expected = job.get("audio_sha256")
+        try:
+            digest = _audio_digest(target)
+        except (OSError, ValueError, wave.Error, EOFError):
+            digest = None
+        if not digest or (expected and digest != expected):
+            temporary = target.with_suffix("." + uuid4().hex + ".wav")
+            try:
+                download_result(job["audio_url"], temporary)
+                digest = _audio_digest(temporary)
+                if expected and digest != expected:
+                    raise ValueError("original result changed")
+                temporary.chmod(0o600)
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+                temporary.with_suffix(temporary.suffix + ".part").unlink(missing_ok=True)
+        target.chmod(0o600)
+        job.update(audio_path=str(target), audio_sha256=digest)
+        return target
+
+    def cached_audio(self, intent_id):
+        """Playback cannot quote, confirm or submit a TTS request."""
+        with _playback_lock(str(self._path(intent_id))), self._lock(intent_id):
+            job = self._read(intent_id)
+            if job["status"] != "succeeded":
+                raise WorkError("原试听尚未保存，请查询原试听任务")
+            before = dict(job)
+            try:
+                path = self._cache_audio(job)
+            except Exception:
+                raise WorkError("原试听缓存暂时无法读取或恢复，请稍后重试播放；不会重新生成或收费") from None
+            if job != before:
+                self._write(intent_id, job)
+            return path
 
     def quote(self, model, inputs, project_ref=""):
         from backlot import studio_personal_voice as personal
@@ -206,25 +263,25 @@ class SystemVoiceClient:
                     job.update(status="submission_unknown", message="原配音提交或用量结果不明，请核对原调用；不会重复提交")
                 self._write(intent_id, job)
             if job["status"] == "accepted":
-                from backlot.studio_avatar import download_result
-                target = self.root / (job["id"] + ".wav")
                 try:
-                    if not target.exists():
-                        download_result(job["audio_url"], target)
-                    with wave.open(str(target), "rb") as audio:
-                        if audio.getnframes() <= 0 or target.stat().st_size > 25 * 1024 * 1024:
-                            raise ValueError("invalid audio")
-                    job.update(status="succeeded", audio_path=str(target))
+                    self._cache_audio(job)
+                    job.update(status="succeeded")
                     job.pop("message", None)
                     self._write(intent_id, job)
                 except Exception:
-                    target.unlink(missing_ok=True)
                     job["message"] = "配音已生成，下载或音频校验未完成；恢复原任务会复用结果"
                     self._write(intent_id, job)
             value = {k: job[k] for k in ("id", "status", "usage", "estimated_cost_micros", "message") if k in job}
             value.update(model=data["quote"]["model"], billing_source="local-provider", settlement_status="supplier_bill_pending")
             if job["status"] == "succeeded":
-                value["result"] = {"audio_base64": base64.b64encode(Path(job["audio_path"]).read_bytes()).decode()}
+                try:
+                    before = dict(job)
+                    path = self._cache_audio(job)
+                    if job != before:
+                        self._write(intent_id, job)
+                except Exception:
+                    raise WorkError("原配音缓存暂时无法恢复，请查询原任务；不会重新提交或收费") from None
+                value["result"] = {"audio_base64": base64.b64encode(path.read_bytes()).decode()}
             return value
 
     def wait(self, intent_id, timeout=300):

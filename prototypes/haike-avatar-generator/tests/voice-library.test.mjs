@@ -1,12 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canSubmitFreeClone, filterVoices, operationState, referencePresentation } from '../src/voice-model.js';
+import { auditionPresentation, canSubmitFreeClone, filterVoices, operationState, referencePresentation } from '../src/voice-model.js';
 import { validateInputs } from '../src/generator-model.js';
 
 const voices = [
   { id: 'voice_system', name: '海客口播', scope: 'system', language: 'zh', tags: ['清晰'], status: 'ready' },
   { id: 'voice_personal', name: '我的英语', scope: 'personal', language: 'en', tags: [], status: 'ready' },
 ];
+test('首次生成与免费缓存播放有明确区别，缓存试听不依赖供应商在线', () => {
+  const voice={status:'ready',scope:'personal',sample_status:'missing'};
+  assert.equal(auditionPresentation(voice).label,'生成试听');
+  assert.match(auditionPresentation(voice).hint,/首次生成并保存/);
+  const cached={...voice,sample_status:'succeeded',status:'unavailable',preview_ready:false};
+  assert.equal(auditionPresentation(cached).label,'播放试听');
+  assert.match(auditionPresentation(cached).hint,/重复试听免费/);
+  assert.equal(auditionPresentation(cached,true).label,'暂停');
+  assert.equal(auditionPresentation({...voice,sample_status:'accepted'}).label,'生成中');
+  assert.equal(auditionPresentation({...voice,sample_status:'submission_unknown'}).label,'查询试听');
+});
 test('系统与个人音色分别筛选，搜索名称、语言和标签', () => {
   assert.deepEqual(filterVoices(voices, { scope: 'system', search: '清晰' }).map(v => v.id), ['voice_system']);
   assert.deepEqual(filterVoices(voices, { scope: 'personal', language: 'en' }).map(v => v.id), ['voice_personal']);

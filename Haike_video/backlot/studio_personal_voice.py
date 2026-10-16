@@ -14,7 +14,6 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from pathlib import Path
 
 import requests
 
@@ -326,10 +325,11 @@ def preview_state(studio, data):
 
 def preview_quote(studio, voice_id):
     with _lock(studio, voice_id):
-        data = resolve(studio, voice_id)
+        data = _read(studio, voice_id)
         state = preview_state(studio, data)
         if state["status"] == "succeeded":
             return {"cached": True}
+        resolve(studio, voice_id)
         if data.get("sample_quote"):
             record = studio.client()._read(data["sample_quote"])
             if record.get("intent_id"):
@@ -343,14 +343,13 @@ def preview_quote(studio, voice_id):
 
 
 def sample(studio, voice_id):
-    data = resolve(studio, voice_id)
+    data = _read(studio, voice_id)
     state = preview_state(studio, data)
     if state["status"] != "succeeded":
         raise WorkError("此音色尚无合成试听，请先生成试听")
-    path = Path(state["audio_path"])
-    if path.parent != studio.client().root or not path.is_file() or path.is_symlink():
-        raise WorkError("原试听音频不可用，请恢复原文件；不会重新生成")
-    return path
+    client = studio.client()
+    record = client._read(data["sample_quote"])
+    return client.cached_audio(record["intent_id"])
 
 
 def rename(studio, voice_id, name):
