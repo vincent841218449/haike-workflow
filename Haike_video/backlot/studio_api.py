@@ -129,6 +129,15 @@ async def voice_preview_quote(request: Request, data: dict = Body(...)):
     return await asyncio.to_thread(call, studio_voices.quote_preview, studio(request), data.get("voice_id"))
 
 
+@router.post("/api/studio/voices/{voice_id}/audition")
+async def voice_audition(voice_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    if data:
+        raise HTTPException(400, "试听使用固定样例，无需填写文案或费用")
+    from backlot import studio_voice_audition
+    return await asyncio.to_thread(call, studio_voice_audition.prepare, studio(request), voice_id)
+
+
 @router.get("/api/studio/voice-operations")
 async def voice_operations(request: Request):
     from backlot import studio_voices

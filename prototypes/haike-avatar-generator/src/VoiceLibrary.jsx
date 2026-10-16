@@ -74,7 +74,7 @@ function CloneForm({ ready, busy, onNext, onCancel, error, initialData }) {
     {referenceSrc && <div className="voice-reference"><span>{prepared.label}</span><audio key={referenceSrc} controls preload="metadata" src={referenceSrc}/></div>}
     <label className="checkbox-row voice-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy}/>我拥有此声音素材的使用授权，同意将录音提交阿里百炼用于音色克隆。</label>
     <Notice message={localError || error} error/>
-    <p className="helper">克隆免费，完成后即可用于口播。首次合成试听及视频配音按页面报价执行。</p>
+    <p className="helper">克隆和固定样例试听免费，完成后即可选用。视频配音费用在制作时确认。</p>
     <div className="voice-form-actions"><Button type="button" onClick={onCancel} disabled={busy}>返回音色库</Button><Button type="submit" variant="primary" loading={busy} disabled={!ready || !name.trim() || !sample || !consent || uploading || busy}>开始克隆<ArrowRight size={16}/></Button></div>
   </form>;
 }
@@ -113,10 +113,11 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
     }
     setBusy(true);
     try {
-      const result = await api('/api/studio/voices/preview-quotes', { voice_id: voice.id });
-      if (result.cached) { await current.reload(); setPendingPlay(voice.id); }
-      else if (!result.operation) { setMessage(operationState(result.status)); }
-      else { setOperation(result.operation); setView('preview-confirm'); }
+      const result = await api(`/api/studio/voices/${voice.id}/audition`, {});
+      if (activeStates.has(result.status) || result.status === 'succeeded') {
+        setPendingPlay(voice.id); setMessage(result.status === 'succeeded' ? '' : '正在准备免费试听，完成后自动播放…');
+      } else { setPendingPlay(''); setMessage(operationState(result.status)); }
+      await current.reload();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -132,7 +133,7 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
   useEffect(() => {
     if (!pendingPlay) return;
     const ready = voices.find(v => v.id === pendingPlay && v.sample_status === 'succeeded');
-    if (ready) { setPendingPlay(''); setPlayerVoice(ready); setPlayingId(ready.id); setMessage('试听已保存，重复播放不再调用配音服务。'); }
+    if (ready) { setPendingPlay(''); setPlayerVoice(ready); setPlayingId(ready.id); setMessage('免费试听已准备好，音频已保存，可随时播放。'); }
   }, [voices, pendingPlay]);
   useEffect(() => {
     if (!pendingClone) return;
@@ -155,7 +156,7 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
       const value = await api('/api/studio/voices/clone-quotes', data);
       setOperation(value);
       // The form already states the zero price and carries the voice consent.
-      // A paid/changed quote must still use the explicit price confirmation.
+      // A changed clone quote must still use the explicit price confirmation.
       if (canSubmitFreeClone(value)) {
         await submitOperation(value);
       } else setView('clone-confirm');
@@ -171,8 +172,7 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
   }
   async function submitOperation(value) {
     await api(`/api/studio/voice-operations/${value.id}/confirm`, { confirmed: true });
-    if (value.kind === 'sample') { setPendingPlay(value.voice_id); setMessage('试听任务已提交，完成后即可播放。'); }
-    else { setScope('personal'); setSearch(''); setLanguage('all'); setCloneDraft(null); setPendingClone(value.id); setMessage('正在克隆你的声音，可以继续浏览。完成后自动加入个人音色库。'); }
+    setScope('personal'); setSearch(''); setLanguage('all'); setCloneDraft(null); setPendingClone(value.id); setMessage('正在克隆你的声音，可以继续浏览。完成后自动加入个人音色库。');
     setView('browse'); await current.reload();
   }
   async function query(item) {
@@ -196,14 +196,14 @@ export function VoiceLibrary({ picker = false, library, selectedId, onChoose, on
     {!current.loading && !current.data && <EmptyState icon={AudioLines} title="音色库暂时无法连接" action={<Button href="/settings">检查 API 设置<ArrowRight size={16}/></Button>}>连接海客Key后，系统音色和你的个人音色会自动同步。</EmptyState>}
     {current.loading ? <div className="voice-loading" role="status"><AudioLines size={25}/><p>正在读取你的音色库…</p></div> : current.data && (filtered.length ? <VoiceGrid busy={busy} items={filtered} selectedId={selectedId} playingId={playingId} onPlay={play} onChoose={select} onRename={voice => { setEditing(voice); setNewName(voice.name); setView('rename'); setError(''); }}/> : <EmptyState icon={Mic2} title={search || language !== 'all' ? '没有找到匹配的音色' : scope === 'personal' ? '让视频拥有你自己的声音' : '还没有可用的系统音色'} action={scope === 'personal' && !search && <Button disabled={!current.data.clone_ready} onClick={() => setView('clone')}><Plus size={16}/>克隆第一个音色</Button>}>{search || language !== 'all' ? '换一个关键词，或清除语言筛选后再试。' : scope === 'personal' ? '上传一段清晰录音，克隆后的音色只属于你的账户，可反复试听和用于口播。' : '管理员发布可用音色后，会显示在这里。'}</EmptyState>)}
     {current.operations.filter(item => item.job?.status !== 'succeeded').length > 0 && <section className="voice-jobs" aria-live="polite"><h3>音色任务</h3>{current.operations.filter(item => item.job?.status !== 'succeeded').map(item => <article key={item.id}><Clock3 size={18}/><div><strong>{item.name} · {item.kind === 'clone' ? '音色克隆' : '生成试听'}</strong><p>{item.job?.message || operationState(item.job?.status)}</p></div><Button disabled={busy} onClick={() => query(item)}>刷新进度</Button></article>)}</section>}
-    {playerVoice && <div className="voice-player"><span className="voice-mark"><Headphones size={20}/></span><div><strong>{playerVoice.name}</strong><small>{playerVoice.sample_kind==='official'?'免费试听 · 自动使用本机缓存':'已缓存的合成试听 · 重复播放免费'}</small></div><audio key={playerVoice.id} ref={player} controls preload="auto" src={playerVoice.sample_url} onPlay={() => { if (activePlayer && activePlayer !== player.current) activePlayer.pause(); activePlayer = player.current; setPlayingId(playerVoice.id); }} onPause={() => setPlayingId('')} onEnded={() => setPlayingId('')} onError={() => { setPlayingId(''); setError('原试听暂时无法播放，请再次点击“播放试听”恢复原音频，不会重新生成或收费。'); }}/></div>}
+    {playerVoice && <div className="voice-player"><span className="voice-mark"><Headphones size={20}/></span><div><strong>{playerVoice.name}</strong><small>{playerVoice.sample_kind==='official'?'免费试听 · 自动使用本机缓存':'免费试听 · 已保存到本机'}</small></div><audio key={playerVoice.id} ref={player} controls preload="auto" src={playerVoice.sample_url} onPlay={() => { if (activePlayer && activePlayer !== player.current) activePlayer.pause(); activePlayer = player.current; setPlayingId(playerVoice.id); }} onPause={() => setPlayingId('')} onEnded={() => setPlayingId('')} onError={() => { setPlayingId(''); setError('原试听暂时无法播放，请再次点击“试听”恢复原音频，不会重新生成或收费。'); }}/></div>}
   </>;
-  const confirmation = <div className="voice-confirm"><span className="voice-mark"><CheckCircle2 size={27}/></span><h3>{operation?.kind === 'clone' ? '创建你的专属音色' : '生成一次，反复试听'}</h3><dl className="summary-list"><div><dt>音色</dt><dd>{operation?.name}</dd></div><div><dt>{operation?.kind === 'sample' ? '仅首次生成费用上限' : '本次费用上限'}</dt><dd className="voice-price">{money(operation?.quote?.max_charge_micros)}</dd></div><div><dt>存放位置</dt><dd>{operation?.kind === 'clone' ? '个人音色库 · 仅你可见' : '本机试听缓存 · 仅你可见'}</dd></div></dl>{operation?.kind === 'sample' ? <><p className="helper">{current.data?.sample_text}</p><Notice message="仅首次生成按本次报价结算。音频自动保存，之后播放、刷新页面和重启服务均复用缓存，不会重新收费。"/></> : <Notice message="创建音色免费。合成试听和视频配音分别核对费用，克隆完成不会自动发起收费试听。"/>}<Notice message={error} error/><div className="voice-form-actions"><Button disabled={busy} onClick={() => setView(operation?.kind === 'clone' ? 'clone' : 'browse')}>返回修改</Button><Button variant="primary" loading={busy} onClick={confirm}>{operation?.kind === 'clone' ? '确认并克隆' : '生成并保存试听'}<ArrowRight size={16}/></Button></div></div>;
+  const confirmation = <div className="voice-confirm"><span className="voice-mark"><CheckCircle2 size={27}/></span><h3>创建你的专属音色</h3><dl className="summary-list"><div><dt>音色</dt><dd>{operation?.name}</dd></div><div><dt>本次克隆费用上限</dt><dd className="voice-price">{money(operation?.quote?.max_charge_micros)}</dd></div><div><dt>存放位置</dt><dd>个人音色库 · 仅你可见</dd></div></dl><Notice message="固定样例试听免费，视频配音费用在制作时确认。"/><Notice message={error} error/><div className="voice-form-actions"><Button disabled={busy} onClick={() => setView('clone')}>返回修改</Button><Button variant="primary" loading={busy} onClick={confirm}>确认并克隆<ArrowRight size={16}/></Button></div></div>;
   const renameForm = <form className="voice-clone-form" onSubmit={rename}><Field label="音色名称"><input autoFocus required maxLength={48} value={newName} onChange={e => setNewName(e.target.value)}/></Field><p className="helper">修改名称不会重新克隆，也不会改变已经提交的视频。</p><Notice message={error} error/><div className="voice-form-actions"><Button type="button" onClick={closeView}>取消</Button><Button type="submit" variant="primary" loading={busy} disabled={!newName.trim()}>保存名称</Button></div></form>;
   const form = view === 'clone' ? <CloneForm ready={current.data?.clone_ready} busy={busy} onNext={clone} onCancel={closeView} error={error} initialData={cloneDraft}/> : view === 'rename' ? renameForm : confirmation;
   const title = view === 'browse' ? '选择音色' : view === 'clone' ? '克隆音色' : view === 'rename' ? '重命名音色' : '确认音色操作';
   if (picker) return <Dialog title={title} description={view === 'browse' ? current.data?.mode === 'gateway_default' ? '当前可选择服务已配置的默认配音，独立试听尚未启用。' : '试听系统音色和你的个人音色，选中后用于当前口播。' : undefined} wide={view === 'browse'} busy={busy} onClose={onClose}><div className="voice-library voice-picker">{view === 'browse' ? browse : form}</div></Dialog>;
-  return <><main className="workspace voice-workspace"><Heading title="资源库" helper="管理熟悉的声音，让每一次创作都更自然。"/><section className="surface voice-library"><div className="voice-library-heading"><span className="voice-mark"><AudioLines size={24}/></span><div><h2>音色库</h2><p>{current.data?.clone_route === 'local-personal-voice-clone' ? '系统音色随时选用，专属音色保存在本机，按你的海客账户隔离。' : '系统音色随时选用，专属音色跟随你的海客账户。'}</p></div><span className="voice-library-tip"><Headphones size={15}/>{current.data?.mode === 'bailian_system' ? '系统音色 · 免费试听' : current.data?.mode === 'gateway_default' ? '当前使用默认配音' : '所有音色均支持试听'}</span></div>{browse}</section></main>{view !== 'browse' && <Dialog title={title} busy={busy} onClose={closeView}><div className="voice-library">{form}</div></Dialog>}</>;
+  return <><main className="workspace voice-workspace"><Heading title="资源库" helper="管理熟悉的声音，让每一次创作都更自然。"/><section className="surface voice-library"><div className="voice-library-heading"><span className="voice-mark"><AudioLines size={24}/></span><div><h2>音色库</h2><p>{current.data?.clone_route === 'local-personal-voice-clone' ? '系统音色随时选用，专属音色保存在本机，按你的海客账户隔离。' : '系统音色随时选用，专属音色跟随你的海客账户。'}</p></div><span className="voice-library-tip"><Headphones size={15}/>{current.data?.mode === 'gateway_default' ? '当前使用默认配音' : '免费试听 · 自动缓存'}</span></div>{browse}</section></main>{view !== 'browse' && <Dialog title={title} busy={busy} onClose={closeView}><div className="voice-library">{form}</div></Dialog>}</>;
 }
 
 export function Resources() { return <VoiceLibrary/>; }

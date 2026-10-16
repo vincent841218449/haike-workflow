@@ -7,16 +7,16 @@ const voices = [
   { id: 'voice_system', name: '海客口播', scope: 'system', language: 'zh', tags: ['清晰'], status: 'ready' },
   { id: 'voice_personal', name: '我的英语', scope: 'personal', language: 'en', tags: [], status: 'ready' },
 ];
-test('首次生成与免费缓存播放有明确区别，缓存试听不依赖供应商在线', () => {
+test('试听统一一个按钮，首次自动准备且不提示费用，缓存可离线播放', () => {
   const voice={status:'ready',scope:'personal',sample_status:'missing'};
-  assert.equal(auditionPresentation(voice).label,'生成试听');
-  assert.match(auditionPresentation(voice).hint,/首次生成并保存/);
+  assert.equal(auditionPresentation(voice).label,'试听');
+  assert.match(auditionPresentation(voice).hint,/免费试听/);
   const cached={...voice,sample_status:'succeeded',status:'unavailable',preview_ready:false};
-  assert.equal(auditionPresentation(cached).label,'播放试听');
-  assert.match(auditionPresentation(cached).hint,/重复试听免费/);
+  assert.equal(auditionPresentation(cached).label,'试听');
+  assert.match(auditionPresentation(cached).hint,/免费试听/);
   assert.equal(auditionPresentation(cached,true).label,'暂停');
-  assert.equal(auditionPresentation({...voice,sample_status:'accepted'}).label,'生成中');
-  assert.equal(auditionPresentation({...voice,sample_status:'submission_unknown'}).label,'查询试听');
+  assert.equal(auditionPresentation({...voice,sample_status:'accepted'}).label,'准备中');
+  assert.equal(auditionPresentation({...voice,sample_status:'submission_unknown'}).label,'试听');
 });
 test('系统与个人音色分别筛选，搜索名称、语言和标签', () => {
   assert.deepEqual(filterVoices(voices, { scope: 'system', search: '清晰' }).map(v => v.id), ['voice_system']);
@@ -38,7 +38,7 @@ test('结果未知明确引导查询原任务，不提示重新克隆', () => {
   assert.match(operationState('submission_unknown'), /查询原任务/);
   assert.doesNotMatch(operationState('submission_unknown'), /重新创建|重新克隆/);
 });
-test('免费克隆在表单确认后一次提交；收费试听及未知报价保留费用确认', () => {
+test('自动克隆只接受明确零价克隆，试听使用独立的一键流程', () => {
   const operation={kind:'clone',quote:{model:'haike/voice-clone',max_charge_micros:'0'}};
   assert.equal(canSubmitFreeClone(operation),true);
   assert.equal(canSubmitFreeClone({...operation,kind:'sample'}),false);

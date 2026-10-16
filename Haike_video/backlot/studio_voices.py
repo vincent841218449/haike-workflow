@@ -148,7 +148,7 @@ def _get(studio, operation_id):
 
 
 def public(data):
-    return {k: data.get(k) for k in ("id", "kind", "name", "voice_id", "quote", "job", "created_at")}
+    return {k: data.get(k) for k in ("id", "kind", "name", "voice_id", "quote", "job", "created_at", "funding", "customer_charge_micros")}
 
 
 def quote_clone(studio, data):
@@ -232,6 +232,13 @@ def operations(studio):
     items = [json.loads(row[0]) for row in rows if json.loads(row[0]).get("intent")]
     result = []
     for item in items:
+        if item.get("funding") == "service-preview-v1":
+            from backlot import studio_voice_audition
+            try:
+                result.append(studio_voice_audition.refresh(studio, item))
+            except WorkError:
+                result.append(public(item))
+            continue
         if item.get("job", {}).get("retryable") or item.get("job", {}).get("status") not in {"succeeded", "failed", "cancelled", "submission_unknown"}:
             try:
                 result.append(poll(studio, item["id"]))

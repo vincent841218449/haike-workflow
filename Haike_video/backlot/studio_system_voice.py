@@ -173,12 +173,13 @@ class SystemVoiceClient:
         if not own_voice and (model != MODEL or not status(self.studio)["enabled"]):
             return self.remote.quote(model, inputs, project_ref)
         from backlot.studio_voices import _system_catalogue
+        catalogue = _system_catalogue()
         from platform_app.providers import bailian_tts_characters
         config = configuration(self.studio)
         if not config["ready"]:
             raise WorkError("本地配音尚未配置服务凭据，已选音色保留")
         voice = ({"voice": personal.resolve(self.studio, inputs["voice_id"])["provider_voice_id"]} if own_voice
-                 else next((v for v in _system_catalogue().presets() if v["id"] == inputs.get("voice_id")), None))
+                 else next((v for v in catalogue.presets() if v["id"] == inputs.get("voice_id")), None))
         text = inputs.get("text")
         if not voice or not isinstance(text, str) or not text.strip() or len(text) > 5000 or set(inputs) != {"text", "voice_id"}:
             raise WorkError("请选择有效音色并填写1至5,000字文案")

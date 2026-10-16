@@ -2,13 +2,13 @@ export const voiceLabel = voice => ({ zh: '普通话', en: '英语', yue: '粤�
 export function auditionPresentation(voice, playing = false) {
   const cached = voice.sample_status === 'succeeded';
   if (cached) return {
-    label: playing ? '暂停' : '播放试听',
-    hint: voice.sample_kind === 'official' ? `免费试听 · ${voice.sample_cached ? '已缓存' : '自动缓存'}` : '已缓存到本机 · 重复试听免费',
+    label: playing ? '暂停' : '试听',
+    hint: voice.sample_kind === 'official' ? `免费试听 · ${voice.sample_cached ? '已缓存' : '自动缓存'}` : '免费试听 · 已保存到本机',
   };
   if (voice.preview_ready === false || voice.status !== 'ready') return { label: '试听', hint: voice.preview_hint || '当前配音配置不可用' };
-  if (['queued', 'running', 'submitting', 'polling', 'accepted'].includes(voice.sample_status)) return { label: '生成中', hint: '正在生成并保存试听，完成后即可反复播放' };
-  if (voice.sample_status === 'submission_unknown') return { label: '查询试听', hint: '正在核对原试听结果，不会重复生成' };
-  return { label: '生成试听', hint: '首次生成并保存，之后免费试听' };
+  if (['queued', 'running', 'submitting', 'polling', 'accepted'].includes(voice.sample_status)) return { label: '准备中', hint: '正在准备免费试听，完成后自动播放' };
+  if (voice.sample_status === 'submission_unknown') return { label: '试听', hint: '正在核对原试听结果，不会重复生成' };
+  return { label: '试听', hint: '免费试听 · 首次自动准备并保存' };
 }
 export function canSubmitFreeClone(operation) {
   return operation?.kind === 'clone' && operation.quote?.model === 'haike/voice-clone' && operation.quote.max_charge_micros === '0';
