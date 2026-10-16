@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { filterVoices, operationState } from '../src/voice-model.js';
+import { canSubmitFreeClone, filterVoices, operationState } from '../src/voice-model.js';
 import { validateInputs } from '../src/generator-model.js';
 
 const voices = [
@@ -26,4 +26,13 @@ test('已有音频保持免配音，音色库或模型不可用不阻断已有�
 test('结果未知明确引导查询原任务，不提示重新克隆', () => {
   assert.match(operationState('submission_unknown'), /查询原任务/);
   assert.doesNotMatch(operationState('submission_unknown'), /重新创建|重新克隆/);
+});
+test('免费克隆在表单确认后一次提交；收费试听及未知报价保留费用确认', () => {
+  const operation={kind:'clone',quote:{model:'haike/voice-clone',max_charge_micros:'0'}};
+  assert.equal(canSubmitFreeClone(operation),true);
+  assert.equal(canSubmitFreeClone({...operation,kind:'sample'}),false);
+  assert.equal(canSubmitFreeClone({...operation,quote:{...operation.quote,max_charge_micros:'100'}}),false);
+  assert.equal(canSubmitFreeClone({...operation,quote:{...operation.quote,max_charge_micros:undefined}}),false);
+  assert.equal(canSubmitFreeClone(null),false);
+  assert.doesNotMatch(operationState('failed'),/已释放|已退款/);
 });

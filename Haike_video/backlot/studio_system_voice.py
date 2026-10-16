@@ -1,6 +1,6 @@
 """Opt-in local system-voice production; remote account and ledger stay remote.
 
-Only the seven curated presets use this route. Quotes freeze voice, model,
+The curated presets and explicitly local personal voices use this route. Quotes freeze voice, model,
 credential identity and estimated supplier cost. A durable intent is saved
 before HTTP submission; an interrupted submission can never submit again.
 """
@@ -87,6 +87,9 @@ class SystemVoiceClient:
             value = {**value, "items": items + [{"id": MODEL, "model": MODEL,
                 "name": "系统音色配音", "capability": "tts", "status": "available",
                 "billing_source": "local-provider"}]}
+            if not any(v.get("model", v.get("id")) == "haike/cosyvoice" and v.get("status") == "available" for v in items):
+                value["items"].append({"id": "haike/cosyvoice", "model": "haike/cosyvoice",
+                    "name": "个人音色配音", "capability": "tts", "status": "available", "billing_source": "local-provider"})
         return value
 
     def _path(self, identity):
@@ -108,21 +111,24 @@ class SystemVoiceClient:
         return operation_lock(self._path(identity).with_suffix(".lock"))
 
     def quote(self, model, inputs, project_ref=""):
-        if model != MODEL or not status(self.studio)["enabled"]:
+        from backlot import studio_personal_voice as personal
+        own_voice = model == personal.MODEL and personal.is_local(inputs.get("voice_id"))
+        if not own_voice and (model != MODEL or not status(self.studio)["enabled"]):
             return self.remote.quote(model, inputs, project_ref)
         from backlot.studio_voices import _system_catalogue
         from platform_app.providers import bailian_tts_characters
         config = configuration(self.studio)
         if not config["ready"]:
             raise WorkError("本地配音尚未配置服务凭据，已选音色保留")
-        voice = next((v for v in _system_catalogue().presets() if v["id"] == inputs.get("voice_id")), None)
+        voice = ({"voice": personal.resolve(self.studio, inputs["voice_id"])["provider_voice_id"]} if own_voice
+                 else next((v for v in _system_catalogue().presets() if v["id"] == inputs.get("voice_id")), None))
         text = inputs.get("text")
         if not voice or not isinstance(text, str) or not text.strip() or len(text) > 5000 or set(inputs) != {"text", "voice_id"}:
-            raise WorkError("请选择有效系统音色并填写1至5,000字文案")
+            raise WorkError("请选择有效音色并填写1至5,000字文案")
         identity = "localvoice-" + uuid4().hex
         characters = bailian_tts_characters(text)
         maximum = (characters * COST_PER_10000_MICROS + 9999) // 10000
-        quote = {"id": identity, "model": MODEL, "execution_route": ROUTE,
+        quote = {"id": identity, "model": model, "execution_route": ROUTE,
                  "billing_source": "local-provider", "max_charge_micros": str(maximum),
                  "quoted_usage": {"characters": characters},
                  "price": {"currency": "CNY", "cost_per_10000_micros": str(COST_PER_10000_MICROS),
@@ -216,7 +222,7 @@ class SystemVoiceClient:
                     job["message"] = "配音已生成，下载或音频校验未完成；恢复原任务会复用结果"
                     self._write(intent_id, job)
             value = {k: job[k] for k in ("id", "status", "usage", "estimated_cost_micros", "message") if k in job}
-            value.update(model=MODEL, billing_source="local-provider", settlement_status="supplier_bill_pending")
+            value.update(model=data["quote"]["model"], billing_source="local-provider", settlement_status="supplier_bill_pending")
             if job["status"] == "succeeded":
                 value["result"] = {"audio_base64": base64.b64encode(Path(job["audio_path"]).read_bytes()).decode()}
             return value
