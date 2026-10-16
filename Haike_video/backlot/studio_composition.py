@@ -46,14 +46,24 @@ def _compose(folder, draft, video, audio, duration, cues, storyboard, *, adapter
         studio = Studio(folder.parents[1].parent)
         scenes = []
         for scene in storyboard["scenes"]:
+            if scene.get('presentation')=='text':
+                if adapter!='studio-avatar-v1' or scene.get('asset'):raise WorkError('文字镜头不能替换所选原生模板或冒充素材')
+                scenes.append({'start':scene['start'],'end':scene['end'],'text':scene['text'],'label':scene['label'],'src':'','kind':'text','generated':False})
+                continue
             source = studio.asset(scene["asset"]["id"], draft["id"])
             if sha(source) != scene["asset_sha256"]: raise WorkError("分镜素材已变化，请恢复原素材")
             offset=scene["asset"].get("offset",0)
-            if source.suffix.lower() in {".mp4",".mov"} and offset+scene["end"]-scene["start"]>media_probe(source)["duration"]+.05:
+            source_info=media_probe(source) if source.suffix.lower() in {'.mp4','.mov'} else None
+            if source_info and offset+scene["end"]-scene["start"]>source_info["duration"]+.05:
                 raise WorkError("分镜视频片段时长不足，请调整素材起点或补充素材；没有循环或拉伸片段")
             name = scene["id"] + source.suffix; shutil.copy2(source, public / name)
+            from backlot.studio_media_layout import framing
+            frame_policy=framing(scene.get('framing') or {'role':'footage' if source_info else 'evidence'})
             scenes.append({"start": scene["start"], "end": scene["end"], "text": scene["text"], "label": scene["label"], "src": name,
-                           "kind": "video" if source.suffix.lower() in {".mp4", ".mov"} else "image", "offset":offset,"generated": scene["asset"].get("provenance", {}).get("generated", False)})
+                           "kind": "video" if source.suffix.lower() in {".mp4", ".mov"} else "image", "offset":offset,
+                           "fit": "cover" if source_info and frame_policy['role']=='footage' else "contain",
+                           "focus":frame_policy['focus'],"aspect":source_info['video']['width']/source_info['video']['height'] if source_info else None,
+                           "generated": scene["asset"].get("provenance", {}).get("generated", False)})
         props["scenes"] = scenes
     atomic_private(folder / "props.json", props)
     source = Path(__file__).resolve().parents[1] / 'templates' / adapter / 'index.tsx'
@@ -65,15 +75,18 @@ def _compose(folder, draft, video, audio, duration, cues, storyboard, *, adapter
     result = VideoCompose().execute({"operation": "render", "output_path": str(raw), "edit_decisions": edits, "asset_manifest": {"assets": []}, "script_text": draft["text"]})
     if not result.success: raise WorkError("本地模板合成未通过，请检查渲染依赖；数字人与音频已保留", "unavailable")
     frames = round(duration * fps)
+    premix = folder / f'{stem}-premix.mp4'
     output = folder / f'{stem}-preview.mp4'
     # Align the AAC container tail to the same final frame clock as the image.
-    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", "apad", "-t", str(frames/fps), "-c:a", "aac", str(output)], capture_output=True, timeout=90)
+    r = subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(raw), "-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", "apad", "-t", str(frames/fps), "-c:a", "aac", str(premix)], capture_output=True, timeout=90)
     if r.returncode: raise WorkError("最终音视频封装失败，渲染文件已保留", "unavailable")
+    from backlot.studio_audio_delivery import normalize
+    audio_delivery=normalize(premix,output)
     info = media_probe(output)
     expected_height = 1080 if landscape else 1440 if not instrument and draft["template_id"].startswith("avatar-template3") else 1920
     expected_width = 1920 if landscape else 1080
     decode = subprocess.run([ffmpeg, "-v", "error", "-i", str(output), "-f", "null", "-"], capture_output=True, timeout=180)
     if decode.returncode or not info.get("audio") or info["video"]["width"] != expected_width or info["video"]["height"] != expected_height or abs(info["duration"] - frames/fps) > .1:
         raise WorkError("成片技术校验未通过，产物保留待核对", "unavailable")
-    atomic_private(folder / "render-result.json", {"template_adapter": adapter, "media": info, "native_render": str(raw), "technical_decode": "passed", "human_review": "pending"})
+    atomic_private(folder / "render-result.json", {"template_adapter": adapter, "media": info, "native_render": str(raw), "technical_decode": "passed", "audio_delivery":audio_delivery, "human_review": "pending"})
     return output

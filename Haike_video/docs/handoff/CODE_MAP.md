@@ -1,12 +1,12 @@
 # 代码地图
 
-更新时间：2026-10-15
+更新时间：2026-10-16
 
 ## 当前工作台V2
 
 - 主服务器backlot/server.py；API路由studio_api.py；底层域模型/Key/资产/草稿/发布日历studio.py。
 - 新前端：仓库根prototypes/haike-avatar-generator/src/{StudioApp,App}.jsx；UI构建backlot/ui/avatar-generator；共享navigation.*和haike-brand.css。
-- 路由：/graphic、/avatar、/resources、/projects、/calendar、/settings。旧工具GET跳新页；旧独立UI已归档移除。workbench.*保留历史项目维护。
+- 路由：/graphic、/avatar、/resources、/tasks、/calendar、/settings；/projects兼容跳转。旧独立UI已归档移除。workbench.*保留历史项目维护。
 - 图文：studio_render.py复用scripts/template_video/build_923.py和_paths.py，参数化safe_v2/9秒/三景、资产指纹、文字边界和FFmpeg完整解码。
 - 口播：studio_avatar.py统一Key报价/预算/持久付费意图/ASR时钟；studio_composition.py和templates/studio-avatar-v1参数化三模板。旧模板3基线不修改。
 - 音色库：studio_voices.py，根api-platform/platform_app/voices.py及import_voices.py；VoiceLibrary.jsx/voice-model.js。合同见根docs/PRODUCT_VOICE_LIBRARY.md。
@@ -38,5 +38,6 @@
 - 前端：tests/generator-model.test.mjs和tests/sites-worker.test.mjs。
 - 动效：tests/backlot/test_studio_motion.py；前端tests/motion.test.mjs、gateway-config.test.mjs；真实队列scripts/studio_motion_smoke.py。产品与验收根docs/PRODUCT_AVATAR_MOTION.md、docs/tasks/2026-10-13-adu-integration.md。
 - 本地四模板合成：scripts/studio_local_smoke.py；证据.backlot/studio-v2-local-smoke/summary.json。
+- 零费模板成片矩阵：scripts/template_render_matrix.py使用隔离正式队列；review_render_matrix.py取实际MP4/帧/声画时长/响度，人工结果另存。studio_audio_delivery.py只复制视频流处理交付声音；根docs/tasks/2026-10-16-template-render-matrix.md。
 - 实际工作台零费图文：.backlot/studio-v2-live-smoke.json，作品待用户审核。
 - 源码检查：根scripts/check.py（Python3.12）；上下文预算：scripts/audit_context_handoff.py。

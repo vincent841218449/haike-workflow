@@ -335,7 +335,7 @@ def test_cached_visual_review_reuses_only_matching_plan_media_and_scene(data,tmp
     folder=tmp_path/'render/ai-requests';folder.mkdir(parents=True)
     atomic_private(folder.parent/'storyboard.json',{'draft_fingerprint':'original'})
     path=folder/'one.mp4';path.write_bytes(b'reviewed-video')
-    atomic_private(folder.parent/'pexels-material-review.json',{'one':{'review_policy':2,'sha256':sha(path),
+    atomic_private(folder.parent/'pexels-material-review.json',{'one':{'review_policy':3,'sha256':sha(path),
         'draft_fingerprint':'original','filename':path.name,'suitable_scene_ids':['scene-2'],
         'provenance':{'source':'pexels','source_url':'https://example.test/one'}}})
     source=Sources(s,d,SimpleNamespace(folder=folder),None)
@@ -479,3 +479,43 @@ def test_pipeline_resumes_completed_scenes_without_researching(data,tmp_path,mon
     with pytest.raises(WorkError):produce(s,d,tmp_path/'render',cues,3.2,None)
     result=produce(s,d,tmp_path/'render',cues,3.2,None)
     assert result['status']=='ready' and calls==['scene-1','scene-2','scene-2']
+
+
+def test_ready_storyboard_rerenders_offline_but_still_verifies_inputs(data,tmp_path,monkeypatch):
+    import hashlib
+    from backlot.work_catalog import sha
+    s,d,cues,body=data
+    buffer=io.BytesIO();Image.new('RGB',(300,300)).save(buffer,format='PNG')
+    asset=s.save_asset(d['id'],'existing.png','image',buffer.getvalue())
+    plan={'scenes':validate_plan(body,d,cues,3.2),'duration':3.2,'status':'ready',
+          'draft_fingerprint':hashlib.sha256(json.dumps(d,sort_keys=True).encode()).hexdigest()}
+    for scene in plan['scenes']:
+        scene.update(asset=asset,asset_sha256=sha(s.asset(asset['id'],d['id'])))
+    folder=tmp_path/'offline-render';folder.mkdir()
+    atomic_private(folder/'storyboard.json',plan)
+    (s.private/'studio-ai/relay.json').unlink()
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay',lambda *_:pytest.fail('Must not initialize remote AI for existing scenes'))
+    assert produce(s,d,folder,cues,3.2,None)==plan
+    s.asset(asset['id'],d['id']).write_bytes(b'changed-media')
+    with pytest.raises(WorkError,match='素材发生变化'):
+        produce(s,d,folder,cues,3.2,None)
+
+
+def test_explicit_basic_text_scene_needs_no_random_material_and_keeps_source_clock(data,tmp_path,monkeypatch):
+    import hashlib
+    s,d,cues,body=data
+    for scene in body['scenes']:
+        scene.update(presentation='text',query='',illustration_prompt='',reason='本句是提问，使用原文文字卡')
+    scenes=validate_plan(body,d,cues,3.2)
+    folder=tmp_path/'text-render';folder.mkdir()
+    plan={'status':'ready','duration':3.2,'scenes':scenes,'draft_fingerprint':hashlib.sha256(json.dumps(d,sort_keys=True).encode()).hexdigest()}
+    atomic_private(folder/'storyboard.json',plan)
+    (s.private/'studio-ai/relay.json').unlink()
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay',lambda *_:pytest.fail('Text-only rerender must stay offline'))
+    assert produce(s,d,folder,cues,3.2,None)==plan
+    assert ''.join(x['text'] for x in scenes)==d['text']
+    assert [(x['start'],x['end']) for x in scenes]==[(0,1.7),(1.7,3.2)]
+    d['input']['ai']['materials']=[{'id':'required','mode':'must'}]
+    with pytest.raises(WorkError,match='必须使用'):validate_plan(body,d,cues,3.2)
+    d['input']['motion']={'style':'04-A','layout':'portrait'}
+    with pytest.raises(WorkError,match='原生导演'):validate_plan(body,d,cues,3.2)

@@ -300,6 +300,16 @@ def clock_captions(result, duration):
             for s in result["segments"] for w in s["words"]]
 
 
+def source_captions(draft, cues):
+    """Correct ASR display spelling from the supplied script; keep actual cues."""
+    if not cues:return cues
+    from backlot.studio_storyboard import bind_script_ranges, verify_spoken_script
+    verify_spoken_script(draft['text'], cues)
+    units={'scenes':[{'from_cue':i,'to_cue':i,'script_start':0,'script_end':1} for i in range(len(cues))]}
+    rows=bind_script_ranges(units,draft,cues,max_units=3000)['scenes']
+    return [{**cue,'text':draft['text'][row['script_start']:row['script_end']].strip()} for cue,row in zip(cues,rows)]
+
+
 def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     studio = Studio(Path(project_dir).parent)
     if request["key_identity"] != key_identity(studio): raise WorkError("API Key已改变；恢复付费任务前请恢复原账户连接")
@@ -407,6 +417,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             if request.get("workflow_version", 1) >= 2:
                 from backlot.studio_storyboard import verify_spoken_script
                 verify_spoken_script(draft["text"], clock_cues)
+            cues = source_captions(draft, cues)
             publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
         if needs_ai: publish_progress("理解分镜并匹配用户与网络素材")

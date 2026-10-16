@@ -105,8 +105,36 @@ def test_unreceipted_or_changed_video_cannot_be_stamped_as_current_native_output
     assert not m.verified_candidate(candidate,tmp_path,report,ref)
     atomic_private(tmp_path/'qa.json',{'presentation':{'template_ref':ref,'plan_sha256':sha(plan),'output_sha256':sha(candidate)}})
     assert m.verified_candidate(candidate,tmp_path,report,ref)
+    # Delivery loudness may change AAC bytes; the official render remains a
+    # separately frozen source and must not trigger a second full render.
+    atomic_private(tmp_path/'qa.json',{'presentation':{'template_ref':ref,'plan_sha256':sha(plan),
+        'output_sha256':'normalized-delivery','render_source_sha256':sha(candidate)}})
+    assert m.verified_candidate(candidate,tmp_path,report,ref)
     candidate.write_bytes(b'different-video')
     assert not m.verified_candidate(candidate,tmp_path,report,ref)
+
+
+def test_native_review_covers_both_official_preview_layers_and_real_still_bytes(tmp_path):
+    instance=tmp_path/'instance';project=instance/'project';engineering=project/'project';engineering.mkdir(parents=True)
+    frame=engineering/'stills/frame.png';frame.parent.mkdir();frame.write_bytes(b'actual-rendered-frame')
+    code=engineering/'scene.js';code.write_text('frozen-official-scene')
+    atomic_private(instance/'haike-workflow.json',{'workflow':'native'})
+    inner={'schema':'motiongit-preview/1','reviewed':False,'projectHashes':{'scene.js':sha(code)},
+        'stills':[{'path':'stills/frame.png','sha256':sha(frame)}]}
+    atomic_private(engineering/'preview.json',inner)
+    outer={'reviewed':False,'stills':[{'path':'project/stills/frame.png','sha256':sha(frame)}]}
+    atomic_private(project/'preview.json',outer)
+    atomic_private(instance/'visual-review.json',{'approved':True,'issues':[],'preview_sha256':sha(project/'preview.json')})
+    m.visual_review(None,{},instance)
+    assert json.loads((engineering/'preview.json').read_text())['reviewed'] is True
+    missing=json.loads((engineering/'preview.json').read_text());missing.pop('projectHashes')
+    atomic_private(engineering/'preview.json',missing)
+    with pytest.raises(WorkError,match='工程指纹'):
+        m.visual_review(None,{},instance)
+    atomic_private(engineering/'preview.json',inner)
+    frame.write_bytes(b'changed-after-preview')
+    with pytest.raises(WorkError,match='预览图片'):
+        m.visual_review(None,{},instance)
 
 
 def test_long_timeline_review_samples_every_scene_including_the_final_ones():

@@ -9,6 +9,18 @@ from backlot.studio_avatar import key_identity, run_avatar
 from backlot.work_catalog import WorkError
 
 
+def test_caption_spelling_uses_original_script_without_changing_speech_clock():
+    from backlot.studio_avatar import source_captions
+    draft={'text':'各位老板，我问一个问题。心里想下就行。去年大年三十，你在哪？'}
+    cues=[{'startMs':0,'endMs':2900,'text':'各位老板,我问一个问题。'},
+          {'startMs':3500,'endMs':4560,'text':'心理想像就行。'},
+          {'startMs':5400,'endMs':7300,'text':'去年大年三十,你在哪?'}]
+    corrected=source_captions(draft,cues)
+    assert [c['text'] for c in corrected]==['各位老板，我问一个问题。','心里想下就行。','去年大年三十，你在哪？']
+    assert [(c['startMs'],c['endMs']) for c in corrected]==[(c['startMs'],c['endMs']) for c in cues]
+    with pytest.raises(WorkError):source_captions({'text':'这是完全不同的语音内容，不是这次口播。'},cues)
+
+
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     studio = Studio(tmp_path / 'projects')

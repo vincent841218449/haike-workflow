@@ -456,6 +456,30 @@ def visual_review(studio,draft,instance):
         if not isinstance(review,dict) or type(review.get('approved')) is not bool or not isinstance(review.get('issues'),list): raise WorkError('内部画面核验结果无效','template_incompatible')
         review.update(preview_sha256=fingerprint,scope='sampled-rendered-frames',listened=False);atomic_private(receipt,review)
     if not review.get('approved'): raise WorkError('原生画面需要内部修正：'+str(review.get('issues'))[:250], 'template_incompatible')
+    workflow=instance/'haike-workflow.json'
+    if workflow.is_file() and json.loads(workflow.read_text()).get('workflow')=='native':
+        # The split-root native runner retains its own preview gate. Propagate
+        # the same inspected images only after verifying both sets of bytes.
+        inner_root=project/'project';inner_path=inner_root/'preview.json'
+        inner=json.loads(inner_path.read_text());outer=json.loads(path.read_text())
+        def actual_stills(root,data):
+            result={}
+            for name,identity in preview_stills(data).items():
+                frame=(root/name).resolve()
+                if not frame.is_relative_to(root.resolve()) or not frame.is_file() or sha(frame)!=identity:
+                    raise WorkError('原生预览图片已改变，需重新核验','template_mismatch')
+                result[str(frame)]=identity
+            return result
+        if not actual_stills(inner_root,inner) or actual_stills(inner_root,inner)!=actual_stills(project,outer):
+            raise WorkError('内外层预览图片不一致，不能沿用审片','template_mismatch')
+        hashes=inner.get('projectHashes')
+        if not isinstance(hashes,dict) or not hashes:
+            raise WorkError('原生预览缺少工程指纹，需重新生成预览','template_mismatch')
+        for name,identity in hashes.items():
+            source=(inner_root/name).resolve()
+            if not source.is_relative_to(inner_root.resolve()) or not source.is_file() or sha(source)!=identity:
+                raise WorkError('原生预览工程已改变，需重新核验','template_mismatch')
+        inner['reviewed']=True;atomic_private(inner_path,inner)
     preview=json.loads(path.read_text());preview['reviewed']=True
     atomic_private(path,preview)
     # The stamp changes the preview file, not its bound project/still hashes.
@@ -505,15 +529,18 @@ def finish(studio,draft,folder,instance,*,on_progress=None):
         raise WorkError('原生成片的声画或时长未通过，原工程保留','template_incompatible')
     ffmpeg,_=resolve_ffmpeg_pair();check=subprocess.run([ffmpeg,'-v','error','-i',str(candidate),'-f','null','-'],capture_output=True,timeout=300)
     if check.returncode: raise WorkError('原生成片完整解码失败，工程保留','template_incompatible')
-    output=folder/'motion-preview.mp4';shutil.copy2(candidate,output)
+    output=folder/'motion-preview.mp4'
+    from backlot.studio_audio_delivery import normalize
+    audio_delivery=normalize(candidate,output)
+    info=media_probe(output)
     presentation={'id':f"adu:{STYLE}:portrait",'name':'仪器台演示 · 完整版','style':STYLE,'layout':'portrait',
         'adapter':'motiongit','variant':report['workflow'],'variant_name':'官方原生镜头组' if report['workflow']=='native' else '官方 console 组件工作流',
-        'template_ref':template_ref(config),'plan_sha256':sha(report['plan_path']),'output_sha256':sha(output),
+        'template_ref':template_ref(config),'plan_sha256':sha(report['plan_path']),'output_sha256':sha(output),'render_source_sha256':sha(candidate),
         'groups':report['segments'],'visual_review':'sampled-rendered-frames','owner_acceptance':'pending'}
     archive=folder/'editable-project.zip';export_project(instance,archive)
     atomic_private(folder/'qa.json',{'presentation':presentation,'output':info,'inspection':inspection,
         'media_layout':json.loads((instance/'layout-policy.json').read_text()) if (instance/'layout-policy.json').is_file() else None,
-        'clock_alignment':json.loads((instance/'clock-alignment.json').read_text()),'archive':str(archive),'archive_sha256':sha(archive),
+        'clock_alignment':json.loads((instance/'clock-alignment.json').read_text()),'audio_delivery':audio_delivery,'archive':str(archive),'archive_sha256':sha(archive),
         'checks':['official-signed-runner','frozen-contract','input-media-hashes','source-caption-binding','native-preview','full-decode','stream-duration'],
         'no_paid_calls':True,'human_review':'pending','listened':False})
     return {'status':'completed','stage':'原生模板视频已完成，可播放和下载','result':{'output_path':str(output),'qa_status':'pending','engineering_archive':str(archive),'presentation':presentation}}
@@ -523,7 +550,7 @@ def verified_candidate(candidate,folder,report,ref):
     try:
         actual=json.loads((Path(folder)/'qa.json').read_text())['presentation']
         return (actual['template_ref']==ref and actual['plan_sha256']==sha(report['plan_path'])
-                and actual['output_sha256']==sha(candidate))
+                and actual.get('render_source_sha256',actual['output_sha256'])==sha(candidate))
     except (OSError,ValueError,KeyError,TypeError):return False
 
 
