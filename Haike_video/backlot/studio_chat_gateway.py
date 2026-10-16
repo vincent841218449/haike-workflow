@@ -59,8 +59,18 @@ def call(relay, path, stage, payload, lock):
                         parts.append({"type": "image_file", "file_id": receipt["images"][image_hash]})
                     content = parts
                 messages.append({"role": message["role"], "content": content})
-            receipt["quote"] = sdk.quote("haike/text", {"messages": messages,
-                "max_output_tokens": payload.get("max_completion_tokens", 4096)}, "AI分镜 · " + stage[:80])
+            try:
+                receipt["quote"] = sdk.quote("haike/text", {"messages": messages,
+                    "max_output_tokens": payload.get("max_completion_tokens", 4096)}, "AI分镜 · " + stage[:80])
+            except Exception as exc:
+                status = getattr(exc, 'status', None)
+                receipt['preflight_error'] = {'type':type(exc).__name__, 'http_status':status, 'at':timestamp()}
+                atomic_private(path, receipt)
+                if status == 422 and str(exc) == '对话文本过长':
+                    raise WorkError('AI网关拒绝模板编排文本：当前连接仍有旧文本长度校验，请管理员修复实际AI连接；尚未提交生成', 'ai_input_rejected') from None
+                if status in {400,401,403,404,413,422}:
+                    raise WorkError(f'AI网关预检拒绝请求（HTTP {status}），请核对接口、权限与输入；尚未提交生成', 'ai_input_rejected') from None
+                raise WorkError('AI网关预检连接暂时中断，原意图已保留，尚未提交生成', 'unavailable') from None
             atomic_private(path, receipt)
         if int(receipt["quote"]["max_charge_micros"]) != 0:
             raise WorkError("AI试用已改为收费，请先确认新的预算；尚未提交生成")

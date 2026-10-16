@@ -40,6 +40,10 @@ class ProductionQueueConflict(ProductionQueueError):
     """A state transition or ownership conflict."""
 
 
+class ProductionQueueCancelled(ProductionQueueError):
+    """Stop a producer before the next stage after explicit user cancellation."""
+
+
 def _now() -> str:
     # Microseconds preserve FIFO order for bursts submitted within one second.
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
@@ -493,7 +497,7 @@ class ProductionQueue:
             if row is None:
                 return None
             changed = connection.execute(
-                "UPDATE production_jobs SET status='running',stage='正在取得生产执行权',progress_json='{}',worker_id=?,"
+                "UPDATE production_jobs SET status='running',stage='正在取得生产执行权',worker_id=?,"
                 "lease_expires_at=?,started_at=COALESCE(started_at,?),updated_at=?,"
                 "attempt_count=attempt_count+1,revision=revision+1 "
                 "WHERE job_id=? AND status='queued'",
@@ -526,6 +530,18 @@ class ProductionQueue:
                 raise ProductionQueueError("制作进度必须是已完成步骤与实际总步骤")
             progress = {"completed": completed, "total": total, "ratio": completed / total, "basis": "steps"}
         with self._connection(immediate=True) as connection:
+            current = connection.execute(
+                "SELECT cancel_requested,progress_json FROM production_jobs WHERE job_id=? AND status='running' AND worker_id=?",
+                (job_id, worker_id),
+            ).fetchone()
+            if current is not None and current['cancel_requested']:
+                raise ProductionQueueCancelled('用户已取消后续制作，原产物与调用保留')
+            previous = _decode(current['progress_json'], {}) if current is not None else {}
+            if (progress is not None and previous.get('basis') == 'steps'
+                    and previous.get('total') == total and previous.get('completed', 0) > completed):
+                # Re-entering a frozen job reads completed caches before polling
+                # the original supplier request. That is not lost production.
+                return
             changed = connection.execute(
                 "UPDATE production_jobs SET stage=?,progress_json=COALESCE(?,progress_json),updated_at=?,revision=revision+1 "
                 "WHERE job_id=? AND status='running' AND worker_id=?",
@@ -548,7 +564,7 @@ class ProductionQueue:
         retryable: bool = False,
         safe_resume_point: str | None = None,
     ) -> dict[str, Any]:
-        if status not in {"completed", "awaiting_human", "ambiguous", "failed"}:
+        if status not in {"completed", "awaiting_human", "ambiguous", "failed", "cancelled"}:
             raise ProductionQueueError("执行器返回了不受支持的终态")
         now = _now()
         with self._connection(immediate=True) as connection:
@@ -558,6 +574,8 @@ class ProductionQueue:
             ).fetchone()
             if row is None or row["status"] != "running":
                 raise ProductionQueueConflict("生产任务已经不属于当前工作者")
+            if status == 'cancelled' and not row['cancel_requested']:
+                raise ProductionQueueConflict('任务没有用户取消请求，不能标为已取消')
             effective_status = "cancelled" if bool(row["cancel_requested"]) and status != "ambiguous" else status
             effective_stage = "已在安全任务边界取消后续执行" if effective_status == "cancelled" else stage
             connection.execute(
@@ -593,6 +611,10 @@ class ProductionQueue:
         return self._public_row(updated)
 
     def pause(self, job_id: str) -> dict[str, Any]:
+        current=self.get(job_id)
+        if current['status']=='ambiguous' and current.get('error',{}).get('code')=='provider_pending':
+            return self._transition(job_id,{'ambiguous'},'paused',
+                '后续制作已暂停，已受理的模型请求保留','paused')
         return self._transition(job_id, {"queued"}, "paused", "已暂停，等待恢复", "paused")
 
     def resume(self, job_id: str) -> dict[str, Any]:
@@ -712,7 +734,10 @@ class ProductionQueue:
             if row["status"] == "ambiguous":
                 raise ProductionQueueConflict("供应商受理状态不明确，核对原任务后才能恢复")
             material_confirmation = row["status"] == "awaiting_human" and row["kind"] == "studio_avatar" and row["safe_resume_point"] == "studio_avatar_material_rights"
-            if not material_confirmation and (row["status"] != "failed" or not bool(row["retryable"])):
+            template_recheck = (row['status']=='awaiting_human' and row['kind']=='studio_avatar'
+                and row['safe_resume_point']=='studio_avatar_input'
+                and _decode(row['error_json'],{}).get('code')=='template_incompatible')
+            if not (material_confirmation or template_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(

@@ -13,7 +13,7 @@ from backlot.avatar_review_preview_pipeline import (
     read_avatar_review_preview_job,
     run_avatar_review_preview_job,
 )
-from backlot.production_queue import ProductionQueue, ProductionQueueConflict
+from backlot.production_queue import ProductionQueue, ProductionQueueConflict, ProductionQueueCancelled
 from backlot.work_catalog import WorkCatalog
 from backlot.workbench import (
     generate_full_preview_render,
@@ -331,6 +331,9 @@ class ProductionQueueWorker:
                     # Preserve successful media; registration can be retried independently.
                     outcome["result"]["work_registration_error"] = str(exc)[:300]
             return self.queue.finish(job["job_id"], self.worker_id, **outcome)
+        except ProductionQueueCancelled:
+            return self.queue.finish(job['job_id'], self.worker_id, status='cancelled',
+                stage='制作已取消，已有产物和调用保留')
         except Exception as exc:  # noqa: BLE001 - queue records a durable, user-visible failure
             return self.queue.finish(
                 job["job_id"], self.worker_id,

@@ -86,6 +86,35 @@ def test_provider_wait_is_active_automatic_and_cancel_preserves_unknown_request(
     assert queue.get(job['job_id'])['status'] == 'cancelled' and queue.resume_provider_waits() == []
 
 
+def test_same_job_recheck_does_not_reset_observed_progress(setup):
+    _, draft, queue, client = setup
+    job = submit(queue, draft, kind='studio_avatar')
+    queue.claim_next('worker')
+    queue.update_stage(job['job_id'], 'worker', '原数字人仍在生成', completed=3, total=7)
+    queue.finish(job['job_id'], 'worker', status='ambiguous', stage='原数字人仍在生成',
+                 error={'code':'provider_pending'}, safe_resume_point='studio_avatar_provider')
+    queue.pause(job['job_id']); queue.resume(job['job_id']); queue.claim_next('worker')
+    assert queue.get(job['job_id'])['progress']['completed'] == 3
+    queue.update_stage(job['job_id'], 'worker', '重新读取配音缓存', completed=0, total=7)
+    task = client.get('/api/studio/tasks/' + job['job_id']).json()['task']
+    assert task['progress']['percent'] == 43
+    assert task['stage'] == '正在取得生产执行权'
+    queue.update_stage(job['job_id'], 'worker', '数字人已就绪', completed=4, total=7)
+    assert queue.get(job['job_id'])['progress']['completed'] == 4
+
+
+def test_in_progress_native_task_names_the_selected_template(setup):
+    _, draft, queue, client = setup
+    frozen = {**draft, 'template_id':'avatar-safe-circle-v1',
+              'input':{'motion':{'style':'03-A', 'layout':'portrait'}}}
+    job = queue.submit(project_id=draft['id'], kind='studio_avatar', source='workbench', priority='normal',
+                       parent_job_id='native-template', frozen_request={'draft':frozen,
+                       'presentation':{'id':'adu:03-A:portrait','name':'多屏展陈'}})
+    task = client.get('/api/studio/tasks/' + job['job_id']).json()['task']
+    assert task['template_name'] == '多屏展陈'
+    assert task['ratio'] == '9:16'
+
+
 def test_observed_progress_is_durable_owned_and_preserved_on_failure(setup):
     studio, draft, queue, _ = setup
     job = submit(queue, draft)

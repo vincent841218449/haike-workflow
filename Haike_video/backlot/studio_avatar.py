@@ -247,7 +247,7 @@ def download_result(url, path, referer=None):
                 temporary.replace(path)
                 return
         except HTTPError as exc:
-            if exc.code not in {301, 302, 303, 307, 308}: raise WorkError("供应商媒体暂时无法下载，请恢复原任务") from None
+            if exc.code not in {301, 302, 303, 307, 308}: raise WorkError("供应商媒体暂时无法下载，请恢复原任务", 'unavailable') from None
             from urllib.parse import urljoin
             url = urljoin(url, exc.headers.get("Location", ""))
     raise WorkError("供应商媒体跳转过多")
@@ -320,6 +320,7 @@ def source_captions(draft, cues):
 
 
 def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
+    from backlot.production_queue import ProductionQueueCancelled
     studio = Studio(Path(project_dir).parent)
     if request["key_identity"] != key_identity(studio): raise WorkError("API Key已改变；恢复付费任务前请恢复原账户连接")
     sdk = sdk or studio.client()
@@ -333,8 +334,10 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     needs_clock = bool(request.get("workflow_version", 1) >= 2 or draft_input.get("subtitles", True) or draft_input.get("ai", {}).get("enabled"))
     needs_ai = bool(draft_input.get("ai", {}).get("enabled"))
     steps_total = 4 + int(needs_clock) + int(needs_ai)
+    current_stage = '初始化制作'
     def publish_progress(stage, advance=False):
-        nonlocal steps_done
+        nonlocal steps_done, current_stage
+        current_stage = stage
         if advance: steps_done += 1
         if on_progress: on_progress(stage, steps_done, steps_total)
     def paid(stage, model, inputs):
@@ -446,7 +449,9 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
         if needs_ai: publish_progress("理解分镜并匹配用户与网络素材")
-        storyboard = produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
+        direction_path=output_dir/'native-direction.json'
+        adaptive=direction_path.is_file() and json.loads(direction_path.read_text()).get('workflow')=='adu-source-components-v1'
+        storyboard = None if adaptive else produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
         if needs_ai: publish_progress("分镜与素材已就绪", True)
         from backlot.studio_preflight import prepare
         if draft["input"].get("motion"): publish_progress("检查模板、素材与真实口播时长")
@@ -454,7 +459,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if composition["notice"]: publish_progress(composition["notice"])
         video = output_dir / "avatar-source.mp4"
         publish_progress("数字人生成与结果下载")
-        if not video.exists():
+        if not video.exists() or request.get('avatar_execution'):
             if request.get('avatar_execution'):
                 from backlot.studio_avatar_app import produce as produce_avatar_app
                 job = produce_avatar_app(studio,request['avatar_execution'],output_dir,Path(p['audio_path']),Path(p['portrait_path']),clock_cues,on_progress=publish_progress)
@@ -469,6 +474,12 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         publish_progress("数字人画面已就绪", True)
         from backlot.studio_composition import compose_avatar
         actual_presentation=selected(draft)
+        if composition['mode']=='adu-components':
+            from backlot.studio_adu_components import compose
+            publish_progress('使用所选03-A原包组件合成并核验')
+            result=compose(studio,draft,output_dir,video,Path(p['audio_path']),composition['component_plan'])
+            publish_progress('成片核验完成，正在登记作品',True)
+            return result
         if composition['mode'] == 'motiongit':
             from backlot.studio_motiongit import compose
             from backlot.studio_presentation import verify_native
@@ -515,6 +526,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         # This callback runs only after composition's media checks and the QA receipt exist.
         if on_progress: on_progress("成片核验完成，正在登记作品", steps_done + 1, steps_total)
         return {"status": "completed", "stage": "视频已制作完成，可直接播放和下载", "result": {"output_path": str(output), "qa_status": "pending", "notice": composition["notice"], "composition_mode": 'motion' if composition['mode']=='instrument' else 'basic', "effective_template_id": actual_presentation['id'], "presentation":actual_presentation,"requested_presentation":selected(draft), "provider_jobs": report["provider_jobs"]}}
+    except ProductionQueueCancelled:
+        raise
     except WorkError as exc:
         if exc.code == "provider_pending":
             return {"status": "ambiguous", "stage": str(exc), "error": {"code": "provider_pending", "message": str(exc), "type": "StudioProviderPending"}, "safe_resume_point": "studio_avatar_provider"}
@@ -522,6 +535,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             return {"status": "awaiting_human", "stage": str(exc), "error": {"code": exc.code, "message": str(exc), "type": "StudioInput"}, "safe_resume_point": "studio_avatar_input"}
         if exc.code == "human_required":
             return {"status": "awaiting_human", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMaterialRightsRequired"}, "retryable": False, "safe_resume_point": "studio_avatar_material_rights"}
-        return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioAvatar", "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}
-    except Exception:
-        return {"status": "failed", "stage": "制作中断，原调用与产物已保留，可恢复同一任务", "error": {"message": "请检查API连接与本地渲染依赖，再恢复此任务", "type": "StudioAvatar"}, "retryable": True, "safe_resume_point": "studio_avatar"}
+        return {"status": "failed", "stage": str(exc), "error": {"code": exc.code, "message": str(exc), "type": "StudioAvatar", "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_avatar"}
+    except Exception as exc:
+        from backlot.studio_failure import outcome
+        return outcome(output_dir, current_stage, exc)

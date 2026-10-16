@@ -99,6 +99,9 @@ def library(layout="portrait"):
                 from backlot.studio_template_registry import legacy_ref
                 styles[-1]['template_ref'] = legacy_ref(item['id'], layout, caps['groups'])
                 styles[-1]['runtime_label'] = 'ADu 原生镜头组'
+                if item['id']=='03-A' and layout=='portrait':
+                    styles[-1].update(scope='固定编舞或同包原组件；按完整原文自动编排',
+                        runtime_label='ADu 原生组 / 原包组件自适应')
     from backlot.studio_motion_quick import groups as quick_groups
     from backlot.studio_motiongit import library as motiongit_library
     styles.extend(motiongit_library(layout))

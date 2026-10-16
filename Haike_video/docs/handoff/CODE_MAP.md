@@ -10,9 +10,9 @@
 - 图文：studio_render.py复用scripts/template_video/build_923.py和_paths.py，参数化safe_v2/9秒/三景、资产指纹、文字边界和FFmpeg完整解码。
 - 口播：studio_avatar.py冻结/ASR；studio_avatar_app.py新AI应用分段/缓存/拼接，tools/avatar/runninghub_ai_app.py官方V2；studio_billing.py实际用量，队列continue_actual_usage/replace_avatar审计恢复；studio_composition.py三模板。根docs/PRODUCT_RUNNINGHUB_AI_APP.md。
 - 音色：studio_voices.py；studio_personal_voice.py克隆/恢复，studio_voice_reference.py长录音，studio_system_voice.py配音，studio_voice_audition.py免费试听，studio_speech_rate.py语速。前端VoiceLibrary/SpeechRateControl；网关platform_app/voices.py。合同根docs/PRODUCT_VOICE_LIBRARY.md。
-- AI分镜/素材：studio_storyboard.py原文/词级时钟/路由；studio_chat_gateway.py统一Key免费报价/持久意图/恢复。云端sponsored.py原子账户/平台次数配额，Token账单成本未知；生图暂停。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用；test_studio_{storyboard,chat_gateway}.py。
+- AI分镜：studio_storyboard.py原文/时钟；studio_chat_gateway.py网关；studio_chat_route.py冻结路由。studio_adu_components.py同包组件；studio_failure.py脱敏诊断；生图暂停。根docs/tasks/2026-10-16-production-resilience.md。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
-- 原生队列：production_queue.py/production_queue_worker.py；studio_graphic、studio_avatar、studio_motion处理器，所有产物登记作品台账。
+- 原生队列：production_queue{,_worker}.py；单通道/断点/取消/进度保留，所有产物登记作品台账。
 - 模板锁定：studio_template_registry.py冻结来源；studio_motion_director.py语义/证据→studio_preflight.py→原生执行，studio_motion_qa.py核对成片。studio_motiongit{,_native}.py官方.motion双工作流；studio_media_layout.py按素材角色放大/保全证据。自写04-A仅兼容旧请求。studio_presentation.py核对实际身份；studio_creation.py复用费用/阶段，work_api.py工程下载绑定完成版本。根docs/tasks/2026-10-15-adu-native-integration.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。

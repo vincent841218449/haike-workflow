@@ -177,6 +177,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 if not state.get('image_file'): state['image_file']=client.upload(portrait); save()
                 if not chunk.get('audio_file'):
                     chunk['audio_file']=client.upload(cache/f"audio-{chunk['index']:03d}.wav"); save()
+                if on_progress: on_progress(f"数字人分段 {chunk['index']+1}/{len(state['chunks'])}：输入已就绪")
                 chunk.update(status='submitting',submitted_at=datetime.now(timezone.utc).isoformat()); save()
                 try:
                     receipt = client.submit(state['image_file'],chunk['audio_file'])
@@ -201,14 +202,32 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 done=sum(c['status']=='succeeded' for c in state['chunks'])
                 state.update(status='running',message=f"数字人第 {chunk['index']+1}/{len(state['chunks'])} 段正在生成，已完成 {done} 段"); save(); return result()
             chunk['results']=queried['videos']; save()
+            chunk['phase']='downloading'
             candidates=[]
             for i,video in enumerate(chunk['results']):
                 candidate=cache/f"video-{chunk['index']:03d}-{i:02d}.mp4"
-                if not candidate.is_file(): download_result(video['url'],candidate)
+                try:
+                    if not candidate.is_file(): download_result(video['url'],candidate)
+                except WorkError as exc:
+                    if exc.code != 'unavailable': raise
+                    continue
+                except OSError:
+                    continue
                 try: info=_verify_clip(candidate,chunk['end_frame']-chunk['start_frame'])
-                except WorkError: continue
+                except WorkError:
+                    # Retain bad bytes, then retry the original paid result.
+                    invalid=candidate.with_suffix('.invalid.mp4')
+                    if invalid.exists(): invalid=candidate.with_suffix('.invalid-'+uuid4().hex[:8]+'.mp4')
+                    candidate.replace(invalid)
+                    continue
                 candidates.append((info['video']['width']*info['video']['height'],candidate))
-            if not candidates: raise WorkError('数字人应用未返回与本段时长匹配的视频，原任务号已保留')
+            if not candidates:
+                chunk['download_failures']=chunk.get('download_failures',0)+1
+                state.update(status='running',message=f"数字人第 {chunk['index']+1} 段已生成，正在重新查询并下载原结果")
+                save()
+                if chunk['download_failures']>=3:
+                    raise WorkError('数字人原结果连续三次下载或解码未通过，原任务号和片段保留；请修复下载连接后继续原任务', 'unavailable')
+                return result()
             selected=max(candidates,key=lambda v:v[0])[1]
             chunk.update(status='succeeded',video_file=selected.name,video_sha256=sha(selected)); save()
         _stitch(cache,state,audio,target)

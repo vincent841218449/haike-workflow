@@ -70,6 +70,21 @@ def test_worker_dispatches_only_registered_kind_and_continues_after_failure(tmp_
     assert queue.get(second["job_id"])["result"] == {"preview": "fake.mp4"}
 
 
+def test_cancellation_stops_at_progress_before_another_paid_stage(tmp_path):
+    queue,projects=_setup(tmp_path)
+    job=_submit(queue,'alpha','cancel-before-avatar','studio_avatar')
+    paid=[]
+    worker=ProductionQueueWorker(queue,projects,worker_id='test-cancel-worker')
+    def run(current):
+        queue.cancel(current['job_id'])
+        worker._stage_reporter(current)('准备下一笔数字人请求',1,5)
+        paid.append('must not submit')
+        return {'status':'completed','stage':'should never finish'}
+    worker.handlers={'studio_avatar':run}
+    assert worker.run_once()['status']=='cancelled'
+    assert paid==[] and queue.get(job['job_id'])['status']=='cancelled'
+
+
 def test_worker_maps_waiting_and_ambiguous_without_retrying(tmp_path: Path) -> None:
     queue, projects = _setup(tmp_path)
     waiting = _submit(queue, "alpha", "RP-wait", "review_preview")

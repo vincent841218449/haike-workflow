@@ -138,6 +138,31 @@ def test_query_disconnect_uses_original_segment_id_and_continues_remaining_only(
     assert run(app_rig)['status']=='succeeded' and len(client.calls)==3
 
 
+def test_download_disconnect_automatically_resumes_same_paid_result(app_rig,monkeypatch):
+    def interrupted(url,path): raise TimeoutError('download interrupted')
+    monkeypatch.setattr('backlot.studio_avatar.download_result',interrupted)
+    assert run(app_rig)['status']=='running'
+    assert len(app_rig[5].calls)==1
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert state['chunks'][0]['task_id']=='1'
+    monkeypatch.setattr('backlot.studio_avatar.download_result',lambda url,path:path.write_bytes(b'valid original clip'))
+    assert run(app_rig)['status']=='succeeded'
+    assert len(app_rig[5].calls)==3
+
+
+def test_invalid_download_is_preserved_and_redownloaded_without_regeneration(app_rig,monkeypatch):
+    cache=app_rig[2]/'avatar-app';cache.mkdir()
+    (cache/'video-000-00.mp4').write_bytes(b'truncated')
+    def verify(path,frames):
+        if path.read_bytes()==b'truncated': raise WorkError('incomplete file')
+        return {'video':{'width':448,'height':560}}
+    monkeypatch.setattr('backlot.studio_avatar_app._verify_clip',verify)
+    assert run(app_rig)['status']=='running'
+    assert (cache/'video-000-00.invalid.mp4').read_bytes()==b'truncated'
+    assert run(app_rig)['status']=='succeeded'
+    assert len(app_rig[5].calls)==3
+
+
 def test_continued_render_folder_retains_original_segment_ids_and_local_job_id(app_rig):
     studio,execution,folder,wav,portrait,client=app_rig
     client.query_failure=True

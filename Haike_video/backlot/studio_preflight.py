@@ -27,6 +27,11 @@ def prepare(studio, draft, folder, audio, cues, storyboard, caption_cues, *, leg
         from backlot.studio_motiongit import prepare as prepare_motiongit
         return prepare_motiongit(studio,draft,folder,audio,cues,storyboard,caption_cues)
     folder = Path(folder)
+    direction_path=folder/'native-direction.json'
+    if direction_path.is_file() and json.loads(direction_path.read_text()).get('workflow')=='adu-source-components-v1':
+        from backlot.studio_adu_components import prepare as components
+        from backlot.studio_render import media_probe
+        return components(draft,folder,audio,cues,media_probe(audio)['duration'],caption_cues)
     identity = hashlib.sha256(json.dumps([draft, sha(audio), cues, storyboard], sort_keys=True).encode()).hexdigest()
     path = folder / "composition-preflight.json"
     if path.exists():

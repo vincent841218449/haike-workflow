@@ -57,6 +57,8 @@ def task_view(studio, job, scheduled_paths=()):
         ratio, template_name = template.get('ratio'), template.get('name', '')
         if draft.get('input', {}).get('motion'):
             ratio = '16:9' if draft['input']['motion'].get('layout') == 'landscape' else '9:16'
+            requested = (job.get('frozen_request') or {}).get('presentation') or {}
+            template_name = requested.get('name') or draft['input']['motion'].get('style', '')
         if draft.get("template_id") == "avatar-motion-adu-v1" or draft.get("input", {}).get("motion"):
             label = "数字人口播 · 动效" if category == "avatar" else label
         if result.get('composition_mode') == 'basic' and draft.get('input', {}).get('motion'):
@@ -103,9 +105,10 @@ def task_view(studio, job, scheduled_paths=()):
         "billing_policy": (job.get('frozen_request') or {}).get('billing_policy', 'limited'),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else result.get('notice') or "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
-        "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation,
+        "actions": {"retry": (job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation)
+                    or (job['status']=='awaiting_human' and error.get('code')=='template_incompatible'),
                     "continue": job['kind'] == 'studio_avatar' and job['status'] == 'awaiting_human' and error.get('code') == 'budget_exceeded' and not job.get('cancel_requested'),
-                    "pause": job["status"] == "queued", "resume": job["status"] == "paused",
+                    "pause": job["status"] == "queued" or provider_wait, "resume": job["status"] == "paused",
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
                     "edit_label": "按文案配音或替换录音" if error.get('code') == 'audio_script_mismatch' else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }

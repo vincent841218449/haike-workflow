@@ -144,9 +144,11 @@ class TrialRelay:
         from urllib.error import HTTPError
         path = self.folder / (hashlib.sha256(stage.encode()).hexdigest() + ".json")
         c = configuration(self.studio)
-        if not image and self.transport is None and c.get("chat_route", "gateway") != "direct":
-            from backlot.studio_chat_gateway import call
-            return call(self, path, stage, payload, _LOCK)
+        if not image and self.transport is None:
+            from backlot.studio_chat_route import use_gateway
+            if use_gateway(self, path, payload, c, _LOCK):
+                from backlot.studio_chat_gateway import call
+                return call(self, path, stage, payload, _LOCK)
         if image and c.get("image_paused", False):
             raise WorkError("生图能力已暂停，请使用用户素材或网络素材")
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -155,7 +157,11 @@ class TrialRelay:
                 receipt = json.loads(path.read_text())
                 if receipt["fingerprint"] != fingerprint: raise WorkError("原AI任务内容已冻结，不能在恢复时替换参数")
                 if receipt["status"] == "succeeded": return receipt["result"]
-                raise WorkError("AI原请求结果待核对，未重复提交。请由管理员核对中转记录", "unavailable")
+                if receipt.get('gateway') or receipt.get('status') != 'prepared':
+                    raise WorkError("AI原请求结果待核对，未重复提交。请由管理员核对中转记录", "unavailable")
+                from backlot.studio_chat_route import direct_identity
+                if receipt.get('identity') != direct_identity(c, payload.get('model')):
+                    raise WorkError('原AI连接已变化，未重新提交，请恢复原本机配置', 'unavailable')
             if len(self.request_paths()) >= self.request_limit(): raise WorkError("本次AI调用已达次数上限，已完成素材保留")
             if image and sum(json.loads(p.read_text()).get("image", False) for p in self.request_paths()) >= 2:
                 raise WorkError("本次插画生成已达两张上限")
@@ -165,10 +171,11 @@ class TrialRelay:
             day = timestamp()[:10]; counter = counter if counter.get("day") == day else {"day": day, "requests": 0, "images": 0}
             if counter["requests"] >= 50 or (image and counter["images"] >= 10): raise WorkError("今日试用上限已到，请明日继续或由管理员调整方案")
             counter["requests"] += 1; counter["images"] += int(image); atomic_private(counter_path, counter)
-            receipt = {"stage": stage, "model": payload.get("model"), "fingerprint": fingerprint, "status": "submitting", "image": image,
+            from backlot.studio_chat_route import direct_identity
+            receipt = {**(receipt if path.exists() else {}), "stage": stage, "model": payload.get("model"), "fingerprint": fingerprint, "status": "submitting", "image": image,
+                       "gateway":False, "route":"direct", "identity":direct_identity(c, payload.get('model')),
                        "customer_charge_micros": "0", "procurement_amount": None, "created_at": timestamp()}
             atomic_private(path, receipt)
-        c = configuration(self.studio)
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl): return None
         try:

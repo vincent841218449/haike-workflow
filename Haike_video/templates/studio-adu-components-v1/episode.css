@@ -1,0 +1,10 @@
+html,body,#stage{width:1080px;height:1920px;background:#0a0a0a;color:#fff}
+#world{transform-origin:540px 960px}
+.episode-title{width:928px;white-space:normal;font-size:70px;font-weight:700;line-height:1.18;letter-spacing:-2px;text-wrap:balance}
+.episode-label{font-size:21px;letter-spacing:3px;color:#8c8c8c}
+.semantic-body{height:100%;padding:48px;display:flex;flex-direction:column;justify-content:center;gap:24px;background:radial-gradient(ellipse at 100% 0,rgba(36,98,234,.18),transparent 70%)}
+.semantic-quote{white-space:normal;font-size:51px;line-height:1.35;font-weight:650;word-break:break-word;color:#f7f7f5}
+.semantic-note{font-size:21px;letter-spacing:2px;color:#8b9bb5}
+.emphasis-blue{color:#6d9bff}
+.episode-line{width:900px;height:2px;background:linear-gradient(90deg,#2462ea,rgba(36,98,234,0))}
+#captions{position:absolute;left:100px;right:100px;bottom:300px;text-align:center;color:#fff;font:600 48px/1.4 -apple-system,'PingFang SC',sans-serif;white-space:normal;text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000,0 4px 12px #000;pointer-events:none}
