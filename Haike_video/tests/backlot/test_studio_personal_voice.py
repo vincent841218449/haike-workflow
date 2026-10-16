@@ -3,6 +3,7 @@ import io
 import json
 import math
 import struct
+import subprocess
 import wave
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -18,7 +19,8 @@ def wav(seconds=8, silent=False):
     output = io.BytesIO()
     with wave.open(output, "wb") as stream:
         stream.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
-        stream.writeframes(b"".join(struct.pack("<h", 0 if silent else int(8000 * math.sin(i * .04))) for i in range(seconds * 24000)))
+        second = b"".join(struct.pack("<h", 0 if silent else int(8000 * math.sin(i * .04))) for i in range(24000))
+        stream.writeframes(second * seconds)
     return output.getvalue()
 
 
@@ -47,7 +49,7 @@ def rig(tmp_path, monkeypatch):
     def post(self, url, **kwargs):
         if "files" in kwargs:
             assert "headers" not in kwargs and kwargs["data"]["x-oss-object-acl"] == "private"
-            seen.append(("upload", {}))
+            seen.append(("upload", {"bytes": len(kwargs["files"]["file"][1].read())}))
             return SimpleNamespace(status_code=200)
         data = kwargs["json"]
         if data["model"] == "voice-enrollment":
@@ -74,6 +76,58 @@ def rig(tmp_path, monkeypatch):
 def prepare(studio):
     sample = studio_voices.upload_sample(studio, "我的录音.wav", wav())
     return studio_voices.quote_clone(studio, {"name": "我的声音", "sample_id": sample["id"], "consent": True})
+
+
+def test_166_second_recording_is_prepared_locally_without_cloud_submission(rig):
+    studio, _, seen = rig
+    sample = studio_voices.upload_sample(studio, "长录音.wav", wav(166))
+    assert sample["source_duration"] == 166 and sample["duration"] == 20 and sample["trimmed"]
+    assert sample["reference_url"].startswith("/api/studio/voices/references/samplelocal-")
+    assert not seen  # Only the prepared excerpt is uploaded after voice consent and confirmation.
+    operation = studio_voices.quote_clone(studio, {"name": "长录音", "sample_id": sample["id"], "consent": True})
+    assert complete(studio, operation)["job"]["status"] == "succeeded"
+    assert next(v["bytes"] for action, v in seen if action == "upload") < 1_000_000
+
+
+def test_long_m4a_uses_twenty_second_private_reference(rig, tmp_path):
+    from lib.ffmpeg_locator import resolve_ffmpeg_pair
+    studio, _, seen = rig
+    source, compressed = tmp_path / "long.wav", tmp_path / "long.m4a"
+    source.write_bytes(wav(166))
+    ffmpeg, _ = resolve_ffmpeg_pair()
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-i", str(source), "-c:a", "aac", str(compressed)], check=True, capture_output=True, timeout=60)
+    sample = studio_voices.upload_sample(studio, "用户长录音.m4a", compressed.read_bytes())
+    assert sample["source_duration"] == pytest.approx(166, abs=.1) and sample["duration"] == 20
+    with wave.open(str(personal.reference(studio, sample["id"]))) as audio:
+        assert audio.getnframes() / audio.getframerate() == 20
+    assert not seen
+
+
+def test_excerpt_chooses_non_silent_section_instead_of_first_twenty_seconds(rig):
+    studio, _, seen = rig
+    output = io.BytesIO()
+    with wave.open(io.BytesIO(wav(20))) as voice:
+        speech = voice.readframes(voice.getnframes())
+    with wave.open(output, "wb") as audio:
+        audio.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * (90 * 24000) + speech + b"\0\0" * (56 * 24000))
+    sample = studio_voices.upload_sample(studio, "带停顿.wav", output.getvalue())
+    assert 89.8 <= sample["excerpt_start"] <= 90.2
+    assert sample["excerpt_end"] - sample["excerpt_start"] == 20
+    assert not seen
+
+
+def test_length_and_silence_errors_are_distinct_and_longer_than_ten_minutes_is_bounded(rig, tmp_path):
+    from backlot.studio_voice_reference import prepare as prepare_reference
+    studio, _, _ = rig
+    with pytest.raises(WorkError, match="只有2.0秒"):
+        studio_voices.upload_sample(studio, "too-short.wav", wav(2))
+    with pytest.raises(WorkError, match="接近静音"):
+        studio_voices.upload_sample(studio, "silent.wav", wav(8, True))
+    source = tmp_path / "too-long.wav"
+    source.write_bytes(wav(601))
+    with pytest.raises(WorkError, match="超过10分钟"):
+        prepare_reference(source, tmp_path / "excerpt.wav")
 
 
 def complete(studio, operation):
@@ -196,6 +250,9 @@ def test_http_upload_clone_preview_and_private_audio(rig, monkeypatch):
         assert http.get("/api/studio/voices").json()["clone_ready"]
         upload = http.post("/api/studio/voices/samples?filename=own.wav", content=wav(), headers={"Content-Type": "application/octet-stream"})
         assert upload.status_code == 200
+        reference = http.get(upload.json()["reference_url"], headers={"Range": "bytes=0-99"})
+        assert reference.status_code == 206 and len(reference.content) == 100
+        assert reference.content.startswith(b"RIFF") and reference.headers["cache-control"] == "private, no-store"
         request = {"name": "我的声音", "sample_id": upload.json()["id"], "consent": True}
         assert http.post("/api/studio/voices/clone-quotes", json=request, headers={"Origin": "https://other.test"}).status_code == 403
         operation = http.post("/api/studio/voices/clone-quotes", json=request).json()
@@ -211,6 +268,19 @@ def test_http_upload_clone_preview_and_private_audio(rig, monkeypatch):
         assert audio.status_code == 200 and audio.content.startswith(b"RIFF")
         assert audio.headers["cache-control"] == "private, no-store"
         assert sum(k == "create_voice" for k, _ in seen) == 1 and sum(k == "tts" for k, _ in seen) == 1
+
+
+def test_prepared_reference_is_account_private_and_integrity_checked(rig):
+    studio, _, _ = rig
+    sample = studio_voices.upload_sample(studio, "own.wav", wav())
+    path = personal.reference(studio, sample["id"])
+    owner = studio.configuration()
+    atomic_private(studio.config_path, {**owner, "api_key": "another-fake-owner"})
+    with pytest.raises(WorkError): personal.reference(studio, sample["id"])
+    atomic_private(studio.config_path, owner)
+    path.write_bytes(b"tampered")
+    with pytest.raises(WorkError): personal.reference(studio, sample["id"])
+    with pytest.raises(WorkError): personal.reference(studio, "../../other")
 
 
 def test_upload_failure_and_pending_query_recover_without_second_create(rig, monkeypatch):

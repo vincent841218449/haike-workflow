@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canSubmitFreeClone, filterVoices, operationState } from '../src/voice-model.js';
+import { canSubmitFreeClone, filterVoices, operationState, referencePresentation } from '../src/voice-model.js';
 import { validateInputs } from '../src/generator-model.js';
 
 const voices = [
@@ -35,4 +35,13 @@ test('免费克隆在表单确认后一次提交；收费试听及未知报价�
   assert.equal(canSubmitFreeClone({...operation,quote:{...operation.quote,max_charge_micros:undefined}}),false);
   assert.equal(canSubmitFreeClone(null),false);
   assert.doesNotMatch(operationState('failed'),/已释放|已退款/);
+});
+test('长录音说明显示原时长、实际截取区间和克隆片段试听，不要求再审核', () => {
+  const value=referencePresentation({source_duration:166,duration:20,excerpt_start:70,excerpt_end:90,trimmed:true});
+  assert.match(value.summary,/2:46/);
+  assert.match(value.notice,/1:10–1:30/);
+  assert.match(value.notice,/无需手动剪辑/);
+  assert.equal(value.label,'实际克隆片段试听');
+  assert.equal(referencePresentation(null).label,'原录音试听');
+  assert.equal(referencePresentation({duration:8,trimmed:false}).summary,'8.0秒 · 录音格式检查通过');
 });

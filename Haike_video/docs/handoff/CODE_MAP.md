@@ -9,7 +9,7 @@
 - 路由：/graphic、/avatar、/resources、/tasks、/calendar、/settings；/projects兼容跳转。旧独立UI已归档移除。workbench.*保留历史项目维护。
 - 图文：studio_render.py复用scripts/template_video/build_923.py和_paths.py，参数化safe_v2/9秒/三景、资产指纹、文字边界和FFmpeg完整解码。
 - 口播：studio_avatar.py统一Key报价/预算/持久付费意图/ASR时钟；studio_composition.py和templates/studio-avatar-v1参数化三模板。旧模板3基线不修改。
-- 音色：studio_voices.py；studio_personal_voice.py本机克隆/恢复，studio_system_voice.py系统/个人TTS。网关platform_app/voices.py；VoiceLibrary.jsx。合同根docs/PRODUCT_VOICE_LIBRARY.md。
+- 音色：studio_voices.py；studio_personal_voice.py本机克隆/恢复，studio_voice_reference.py长录音选片，studio_system_voice.py配音。网关platform_app/voices.py；VoiceLibrary.jsx。合同根docs/PRODUCT_VOICE_LIBRARY.md。
 - AI分镜/素材：studio_storyboard.py原文/词级时钟/路由；studio_chat_gateway.py统一Key免费报价/持久意图/恢复。云端sponsored.py原子账户/平台次数配额，Token账单成本未知；生图暂停。前端AvatarTemplatePicker/AiMaterials/DouyinRecovery共用；test_studio_{storyboard,chat_gateway}.py。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue.py/production_queue_worker.py；studio_graphic、studio_avatar、studio_motion处理器，所有产物登记作品台账。

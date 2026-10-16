@@ -115,6 +115,13 @@ async def voice_clone_quote(request: Request, data: dict = Body(...)):
     return await asyncio.to_thread(call, studio_voices.quote_clone, studio(request), data)
 
 
+@router.get("/api/studio/voices/references/{sample_id}")
+async def voice_reference(sample_id: str, request: Request):
+    from backlot import studio_personal_voice
+    path = await asyncio.to_thread(call, studio_personal_voice.reference, studio(request), sample_id)
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+
+
 @router.post("/api/studio/voices/preview-quotes")
 async def voice_preview_quote(request: Request, data: dict = Body(...)):
     mutation(request)

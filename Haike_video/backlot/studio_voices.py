@@ -5,7 +5,6 @@ import hashlib
 import re
 import subprocess
 import tempfile
-import wave
 from pathlib import Path
 from uuid import uuid4
 
@@ -104,6 +103,7 @@ def sample(studio, voice_id):
 
 def upload_sample(studio, name, content):
     from backlot import studio_personal_voice as personal
+    from backlot.studio_voice_reference import prepare
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     suffix = Path(name).suffix.lower()
     if suffix not in {".wav", ".mp3", ".m4a"} or not content or len(content) > 10 * 1024 * 1024:
@@ -111,33 +111,26 @@ def upload_sample(studio, name, content):
     with tempfile.TemporaryDirectory(prefix="haike-voice-sample-") as temporary:
         source = Path(temporary) / ("source" + suffix)
         source.write_bytes(content); source.chmod(0o600)
+        normalized = Path(temporary) / "normalized.wav"
         target = Path(temporary) / "reference.wav"
         ffmpeg, _ = resolve_ffmpeg_pair()
         try:
             result = subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-y", "-protocol_whitelist", "file,pipe",
-                "-format_whitelist", "wav,mp3,mov", "-i", str(source), "-t", "61", "-vn",
-                "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(target)], capture_output=True, timeout=60)
+                "-format_whitelist", "wav,mp3,mov", "-i", str(source), "-t", "601", "-vn",
+                "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(normalized)], capture_output=True, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
             raise WorkError("录音转换未完成，请检查FFmpeg或更换音频文件") from None
         if result.returncode:
             raise WorkError("无法准备克隆录音，请更换音频文件")
-        try:
-            from array import array
-            with wave.open(str(target), "rb") as audio:
-                duration = audio.getnframes() / audio.getframerate()
-                samples = array("h", audio.readframes(audio.getnframes()))
-                audible = bool(samples) and sum(v * v for v in samples) / len(samples) >= 900
-        except (wave.Error, OSError, EOFError):
-            raise WorkError("无法读取录音，请检查音频格式") from None
-        if not 5 <= duration <= 60 or not audible:
-            raise WorkError("录音需要5至60秒的有效人声，推荐10至20秒清晰单人朗读，避免静音")
+        prepared = prepare(normalized, target)
+        reference = personal.upload(studio, target, Path(name).name[:160], prepared["duration"], preparation=prepared)
         if personal.configuration_status(studio)["ready"]:
-            return personal.upload(studio, target, Path(name).name[:160], duration)
+            return reference
         try:
             value = studio.client().upload(target, "audio")
         except Exception as error:
             raise WorkError("录音未能上传到音色服务，请核对连接后重试") from error
-    return {"id": value["id"], "name": Path(name).name[:160], "duration": duration}
+    return {**reference, "id": value["id"]}
 
 
 def _store(studio, data):

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, AudioLines, Check, CheckCircle2, Clock3, Headphones, Mic2, Pause, Pencil, Play, Plus, RefreshCw, Search, Upload } from 'lucide-react';
 import { api } from './studio-api.js';
 import { Button, Dialog, EmptyState, Field, Heading, Notice } from './ui.jsx';
-import { canSubmitFreeClone, filterVoices, operationState, voiceLabel } from './voice-model.js';
+import { canSubmitFreeClone, filterVoices, operationState, referencePresentation, voiceLabel } from './voice-model.js';
 import './voices.css';
 
 const money = value => `¥${(Number(value || 0) / 1000000).toFixed(6).replace(/0+$/, '').replace(/\.$/, '.00')}`;
@@ -40,6 +40,7 @@ function CloneForm({ ready, busy, onNext, onCancel, error, initialData }) {
   const [file, setFile] = useState(initialData?.file || null), [url, setUrl] = useState(''), [consent, setConsent] = useState(initialData?.consent || false);
   const [sample, setSample] = useState(initialData?.sample || null), [uploading, setUploading] = useState(false), [localError, setLocalError] = useState('');
   const input = useRef(null), fileTicket = useRef(0);
+  const prepared = referencePresentation(sample), referenceSrc = sample?.reference_url || url;
   useEffect(() => {
     if (!file) { setUrl(''); return; }
     const value = URL.createObjectURL(file); setUrl(value);
@@ -64,12 +65,13 @@ function CloneForm({ ready, busy, onNext, onCancel, error, initialData }) {
   }
   return <form className="voice-clone-form" onSubmit={e => { e.preventDefault(); if (!ready || !name.trim() || !sample || !consent || uploading || busy) return; onNext({ name: name.trim(), sample_id: sample.id, language, tags: tag.trim() ? [tag.trim()] : [], consent }, { name, language, tag, file, sample, consent }); }}>
     <div className="voice-clone-intro"><span className="voice-mark"><Mic2 size={25}/></span><div><h3>把你的声音，变成可反复使用的音色</h3><p>创建专属音色 · 完成后仅保存在你的个人库</p></div></div>
-    <div className="voice-record-guide"><strong>准备一段10–20秒的清晰朗读</strong><p>单人、自然语速，避免背景音乐、噪音和长停顿。支持5–60秒的WAV、MP3、M4A，最大10MB。</p><blockquote>你好，欢迎来到我的频道。今天想和你分享一个新的想法，希望我的声音能让每一次表达，都更加自然、清晰、有温度。</blockquote></div>
+    <div className="voice-record-guide"><strong>上传清晰的单人朗读，长录音也可以</strong><p>推荐10–20秒，自然语速、无背景音乐。支持5秒–10分钟的WAV、MP3、M4A，最大10MB；超过60秒自动选取20秒片段。</p><blockquote>你好，欢迎来到我的频道。今天想和你分享一个新的想法，希望我的声音能让每一次表达，都更加自然、清晰、有温度。</blockquote></div>
     <Field label="音色名称"><input autoFocus required maxLength={48} value={name} onChange={e => setName(e.target.value)} placeholder="例如：我的日常口播" disabled={busy}/></Field>
     <div className="voice-form-row"><Field label="录音语言"><select value={language} onChange={e => setLanguage(e.target.value)} disabled={busy}><option value="zh">普通话</option><option value="yue">粤语</option><option value="en">英语</option></select></Field><Field label="用途标签（可选）"><input maxLength={12} value={tag} onChange={e => setTag(e.target.value)} placeholder="例如：品牌解说" disabled={busy}/></Field></div>
-    <div className={`voice-upload ${sample ? 'ready' : ''}`}><Upload size={23}/><div><strong>{file?.name || '上传参考录音'}</strong><small>{uploading ? '正在检查时长并上传…' : sample ? `${sample.duration.toFixed(1)}秒 · 录音格式检查通过` : '录音会提交阿里百炼，用于创建这一个音色'}</small></div><Button type="button" disabled={busy || uploading} loading={uploading} onClick={() => input.current.click()}>{file ? '更换录音' : '选择文件'}</Button></div>
+    <div className={`voice-upload ${sample ? 'ready' : ''}`}><Upload size={23}/><div><strong>{file?.name || '上传参考录音'}</strong><small>{uploading ? '正在本地检查录音并准备片段…' : sample ? prepared.summary : '点击开始克隆后，才提交录音用于创建音色'}</small></div><Button type="button" disabled={busy || uploading} loading={uploading} onClick={() => input.current.click()}>{file ? '更换录音' : '选择文件'}</Button></div>
     <input hidden ref={input} type="file" accept=".wav,.mp3,.m4a" onChange={choose} aria-label="克隆参考录音"/>
-    {url && <div className="voice-reference"><span>参考录音试听</span><audio controls src={url}/></div>}
+    <Notice message={prepared.notice}/>
+    {referenceSrc && <div className="voice-reference"><span>{prepared.label}</span><audio key={referenceSrc} controls preload="metadata" src={referenceSrc}/></div>}
     <label className="checkbox-row voice-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy}/>我拥有此声音素材的使用授权，同意将录音提交阿里百炼用于音色克隆。</label>
     <Notice message={localError || error} error/>
     <p className="helper">克隆免费，完成后即可用于口播。首次合成试听及视频配音按页面报价执行。</p>

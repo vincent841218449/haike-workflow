@@ -7,7 +7,7 @@
 - 工作台V2：图文/口播、创作任务、资源库、日历、API设置。作品UI移除，/projects转/tasks。本目录4188/内部8000；旧端口已停，仅本地运行；根README-MAC.md。
 - 图文：safe_v2三景/9秒，标题/结论/详情、素材、音乐与排版；真实队列→作品待审已跑通。
 - 口播：四项输入→限额入队→/tasks。模板搜索/样片/来源、缺项定位；移除专业跳转，自动成片回表单；一键排除TPL，报价前验Ref，22种绑定核对。根docs/tasks/2026-10-16-avatar-ux-template-audit.md。
-- /tasks进度/版本/播放/下载/审核/排期，冻结输入/产物；根docs/PRODUCT_CREATION_TASKS.md。7系统声及个人克隆接本机v3 Flash；免费克隆一次提交/自动入库，配音限额/原意图恢复、Key隔离，不扣云端余额。64后端/18前端及官方样本免费克隆OK，未收费试听；根docs/PRODUCT_VOICE_LIBRARY.md。
+- /tasks进度/版本/播放/下载/审核/排期，冻结输入/产物；根docs/PRODUCT_CREATION_TASKS.md。7系统声及个人克隆接本机v3 Flash；免费克隆一次提交，长录音自动20秒/试听，配音限额/原意图恢复、Key隔离，不扣云端余额。69后端/19前端及官方样本免费克隆OK，未收费试听；根docs/PRODUCT_VOICE_LIBRARY.md。
 - 动效：/avatar?mode=motion，ADu固定f52490bd/3.14.0-rc.1，11风格/54竖屏组、10风格/47横屏组、九横屏TPL。真实时钟/素材→不可变计划→原队列→待审视频+工程；49历史包保留，候选组未逐组人工验收。
 - ADu融合：Ref/语义/时钟→原生执行；自写04-A仅恢复旧请求。MotionGit2.5.2固定/组件分流。25组合/30片（4整条、26动作片段）隔离队列出片；字幕/取景/响度/双预览修复，解码及代表帧通过；非全部子组/连续听音验收。根docs/tasks/2026-10-16-template-render-matrix.md。另12新版包未装；原13元/两笔6.36冻结未改。
 - Key：云端/v2后台0600。CosyVoice实扣0.0012；腾讯历史未知冻0.001729。RunningHub钱包实扣×1.5已上线；7秒报价上限0.84，原158秒回执成本0.264/售价0.396。Pexels零价检索/下载解码通过；新字幕Whisper词级/旧任务原ASR；生图暂停。根docs/tasks/2026-10-14-relay-live-verification.md。

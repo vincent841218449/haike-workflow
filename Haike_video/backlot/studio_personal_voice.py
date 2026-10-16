@@ -77,18 +77,28 @@ def _lock(studio, identity):
     return operation_lock(_path(studio, identity).with_suffix(".lock"))
 
 
-def upload(studio, normalized, name, duration):
-    if not configuration_status(studio)["ready"]:
-        raise WorkError("本机音色服务尚未配置，请联系管理员")
+def upload(studio, normalized, name, duration, preparation=None):
+    """Save a private reference locally; consent is required before transmission."""
     raw = normalized.read_bytes()
     identity = "samplelocal-" + hashlib.sha256(raw).hexdigest()[:32]
     with _lock(studio, identity):
         path = _path(studio, identity).with_suffix(".wav")
         if not path.exists():
             path.write_bytes(raw); path.chmod(0o600)
-        _write(studio, identity, {"id": identity, "sha256": hashlib.sha256(raw).hexdigest(),
+        _write(studio, identity, {**(preparation or {}), "id": identity, "sha256": hashlib.sha256(raw).hexdigest(),
             "name": name, "duration": duration})
-    return {"id": identity, "name": name, "duration": duration}
+    return {**(preparation or {}), "id": identity, "name": name, "duration": duration,
+            "reference_url": "/api/studio/voices/references/" + identity}
+
+
+def reference(studio, sample_id):
+    if not isinstance(sample_id, str) or not re.fullmatch(r"samplelocal-[a-f0-9]{32}", sample_id):
+        raise WorkError("参考录音编号无效")
+    data = _read(studio, sample_id)
+    path = _path(studio, sample_id).with_suffix(".wav")
+    if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != data["sha256"]:
+        raise WorkError("参考录音已清理或发生变化，请重新上传")
+    return path
 
 
 def quote(studio, inputs):
