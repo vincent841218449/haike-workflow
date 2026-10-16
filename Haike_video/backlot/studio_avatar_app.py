@@ -243,11 +243,13 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
         def result():
             attempts=[*state.get('failed_attempts',[]),*state['chunks']]
             ids = [c['task_id'] for c in attempts if c.get('task_id')]
+            current=next((c for c in state['chunks'] if c['status']!='succeeded'),None)
+            current_id=current.get('task_id') if current is not None else ids[-1] if ids else None
             unknown = state['status'] == 'submission_unknown'
             receipts=[c['billing'] for c in attempts if c.get('billing')]
             known=len(receipts)==len(attempts) and all(any(r.get('provider_usage',{}).get(k) is not None for k in ('consume_money','consume_coins')) for r in receipts)
             return {'id':state['id'],
-                    'status':state['status'], 'upstream_id':ids[-1] if ids else None, 'upstream_ids':ids,
+                    'status':state['status'], 'upstream_id':current_id, 'upstream_ids':ids,
                     'billing_source':'local-provider', 'cost_status':'provider_usage_recorded' if known else 'supplier_bill_pending',
                     'billing_policy':'actual_usage', 'billing_notice':execution['billing_notice'],
                     'usage_receipts':receipts,
@@ -258,8 +260,9 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
             return result()
         for position,chunk in enumerate(state['chunks']):
             if chunk['status']=='succeeded': continue
+            unknown_message=f'数字人第 {position+1}/{len(state["chunks"])} 段提交回执不明，需核对原请求；已完成片段保留，未重复提交'
             if chunk['status'] in {'submitting','submission_unknown'}:
-                state.update(status='submission_unknown',message='原数字人分段提交回执不明，需核对该请求；系统未重复提交')
+                state.update(status='submission_unknown',message=unknown_message)
                 chunk['status']='submission_unknown'; save(); return result()
             if chunk['status']=='failed' and not chunk.get('task_id'):
                 state.update(status='failed',message='数字人应用未完成当前分段，已完成片段与原配音保留'); save(); return result()
@@ -274,12 +277,22 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                     receipt = client.submit(state['image_file'],chunk['audio_file'])
                     if receipt.get('task_id'):
                         chunk.update(task_id=receipt['task_id'],status='running'); save()
-                    elif receipt['status']=='FAILED':
+                    chunk['submit_receipt']={'at':datetime.now(timezone.utc).isoformat(),
+                        'http_status':receipt.get('http_status'),'status':receipt.get('status'),
+                        'error_code':receipt.get('error_code'),'task_id':receipt.get('task_id')}
+                    save()
+                    if not chunk.get('task_id') and receipt['status']=='FAILED':
                         chunk.update(status='failed',error_code=receipt.get('error_code'))
-                        state.update(status='failed',message='数字人应用拒绝请求，请检查本机密钥权限、应用及额度'); save(); return result()
-                    else: raise ValueError('missing task id')
-                except Exception:
-                    chunk['status']='submission_unknown'; state.update(status='submission_unknown',message='原数字人分段提交回执不明，未重复提交'); save(); return result()
+                        message=('RunningHub 钱包余额不足，原配音和已完成分段保留' if str(receipt.get('error_code'))=='416'
+                                 else '数字人应用拒绝请求，请检查本机密钥权限、应用及额度')
+                        state.update(status='failed',message=message); save(); return result()
+                    if not chunk.get('task_id'): raise ValueError('missing task id')
+                except Exception as exc:
+                    chunk['submission_diagnostic']={'phase':'submit','exception_type':type(exc).__name__,
+                                                    'at':datetime.now(timezone.utc).isoformat()}
+                    if chunk.get('task_id'):
+                        state.update(status='running',message='数字人任务号已保留，系统将继续查询原请求');save();return result()
+                    chunk['status']='submission_unknown'; state.update(status='submission_unknown',message=unknown_message); save(); return result()
             # Query failures retain the checkpointed task ID and only query again.
             try: queried=client.poll(chunk['task_id'])
             except Exception:

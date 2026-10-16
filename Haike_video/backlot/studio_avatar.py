@@ -467,6 +467,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
                 save()
                 if job['status'] != 'succeeded':
                     if job['status']=='failed': raise WorkError(job.get('message') or '数字人应用生成失败，已保留全部产物')
+                    if job['status']=='submission_unknown':
+                        raise WorkError(job.get('message') or '原数字人分段提交回执不明，未重复提交','provider_reconciliation')
                     raise WorkError(job.get('message') or '数字人应用正在生成','provider_pending')
             else:
                 result = paid("avatar", "haike/avatar", {"audio_file": p["audio_file"], "image_file": p["image_file"]})
@@ -529,6 +531,10 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     except ProductionQueueCancelled:
         raise
     except WorkError as exc:
+        if exc.code == 'provider_reconciliation':
+            return {'status':'ambiguous','stage':str(exc),
+                    'error':{'code':exc.code,'message':str(exc),'type':'StudioProviderReceiptUnknown'},
+                    'safe_resume_point':'studio_avatar_receipt','retryable':False}
         if exc.code == "provider_pending":
             return {"status": "ambiguous", "stage": str(exc), "error": {"code": "provider_pending", "message": str(exc), "type": "StudioProviderPending"}, "safe_resume_point": "studio_avatar_provider"}
         if exc.code in {"audio_script_mismatch", "template_incompatible", "template_mismatch", "budget_exceeded", "local_artifact_missing", "replacement_conflict", "quote_changed"}:

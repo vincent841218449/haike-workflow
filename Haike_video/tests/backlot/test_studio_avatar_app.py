@@ -81,6 +81,14 @@ def test_non_json_auth_rejection_is_definite_before_a_task_is_accepted():
     assert result['status']=='FAILED' and result['error_code']=='403' and not result['task_id']
 
 
+def test_flat_balance_rejection_without_status_is_not_an_unknown_submission():
+    response=Response({'errorCode':'416','errorMessage':'wallet insufficient'})
+    client=RunningHubAIAppClient('test-key',json.loads(PROFILE_PATH.read_text()),SimpleNamespace(post=lambda *a,**k:response))
+    result=client.submit('portrait','audio')
+    assert result['status']=='FAILED' and result['error_code']=='416' and not result['task_id']
+    assert '余额' in result['message']
+
+
 @pytest.fixture
 def app_rig(tmp_path,monkeypatch):
     studio=Studio(tmp_path/'projects');folder=studio.projects_root/'studio-test'/'renders/test'
@@ -129,6 +137,22 @@ def test_unknown_submit_blocks_later_segments_and_never_replays(app_rig):
     assert run(app_rig)['status']=='submission_unknown'
     client.unknown=False
     assert run(app_rig)['status']=='submission_unknown' and len(client.calls)==1
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert state['chunks'][0]['submission_diagnostic']['exception_type']=='TimeoutError'
+    assert 'lost response' not in json.dumps(state)
+
+
+def test_later_unknown_segment_does_not_borrow_previous_successful_task_id(app_rig):
+    client=app_rig[5];submit=client.submit
+    def third_lost(image,audio):
+        if len(client.calls)==2:
+            client.calls.append(audio);raise TimeoutError('private-response-not-recorded')
+        return submit(image,audio)
+    client.submit=third_lost
+    result=run(app_rig)
+    assert result['status']=='submission_unknown' and result['upstream_ids']==['1','2']
+    assert result['upstream_id'] is None
+    assert run(app_rig)['status']=='submission_unknown' and len(client.calls)==3
 
 
 def test_query_disconnect_uses_original_segment_id_and_continues_remaining_only(app_rig):
@@ -237,14 +261,17 @@ def test_frozen_app_parameters_survive_a_local_default_change(tmp_path,monkeypat
     verify_execution(studio,execution)  # Frozen accepted parameters survive a default change.
 
 
-def test_explicit_provider_rejection_never_resubmits_or_runs_later_segments(app_rig):
+@pytest.mark.parametrize('code',['401','416'])
+def test_explicit_provider_rejection_never_resubmits_or_runs_later_segments(app_rig,code):
     client=app_rig[5]
     def reject(image,audio):
         client.calls.append(audio)
-        return {'status':'FAILED','task_id':'','error_code':'401'}
+        return {'status':'FAILED','task_id':'','error_code':code}
     client.submit=reject
     assert run(app_rig)['status']=='failed'
     assert run(app_rig)['status']=='failed' and len(client.calls)==1
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert state['chunks'][0]['submit_receipt']['error_code']==code
 
 
 def test_terminal_long_running_805_is_split_once_and_keeps_original_receipt(app_rig):

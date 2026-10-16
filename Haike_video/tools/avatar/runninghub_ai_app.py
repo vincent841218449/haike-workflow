@@ -61,8 +61,15 @@ class RunningHubAIAppClient:
             json=body, timeout=(15,180), allow_redirects=False)
         value = self._json(response)
         # Both current flat V2 and older enveloped responses are supported.
-        return {'task_id':str(value.get('taskId') or ''), 'status':str(value.get('status') or value.get('taskStatus') or 'RUNNING').upper(),
-                'error_code':value.get('errorCode'), 'message':value.get('errorMessage')}
+        task_id=str(value.get('taskId') or '')
+        status=value.get('status') or value.get('taskStatus')
+        error=value.get('errorCode')
+        if not task_id and not status and str(error or '') not in {'','0','200'}:
+            status='FAILED'
+        message=('RunningHub 钱包余额不足，请充值后核对原请求再继续' if str(error)=='416'
+                 else value.get('errorMessage'))
+        return {'task_id':task_id, 'status':str(status or 'RUNNING').upper(),
+                'error_code':error, 'message':message,'http_status':response.status_code}
 
     def poll(self, task_id):
         response = self.session.post(self.profile['base_url'] + self.profile['query_path'],

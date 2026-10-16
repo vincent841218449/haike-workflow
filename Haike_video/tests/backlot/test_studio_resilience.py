@@ -129,6 +129,21 @@ def test_new_app_default_does_not_switch_an_already_accepted_gateway_intent(rig,
     assert len([e for e in events if e[:2]==('confirm','haike/avatar')])==1
 
 
+def test_local_app_unknown_receipt_is_reconciliation_not_automatic_provider_wait(rig,monkeypatch):
+    _,project,request,gateway,events=rig
+    portrait=project/'portrait.png';portrait.write_bytes(b'original-portrait')
+    request['prepared']['portrait_path']=str(portrait)
+    request['avatar_execution']={'route':'local-runninghub-ai-app'}
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    monkeypatch.setattr('backlot.studio_avatar_app.produce',lambda *args,**kw:
+        {'id':'local-original','status':'submission_unknown','message':'原第三段回执不明，未重复提交'})
+    for _ in range(2):
+        result=run_avatar(project,request,gateway)
+        assert result['status']=='ambiguous' and result['error']['code']=='provider_reconciliation'
+        assert result['safe_resume_point']=='studio_avatar_receipt' and result['retryable'] is False
+    assert not any(e[:2]==('confirm','haike/avatar') for e in events)
+
+
 def test_local_app_producer_resumes_without_confirming_gateway_avatar(rig,monkeypatch):
     _,project,request,gateway,events=rig
     request['avatar_execution']={'route':'local-runninghub-ai-app'}
