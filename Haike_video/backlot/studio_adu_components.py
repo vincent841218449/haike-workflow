@@ -20,13 +20,13 @@ LAYOUTS = {"headline", "compare", "stack", "quote", "window"}
 
 
 def supported(draft):
-    # The existing UI always saves strict: it locks the selected source/style,
-    # not the incidental nine-item structure of its demo. Same-pack components
-    # keep that lock and are labelled explicitly in the result receipt.
+    # Old frozen requests retain their historical meaning. New selections state
+    # the execution contract explicitly; native choreography cannot fall back.
     value = draft["input"]
     motion = value.get("motion", {})
     return (
-        motion.get("style") == "03-A"
+        value.get("templateExecution") != "native"
+        and motion.get("style") == "03-A"
         and motion.get("layout") == "portrait"
         and not value.get("ai", {}).get("materials")
         and (value.get("music") or {"mode": "none"}).get("mode") == "none"

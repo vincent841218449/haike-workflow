@@ -78,7 +78,7 @@ def capabilities(layout):
     return json.loads(command("auto-capabilities", "--layout", layout).stdout)
 
 
-def library(layout="portrait"):
+def library(layout="portrait", editor=False):
     root = runtime()
     catalog = json.loads((root / "references/template-catalog.json").read_text(encoding="utf-8"))
     caps = capabilities(layout)
@@ -88,7 +88,8 @@ def library(layout="portrait"):
             group = [g for g in caps["groups"] if g["style"] == item["id"] and layout in g["layouts"]]
             preview = item.get("portraitPreview", item.get("preview")) if layout == "portrait" else item.get("preview")
             demo = item.get("portraitDemo", item.get("demo")) if layout == "portrait" else item.get("demo")
-            styles.append({"id": item["id"], "name": item["title"], "family": family["title"], "family_id": family["id"],
+            from backlot.studio_template_names import name, label
+            styles.append({"id": item["id"], "name": name(item['id'], item['title']), "display_name": label(item['id'], item['title']), "aliases": [item['title']], "family": family["title"], "family_id": family["id"],
                            "supported": bool(group), "selection": group[0]["selection"] if group else None,
                            "status": group[0]["status"] if group else "unsupported", "scope": item.get("scope", "完整镜头组"),
                            "preview": "/api/studio/motion/media/" + preview if preview else None,
@@ -99,17 +100,17 @@ def library(layout="portrait"):
                 from backlot.studio_template_registry import legacy_ref
                 styles[-1]['template_ref'] = legacy_ref(item['id'], layout, caps['groups'])
                 styles[-1]['runtime_label'] = 'ADu 原生镜头组'
+                styles[-1]['execution_modes'] = ['native']
                 if item['id']=='03-A' and layout=='portrait':
-                    styles[-1].update(scope='固定编舞或同包原组件；按完整原文自动编排',
-                        runtime_label='ADu 原生组 / 原包组件自适应')
+                    styles[-1]['execution_modes'].append('components')
     from backlot.studio_motion_quick import groups as quick_groups
     from backlot.studio_motiongit import library as motiongit_library
-    styles.extend(motiongit_library(layout))
+    if not editor:styles.extend(motiongit_library(layout))
     styles.append({"id":"quick", "name":"轻量动画组合", "family":"基础动画", "family_id":"07", "supported":layout=="landscape",
                    "selection":"TPL", "status":"quick-start", "scope":"9个轻量组件；不代表完整工程的全部动作", "preview":"/api/studio/motion/media/assets/tutorials/templates.png",
                    "demo":None, "preview_basis":"上游9个基础动画组件说明图，不是完整工程样片", "requirements":["已有口播与原文","实际动作落点"], "groups":quick_groups(QUICK) if layout=="landscape" else []})
     from backlot.studio_template_registry import pending_packages
-    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout, "pending_packages": pending_packages(),
+    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout, "pending_packages": pending_packages(layout),
             "available_styles": caps["availableStyles"], "available_groups": caps["availableGroups"],
             "quick": [{"id": a, "name": b, "layout": "landscape", "status": "quick-start"} for a, b in QUICK],
             "tools": ["自动比较可用组", "内容与动作时钟检查", "当前分镜素材替换", "横竖屏排版", "准确字幕与双语字幕", "人脸构图", "背景音乐与动作音效", "工程与视频导出", "版本保留"],

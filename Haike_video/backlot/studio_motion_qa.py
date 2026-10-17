@@ -23,8 +23,9 @@ def receipt(draft, folder, output):
         raise WorkError('实际运行包与所选模板不一致', 'template_mismatch')
     scenes = saved['spec']['scenes']
     if not scenes: raise WorkError('原生构建缺少实际镜头', 'template_mismatch')
+    from backlot.studio_template_names import label
     return {'id': f'adu:{style}:{layout}', 'style': style, 'layout': layout,
-            'name': '仪器台演示' if style == '04-A' else style,
+            'name': label(style),
             'adapter': 'adu-motion-video', 'variant': 'original', 'variant_name': 'ADu 原生镜头组',
             'template_ref': ref, 'plan_sha256': sha(plan_path), 'output_sha256': sha(output),
             'groups': [{'group': s['sceneId'], 'start_frame': s['startFrame'], 'end_frame': s['endFrame']} for s in scenes],

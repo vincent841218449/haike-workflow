@@ -10,8 +10,12 @@ INSTRUMENT_ADAPTER = 'studio-instrument-v1'
 def selected(draft):
     motion = draft.get('input', {}).get('motion')
     if motion:
+        from backlot.studio_template_names import label
         value = {'id':f"adu:{motion['style']}:{motion['layout']}", 'style':motion['style'],
-                'layout':motion['layout'], 'name':{'04-A':'仪器台演示','motiongit-612':'仪器台演示 · 完整版'}.get(motion['style'],motion['style'])}
+                'layout':motion['layout'], 'name':label(motion['style'])}
+        if motion['style'].startswith('motiongit-'):
+            from backlot.studio_motiongit import installed
+            value['name'] = installed(motion['style']).get('display_name',label(motion['style']))
         if draft['input'].get('templateRef'):
             ref=draft['input']['templateRef']
             value.update(template_ref=ref, adapter='motiongit' if ref.get('runtime')=='motiongit' else 'adu-motion-video')
@@ -45,13 +49,21 @@ def instrument_plan(draft, storyboard):
             'frames':round(storyboard['duration']*60), 'scene_ids':[s['id'] for s in scenes]}
 
 
-def verify(draft, actual):
+def verify(draft, actual, *, selection_only=False):
     if not isinstance(actual,dict) or actual.get('id') != selected(draft)['id']:
         raise WorkError('实际渲染模板与所选模板不一致，产物保留但不会标记制作成功', 'template_mismatch')
     ref = draft.get('input', {}).get('templateRef')
     if ref:
         if actual.get('template_ref') != ref or actual.get('adapter') != ('motiongit' if ref.get('runtime')=='motiongit' else 'adu-motion-video'):
             raise WorkError('实际渲染模板来源与所选原生包不一致', 'template_mismatch')
+    # Before production the frozen selection has no actual execution receipt.
+    # Every completion call keeps the strict default and must supply a variant.
+    if selection_only:return
+    execution=draft.get('input', {}).get('templateExecution') if draft.get('input', {}).get('motion') else None
+    if execution == 'native' and actual.get('variant') not in {'original','native'}:
+        raise WorkError('实际制作方式与所选原生镜头组不一致，不能标记成功', 'template_mismatch')
+    if execution == 'components' and actual.get('variant') not in {'source-components-v1','motion-kit'}:
+        raise WorkError('实际制作方式与所选组件编排不一致，不能标记成功', 'template_mismatch')
 
 
 def verify_native(actual, expected_ref, *, rendered=False):

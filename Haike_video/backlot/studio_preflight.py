@@ -29,6 +29,8 @@ def prepare(studio, draft, folder, audio, cues, storyboard, caption_cues, *, leg
     folder = Path(folder)
     direction_path=folder/'native-direction.json'
     if direction_path.is_file() and json.loads(direction_path.read_text()).get('workflow')=='adu-source-components-v1':
+        if draft['input'].get('templateExecution') == 'native':
+            raise WorkError('所选为原生镜头组，组件自适应不能通过制作检查', 'template_mismatch')
         from backlot.studio_adu_components import prepare as components
         from backlot.studio_render import media_probe
         return components(draft,folder,audio,cues,media_probe(audio)['duration'],caption_cues)

@@ -79,12 +79,20 @@ def verify_ref(ref):
         raise WorkError('所选模板来源、版本或运行文件已变化，原产物保留', 'template_mismatch')
 
 
-def pending_packages():
+def pending_packages(layout=None):
     # Catalog announcements are not executable installations.
-    from backlot.studio_motiongit import configuration, STYLE
-    config = configuration().get(STYLE)
-    if config and config.get('production_ready'): return []
-    return [{'id': 'motiongit:adunext:template-04-dark-console-portrait',
-             'name': '仪器台演示 · 新版完整包', 'version': config['version'] if config else None, 'supported': False,
-             'status': 'validation-pending' if config else 'package-required', 'reason': '真实模板包已验证，正在进行本地运行验收' if config else '尚未导入真实 .motion 包，不能制作',
-             'url': 'https://motiongit.com/@adunext/template-04-dark-console-portrait'}]
+    from backlot.studio_motiongit import configuration
+    from backlot.studio_template_names import MOTIONGIT_CATALOG
+    entries=list(configuration().values());result=[]
+    for slug,title,ratio in MOTIONGIT_CATALOG:
+        if layout and ratio!=layout:continue
+        installed=[c for c in entries if c.get('template_id')==slug]
+        current=[c for c in installed if c.get('version')=='2.5.7' or slug=='385712']
+        if any(c.get('production_ready') for c in current):continue
+        config=current[-1] if current else None
+        result.append({'id':'motiongit:adunext:'+slug,'name':title,'layout':ratio,
+            'version':config['version'] if config else None,'supported':False,
+            'status':'validation-pending' if config else 'package-required',
+            'reason':'原包已验签，等待本地制作检查' if config else '最新版 .motion 尚未导入；旧版模板继续保留',
+            'url':'https://motiongit.com/@adunext/'+slug})
+    return result

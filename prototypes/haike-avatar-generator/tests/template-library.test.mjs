@@ -8,8 +8,9 @@ test('native picker preserves exact package identity and original preview',()=>{
     preview:'/native.png',demo:'/native.mp4',automatic_name:'自写仿版',automatic_preview:'/fake.svg'}]};
   const [card]=nativeTemplateCards(c,'portrait',{style:'04-A',layout:'portrait'});
   assert.equal(card.image,'/native.png');assert.equal(card.demo,'/native.mp4');
-  assert.equal(card.name,'仪器台演示');assert.deepEqual(card.choice.templateRef,ref);
+  assert.equal(card.name,'04-A · 仪器台演示');assert.deepEqual(card.choice.templateRef,ref);
   assert.equal(card.choice.templatePolicy,'strict');assert.equal(card.selected,true);
+  assert.equal(card.choice.templateExecution,'native');
 });
 
 test('announced or unavailable packages cannot become creation choices',()=>{

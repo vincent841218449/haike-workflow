@@ -186,9 +186,9 @@ async def voice_rename(voice_id: str, request: Request, data: dict = Body(...)):
 
 
 @router.get("/api/studio/motion/catalog")
-async def motion_catalog(layout: str = "portrait"):
+async def motion_catalog(layout: str = "portrait", editor: bool = False):
     from backlot.studio_motion import library
-    return await asyncio.to_thread(call, library, layout)
+    return await asyncio.to_thread(call, library, layout, editor)
 
 
 @router.get("/api/studio/motion/media/{name:path}")

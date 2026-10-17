@@ -18,18 +18,18 @@ export function nativeTemplateCards(catalog, layout, motion) {
   // Quick TPL has no full-template reference or automatic semantic director.
   return (catalog?.styles || []).filter(s => s.supported &&
     ['adu-legacy','motiongit'].includes(s.template_ref?.runtime) && s.template_ref?.fingerprint).map(s => ({
-    ...s, image:s.preview, demo:s.demo,
+    ...s, name:s.display_name || (/^\d\d-[A-Z]$/.test(s.id)?`${s.id} · ${s.name}`:s.name), image:s.preview, demo:s.demo,
     description:PURPOSES[s.id] || s.scope,
     sourceLabel:s.template_ref.runtime==='motiongit'?`MotionGit · v${s.template_ref.version || s.selection?.split('@')[1]}`:'ADu · 原生镜头组',
     sourceDetail:s.template_ref.runtime==='motiongit'?s.scope:`${s.groups.length} 个原生镜头组 · ${s.selection}`,
     ratio:layout==='portrait'?'9:16':'16:9',
-    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict'},
+    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict', templateExecution:'native'},
     selected:motion?.style===s.id&&motion?.layout===layout,
   }));
 }
 
 export function filterTemplateCards(cards, search) {
   const query=search.trim().toLocaleLowerCase();
-  return cards.filter(t=>!query || [t.name,t.id,t.family,t.description,t.sourceLabel].join(' ').toLocaleLowerCase().includes(query))
+  return cards.filter(t=>!query || [t.name,t.id,t.family,t.description,t.sourceLabel,...(t.aliases||[])].join(' ').toLocaleLowerCase().includes(query))
     .sort((a,b)=>Number(b.selected)-Number(a.selected));
 }

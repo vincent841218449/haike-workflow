@@ -160,6 +160,8 @@ def frozen_request(studio, draft, quote_id, maximum=None):
     # New submissions cannot reuse a retired-model quote. Already queued requests
     # keep their original execution state and resume through the native queue.
     validate_voice(draft["input"])
+    if draft['input'].get('motion') and 'templateExecution' not in draft['input']:
+        raise WorkError('请保存本次模板制作方式后重新读取报价；旧任务仍可按冻结输入恢复', 'template_incompatible')
     with studio.db() as db: row = db.execute("SELECT data FROM studio_quotes WHERE id=?", (quote_id,)).fetchone()
     if not row: raise WorkError("请先读取本次制作报价")
     data = json.loads(row[0])
@@ -403,7 +405,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             from backlot.studio_avatar_app import verify_execution
             verify_execution(studio,request['avatar_execution'])
         from backlot.studio_presentation import selected, verify
-        if request.get('presentation'): verify(draft,request['presentation'])
+        if request.get('presentation'): verify(draft,request['presentation'],selection_only=True)
         if (request.get('template_ref') or {}).get('runtime') == 'motiongit':
             from backlot.studio_presentation import verify_native
             verify_native(request['presentation'],request['template_ref'])

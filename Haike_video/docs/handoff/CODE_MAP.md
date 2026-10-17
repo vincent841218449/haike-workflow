@@ -1,6 +1,6 @@
 # 代码地图
 
-更新时间：2026-10-16
+更新时间：2026-10-17
 
 ## 当前工作台V2
 
@@ -13,7 +13,7 @@
 - AI分镜：studio_storyboard.py原文/时钟；studio_chat_gateway.py网关；studio_chat_route.py冻结路由。studio_adu_components.py同包组件；studio_failure.py脱敏诊断；生图暂停。根docs/tasks/2026-10-16-production-resilience.md。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue{,_worker}.py；单通道/断点/取消/进度保留，所有产物登记作品台账。
-- 模板锁定：studio_template_registry.py冻结来源；studio_motion_director.py语义/证据→studio_preflight.py→原生执行，studio_motion_qa.py核对成片。studio_motiongit{,_native}.py官方.motion双工作流；studio_media_layout.py按素材角色放大/保全证据。自写04-A仅兼容旧请求。studio_presentation.py核对实际身份；studio_creation.py复用费用/阶段，work_api.py工程下载绑定完成版本。根docs/tasks/2026-10-15-adu-native-integration.md。
+- 模板：studio_template_names.py统一名称；studio_template_registry.py冻结来源，studio_motion_director.py→studio_preflight.py执行显式原生/组件。studio_motiongit{,_native,_macro}.py多包；新版macro执行待验收禁用，scripts/import_motiongit_template.py验签导入。studio_presentation.py核对实际身份/路线，studio_motion_qa.py核对成片；studio_media_layout.py保全素材证据，work_api.py工程绑定版本。根docs/tasks/2026-10-17-adu-template-contract.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。

@@ -6,6 +6,7 @@ import { api, upload } from "./studio-api.js";
 import { ActionBar, Button, Dialog as Modal, Field, Heading, Notice, PreviewPanel, availableModels } from './ui.jsx';
 import {Motion} from './Motion.jsx';
 import {AvatarTemplatePicker} from './AvatarTemplatePicker.jsx';
+import {TemplateExecution} from './TemplateExecution.jsx';
 import {nativeTemplateCards} from './template-library.js';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
@@ -199,7 +200,7 @@ function BasicAvatar() {
   }
   async function persistServer(values=input) {
     await writeDraft(values, serverDraft?.id);
-    let d=await api('/api/studio/drafts',{id:serverDraft?.id,revision:serverDraft?.revision,template_id:values.templateId,title:values.title||values.text.split(/[。！？\n]/)[0].slice(0,16),text:values.text,layout,input:{soundMode:values.soundMode,voiceId:values.voiceId,...(values.toneId?{toneId:values.toneId}:{}),rate:values.rate,subtitles:values.subtitles,ai:values.ai||AI_DEFAULTS,motion:values.motion||null,templateRef:values.templateRef||null,music:values.music||{mode:'none'},templatePolicy:'strict'}});
+    let d=await api('/api/studio/drafts',{id:serverDraft?.id,revision:serverDraft?.revision,template_id:values.templateId,title:values.title||values.text.split(/[。！？\n]/)[0].slice(0,16),text:values.text,layout,input:{soundMode:values.soundMode,voiceId:values.voiceId,...(values.toneId?{toneId:values.toneId}:{}),rate:values.rate,subtitles:values.subtitles,ai:values.ai||AI_DEFAULTS,motion:values.motion||null,templateRef:values.templateRef||null,music:values.music||{mode:'none'},templatePolicy:'strict',templateExecution:values.templateExecution||'native'}});
     setServerDraft(d);
     const draftUrl=new URL(location.href);draftUrl.searchParams.set('draft',d.id);draftUrl.searchParams.delete('new');history.replaceState(null,'',draftUrl);
     const assets={};
@@ -295,7 +296,7 @@ function BasicAvatar() {
     <Heading title="数字人口播" helper="给文案一个声音，让你的数字人开口讲。"><div className="creation-header-actions"><Button href="/tasks" variant="text">创作任务<ArrowRight size={15}/></Button>{serverDraft&&<Button href="/avatar?new=1">新建视频</Button>}</div></Heading>
     {blocked&&!blocked.startsWith('已选系统')&&<div className="creation-connection"><Notice message={blocked} error={accountState!==null}><Button variant="text" disabled={accountState===null} onClick={()=>{setConnectionVersion(v=>v+1);voiceLibrary.reload();}}>重新检查连接</Button><a href="/settings">查看 API 设置<ArrowRight size={14}/></a></Notice></div>}
     <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} selectedName={motionName} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
-    {input.motion&&<p className="helper">使用所选模板的原生动作，系统自动编排和检查。声音方案：{input.music?.mode==='track'?`原声 + ${input.music.asset?.name||'已选配乐'} + 动作音效`:'原声与动作音效（无背景音乐）'}。</p>}
+    {input.motion&&<TemplateExecution value={input.templateExecution||'native'} modes={motionCard?.execution_modes} disabled={saving||draftLoading||uncertain} onChange={templateExecution=>update({templateExecution})} music={input.music}/>}
     <PreparationStrip state={readiness}/>
     <div className="editor-shell avatar-editor"><section className="editor-content" aria-label="填写制作内容" aria-busy={draftLoading}>
       <fieldset className="avatar-form" disabled={saving||draftLoading||uncertain}>
