@@ -308,7 +308,7 @@ def test_download_disconnect_automatically_resumes_same_paid_result(app_rig,monk
 def test_invalid_download_is_preserved_and_redownloaded_without_regeneration(app_rig,monkeypatch):
     cache=app_rig[2]/'avatar-app';cache.mkdir()
     (cache/'video-000-00.mp4').write_bytes(b'truncated')
-    def verify(path,frames,reference=None):
+    def verify(path,frames,reference=None,final_segment=False):
         if path.read_bytes()==b'truncated': raise WorkError('incomplete file')
         return {'video':{'width':448,'height':560}}
     monkeypatch.setattr('backlot.studio_avatar_app._verify_clip',verify)
@@ -494,15 +494,17 @@ def test_shortening_preserves_already_successful_chunks(app_rig):
     assert json.loads(path.read_text())['chunks'][0]==completed
 
 
-def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig,monkeypatch):
+@pytest.mark.parametrize('seconds,padding',[(2,1),(9.96,1.92)])
+def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig,monkeypatch,seconds,padding):
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     from backlot.studio_render import media_probe
     ffmpeg,_=resolve_ffmpeg_pair()
     folder=app_rig[2];master=app_rig[3];provider=folder/'provider-padded.mp4'
-    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i','sine=frequency=880:sample_rate=24000:duration=2',
+    duration=seconds+padding
+    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i',f'sine=frequency=880:sample_rate=24000:duration={seconds}',
                     '-ac','1','-c:a','pcm_s16le',str(master)],check=True)
-    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i','color=navy:s=80x100:r=25:d=3',
-                    '-i',str(master),'-af','apad=pad_dur=1','-t','3','-c:v','libx264','-c:a','aac',str(provider)],check=True)
+    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i',f'color=navy:s=80x100:r=25:d={duration}',
+                    '-i',str(master),'-af',f'apad=pad_dur={padding}','-t',str(duration),'-c:v','libx264','-c:a','aac',str(provider)],check=True)
     cache=folder/'avatar-app';cache.mkdir()
     shutil.copyfile(provider,cache/'video-000-00.invalid.mp4')
     monkeypatch.setattr('backlot.studio_avatar_app.media_probe',media_probe)
@@ -513,9 +515,25 @@ def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig
     result=run(app_rig)
     assert result['status']=='succeeded' and len(app_rig[5].calls)==1
     state=json.loads((cache/'state.json').read_text())
-    assert state['chunks'][0]['tail_padding']['seconds']==pytest.approx(1)
+    assert state['chunks'][0]['tail_padding']['seconds']==pytest.approx(padding)
     assert state['chunks'][0]['tail_padding']['audio_correlation']>.98
-    assert abs(media_probe(folder/'avatar-source.mp4')['duration']-2)<.05
+    assert abs(media_probe(folder/'avatar-source.mp4')['duration']-seconds)<.05
+
+
+@pytest.mark.parametrize('seconds,padding,delay,final',[
+    (9.96,1.92,0,False),(10.04,1.92,0,True),(9.96,2.04,0,True),(9.96,1.92,.5,True),
+])
+def test_short_terminal_padding_keeps_scope_bound_and_audio_alignment(tmp_path,seconds,padding,delay,final):
+    from lib.ffmpeg_locator import resolve_ffmpeg_pair
+    ffmpeg,_=resolve_ffmpeg_pair();master=tmp_path/'master.wav';provider=tmp_path/'provider.mp4'
+    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i',f'sine=frequency=887:sample_rate=24000:duration={seconds}',
+                    '-ac','1','-c:a','pcm_s16le',str(master)],check=True)
+    duration=str(seconds+padding)
+    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i',f'color=navy:s=80x100:r=25:d={duration}',
+                    '-i',str(master),'-af',f'adelay={delay*1000}:all=1,apad','-t',duration,
+                    '-c:v','libx264','-c:a','aac',str(provider)],check=True)
+    with pytest.raises(WorkError,match='时长|原音轨'):
+        _verify_clip(provider,round(seconds*25),master,final)
 
 
 @pytest.mark.parametrize('delay,padding',[(.5,1),(0,2)])

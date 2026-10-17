@@ -226,16 +226,20 @@ def _reference_correlation(path, reference, frames):
     return score
 
 
-def _verify_clip(path, frames, reference=None):
+def _verify_clip(path, frames, reference=None, final_segment=False):
     info = media_probe(path)
     video = info.get('video')
     stream_duration=float(video.get('duration',info['duration'])) if video else 0
     if not video or abs(stream_duration-frames/25) > .5:
         extra=stream_duration-frames/25
-        if not video or reference is None or not .5<extra<=1.2+1e-6:
+        # Short terminal outputs can carry up to 2 seconds of provider tail.
+        # This never relaxes ordinary segment timing or audio alignment.
+        padding_limit=2.0 if final_segment and frames<=250 else 1.2
+        if not video or reference is None or not .5<extra<=padding_limit+1e-6:
             raise WorkError('数字人分段结果与原语音时长不一致，已保留供应商原结果')
         score=_reference_correlation(path,reference,frames)
         info['tail_padding']={'seconds':round(extra,6),'audio_correlation':score,
+                              'limit_seconds':padding_limit,'final_segment':final_segment,
                               'source_frames':frames,'policy':'original_audio_zero_offset'}
     return info
 
@@ -404,7 +408,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                     # contract before fetching the same paid result again.
                     if not candidate.is_file():
                         for archived in sorted(cache.glob(candidate.stem+'.invalid*.mp4')):
-                            try: _verify_clip(archived,frames,reference)
+                            try: _verify_clip(archived,frames,reference,position==len(state['chunks'])-1)
                             except WorkError: continue
                             shutil.copyfile(archived,candidate);break
                     if not candidate.is_file(): download_result(video['url'],candidate)
@@ -413,7 +417,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                     continue
                 except OSError:
                     continue
-                try: info=_verify_clip(candidate,frames,reference)
+                try: info=_verify_clip(candidate,frames,reference,position==len(state['chunks'])-1)
                 except WorkError:
                     # Retain bad bytes, then retry the original paid result.
                     invalid=candidate.with_suffix('.invalid.mp4')
