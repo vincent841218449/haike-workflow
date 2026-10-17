@@ -78,6 +78,46 @@ def verify_execution(studio, execution):
     execution_key(c, execution)
 
 
+def validate_submission_reissue(state, authorization, state_sha256):
+    """Bind one human authorization to one exact, still unknown submission."""
+    execution=authorization.get('execution') or {}
+    if (not authorization.get('approval_ref') or type(authorization.get('chunk_index')) is not int
+        or authorization.get('expected_state_sha256')!=state_sha256
+        or authorization.get('state_id')!=state.get('id')
+        or execution.get('billing_mode')!='rh_coins'
+        or execution.get('profile')!=(state.get('execution') or {}).get('profile')
+        or state.get('submission_reissues') or state.get('status')!='submission_unknown'
+        or state.get('output_sha256')):
+        raise WorkError('原未知请求或重提授权已改变，未提交新的收费调用')
+    chunks=state.get('chunks',[])
+    pending=[c for c in chunks if c.get('status')!='succeeded']
+    if (not pending or pending[0].get('index')!=authorization['chunk_index']
+        or pending[0].get('status')!='submission_unknown'
+        or any(c.get('status')!='queued' or c.get('task_id') for c in pending[1:])
+        or any(pending[0].get(k) for k in ('task_id','results','video_file','video_sha256'))):
+        raise WorkError('原分段已有任务号或结果，不能按未知请求重新生成')
+    return chunks.index(pending[0])
+
+
+def _apply_submission_reissue(state, authorization, path):
+    """Journal before submit; replaying consent never resets an accepted attempt."""
+    existing=state.get('submission_reissues',[])
+    if existing:
+        if len(existing)==1 and existing[0]['authorization']==authorization: return False
+        raise WorkError('本任务已使用一次未知分段重提授权，未再次提交')
+    position=validate_submission_reissue(state,authorization,sha(path))
+    original=state['chunks'][position]
+    archived={**original,'execution':original.get('execution') or state['execution'],
+              'replaced_by_approval_ref':authorization['approval_ref']}
+    state.setdefault('unknown_attempts',[]).append(archived)
+    state['chunks'][position]={k:original[k] for k in ('index','start_frame','end_frame')}
+    state['chunks'][position].update(status='queued',execution=authorization['execution'],
+                                    reissue_approval_ref=authorization['approval_ref'])
+    state['submission_reissues']=[{'authorization':authorization,'applied_at':datetime.now(timezone.utc).isoformat()}]
+    state.update(status='running',message='已记录一次RH币重提授权，原未知请求及成功片段保留')
+    return True
+
+
 def frame_segments(total_frames, cues, maximum=1125):
     """Prefer sentence ends; every sample and every frame belongs to one segment."""
     if type(total_frames) is not int or total_frames < 1 or not 1 <= maximum <= 1250:
@@ -229,7 +269,7 @@ def _stitch(folder, state, audio, target):
     temporary.replace(target)
 
 
-def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client, billing_execution=None, client_for_execution=None):
+def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client, billing_execution=None, client_for_execution=None, submission_reissue=None):
     """Advance durable segments sequentially; a lost submit is never replayed."""
     from lib.bailian_speech import operation_lock
     from backlot.studio_avatar import download_result
@@ -258,8 +298,13 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 _split_audio(audio,cache/f"audio-{c['index']:03d}.wav",c['start_frame'],c['end_frame'])
             atomic_private(path,state)
         def save(): atomic_private(path,state)
+        if submission_reissue:
+            verify_execution(studio,submission_reissue.get('execution') or {})
+            if billing_execution!=submission_reissue.get('execution'):
+                raise WorkError('未知分段重提必须使用已授权的RH币扣费配置')
+            if _apply_submission_reissue(state,submission_reissue,path): save()
         def result():
-            attempts=[*state.get('failed_attempts',[]),*state['chunks']]
+            attempts=[*state.get('failed_attempts',[]),*state.get('unknown_attempts',[]),*state['chunks']]
             ids = [c['task_id'] for c in attempts if c.get('task_id')]
             current=next((c for c in state['chunks'] if c['status']!='succeeded'),None)
             current_id=current.get('task_id') if current is not None else ids[-1] if ids else None
@@ -391,9 +436,9 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
         return result()
 
 
-def produce(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client=None, billing_execution=None):
+def produce(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client=None, billing_execution=None, submission_reissue=None):
     args=(studio,execution,folder,audio,portrait,cues)
-    if client is not None:return _advance(*args,on_progress=on_progress,client=client,billing_execution=billing_execution)
+    if client is not None:return _advance(*args,on_progress=on_progress,client=client,billing_execution=billing_execution,submission_reissue=submission_reissue)
     from contextlib import ExitStack
     from tools.avatar.runninghub_ai_app import RunningHubAIAppClient
     config=configuration(studio)
@@ -404,4 +449,4 @@ def produce(studio, execution, folder, audio, portrait, cues, *, on_progress=Non
             if identity not in clients:
                 clients[identity]=stack.enter_context(RunningHubAIAppClient(execution_key(config,value),value['profile']))
             return clients[identity]
-        return _advance(*args,on_progress=on_progress,client=None,billing_execution=billing_execution,client_for_execution=transport)
+        return _advance(*args,on_progress=on_progress,client=None,billing_execution=billing_execution,client_for_execution=transport,submission_reissue=submission_reissue)

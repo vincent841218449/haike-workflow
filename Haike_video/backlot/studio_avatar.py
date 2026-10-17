@@ -463,7 +463,8 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             if request.get('avatar_execution'):
                 from backlot.studio_avatar_app import produce as produce_avatar_app
                 job = produce_avatar_app(studio,request['avatar_execution'],output_dir,Path(p['audio_path']),Path(p['portrait_path']),clock_cues,on_progress=publish_progress,
-                                         billing_execution=request.get('avatar_billing_execution'))
+                                         billing_execution=request.get('avatar_billing_execution'),
+                                         submission_reissue=request.get('avatar_submission_reissue'))
                 state['stages']['avatar'] = {'execution':request['avatar_execution'], 'quote':{'model':'haike/avatar','max_charge_micros':None,'billing_source':'local-provider','billing_policy':'actual_usage'}, 'job':job}
                 save()
                 if job['status'] != 'succeeded':

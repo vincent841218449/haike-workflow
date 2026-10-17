@@ -103,6 +103,37 @@ def test_coin_billing_change_is_audited_and_never_requeues_an_unknown(tmp_path,m
     with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
 
 
+def test_unknown_segment_reissue_is_exact_once_audited_and_does_not_edit_journal(tmp_path,monkeypatch):
+    import hashlib
+    queue,projects=_queue(tmp_path)
+    old={'route':'local-runninghub-ai-app','identity':'wallet','profile':{'app_id':'2006270540499128322'}}
+    coins={**old,'identity':'member','billing_mode':'rh_coins'}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+        parent_job_id='draft-once',frozen_request={'render_id':'one','avatar_execution':old,'avatar_billing_execution':coins})
+    folder=projects/'alpha/renders/one/avatar-app';folder.mkdir(parents=True)
+    state={'id':'localavatar-original','execution':old,'status':'submission_unknown',
+           'chunks':[{'index':5,'status':'submission_unknown','start_frame':1120,'end_frame':1676}]}
+    path=folder/'state.json';path.write_text(json.dumps(state));digest=hashlib.sha256(path.read_bytes()).hexdigest()
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='ambiguous',stage='第三段回执待核对',error={'code':'provider_reconciliation'})
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    current=queue.get(job['job_id'])
+    kwargs={'revision':current['revision'],'chunk_index':5,'expected_state_sha256':digest,'approval_ref':'user-third-once'}
+    with pytest.raises(ProductionQueueConflict):
+        queue.reissue_unknown_avatar_segment(job['job_id'],**{**kwargs,'expected_state_sha256':'0'*64})
+    assert queue.get(job['job_id'])['revision']==current['revision']
+    changed=queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)
+    assert changed['status']=='queued' and json.loads(path.read_text())==state
+    private=queue.get(job['job_id'],include_private=True)['frozen_request']
+    assert private['avatar_submission_reissue']['execution']==coins and private['avatar_execution']==old
+    assert queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)['revision']==changed['revision']
+    with pytest.raises(ProductionQueueConflict):
+        queue.reissue_unknown_avatar_segment(job['job_id'],**{**kwargs,'approval_ref':'another'})
+    assert queue.claim_next('worker-two')['job_id']==job['job_id']
+    assert queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)['status']=='running'
+    assert queue.claim_next('worker-three') is None
+
+
 @pytest.mark.parametrize('code,old,allowed', [('805',True,True),('805',False,False),('401',True,False)])
 def test_retry_only_rechecks_confirmed_long_avatar_failure(tmp_path,code,old,allowed):
     queue,projects=_queue(tmp_path)

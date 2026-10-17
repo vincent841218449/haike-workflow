@@ -214,6 +214,60 @@ def test_coin_override_does_not_reissue_unknown_or_change_successful_segments(ap
     assert after['chunks']==before['chunks'] and len(client.calls)==3
 
 
+@pytest.mark.parametrize('lost_again',[False,True])
+def test_one_authorized_coin_reissue_preserves_success_unknown_and_recovery(app_rig,monkeypatch,lost_again):
+    client=app_rig[5];submit=client.submit
+    def third_lost(image,audio):
+        if len(client.calls)==2:
+            client.calls.append(audio);raise TimeoutError('lost')
+        return submit(image,audio)
+    client.submit=third_lost
+    assert run(app_rig)['status']=='submission_unknown'
+    path=app_rig[2]/'avatar-app/state.json';before=json.loads(path.read_text())
+    before['recovery']={'reason':'terminal_805_after_55m','previous_chunks':[{'task_id':'old-failed'}]}
+    path.write_text(json.dumps(before))
+    coins={**app_rig[1],'identity':'member-key','billing_mode':'rh_coins'}
+    authorization={'approval_ref':'user-third-once','chunk_index':2,'expected_state_sha256':sha(path),
+                   'state_id':before['id'],'execution':coins}
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    client.submit=submit;client.unknown=lost_again;client.query_failure=True
+    def advance():
+        return produce(*app_rig[:5],[],client=client,billing_execution=coins,submission_reissue=authorization)
+    result=advance()
+    assert result['status']==('submission_unknown' if lost_again else 'running')
+    assert len(client.calls)==4
+    state=json.loads(path.read_text())
+    assert state['chunks'][:2]==before['chunks'][:2] and state['recovery']==before['recovery']
+    assert state['unknown_attempts'][0]['status']=='submission_unknown'
+    assert state['unknown_attempts'][0]['submitted_at']==before['chunks'][2]['submitted_at']
+    assert state['unknown_attempts'][0]['execution']==app_rig[1]
+    assert state['chunks'][2]['execution']==coins
+    assert len(state['submission_reissues'])==1 and result['cost_status']=='supplier_bill_pending'
+    assert advance()['status']==result['status'] and len(client.calls)==4
+    client.query_failure=False
+    assert advance()['status']==('submission_unknown' if lost_again else 'succeeded')
+    assert len(client.calls)==4
+
+
+@pytest.mark.parametrize('change',['hash','task_id','success','other_chunk','wallet','profile'])
+def test_reissue_rejects_changed_or_queryable_attempt_without_payment(app_rig,monkeypatch,change):
+    client=app_rig[5];client.unknown=True
+    assert run(app_rig)['status']=='submission_unknown'
+    path=app_rig[2]/'avatar-app/state.json';state=json.loads(path.read_text())
+    coins={**app_rig[1],'billing_mode':'rh_coins'}
+    auth={'approval_ref':'once','chunk_index':0,'state_id':state['id'],'execution':coins}
+    if change=='task_id':state['chunks'][0]['task_id']='accepted'
+    if change=='success':state['chunks'][0]['status']='succeeded'
+    if change=='other_chunk':auth['chunk_index']=1
+    if change=='wallet':coins['billing_mode']='provider_default'
+    if change=='profile':coins['profile']={'app_id':'other'}
+    path.write_text(json.dumps(state));auth['expected_state_sha256']='0'*64 if change=='hash' else sha(path)
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    with pytest.raises(WorkError):
+        produce(*app_rig[:5],[],client=client,billing_execution=coins,submission_reissue=auth)
+    assert len(client.calls)==1 and json.loads(path.read_text())==state
+
+
 def test_coin_override_only_changes_unsubmitted_segments_and_uses_separate_uploads(app_rig,monkeypatch):
     from backlot.studio_avatar_app import _advance
     wallet=app_rig[5];wallet.query_failure=True

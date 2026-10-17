@@ -680,6 +680,55 @@ class ProductionQueue:
                         {'billing_mode':'rh_coins','approval_ref':approval_ref,'new_identity':execution['identity']})
             return self._public_row(db.execute('SELECT * FROM production_jobs WHERE job_id=?',(job_id,)).fetchone())
 
+    def reissue_unknown_avatar_segment(self, job_id: str, *, revision: int, chunk_index: int,
+                                       expected_state_sha256: str, approval_ref: str) -> dict[str, Any]:
+        """Operator-only, once, with exact state binding; worker journals the replacement."""
+        from backlot.studio import Studio
+        from backlot.studio_avatar_app import validate_submission_reissue, verify_execution
+        from backlot.work_catalog import WorkError
+        from lib.bailian_speech import operation_lock
+        approval_ref=_validate_identifier(approval_ref,'未知分段重提授权')
+        if type(revision) is not int or type(chunk_index) is not int or not isinstance(expected_state_sha256,str) or not re.fullmatch(r'[a-f0-9]{64}',expected_state_sha256):
+            raise ProductionQueueConflict('重提需要当前记录、原分段及状态摘要')
+        with self._connection(immediate=True) as db:
+            row=db.execute('SELECT * FROM production_jobs WHERE job_id=?',(job_id,)).fetchone()
+            if row is None: raise ProductionQueueError('生产任务不存在')
+            frozen=_decode(row['frozen_request'],{})
+            existing=frozen.get('avatar_submission_reissue')
+            if existing:
+                if (existing['approval_ref']==approval_ref and existing['chunk_index']==chunk_index
+                    and existing['expected_state_sha256']==expected_state_sha256): return self._public_row(row)
+                raise ProductionQueueConflict('本任务已记录一次未知分段重提授权，未再次提交')
+            if (row['revision']!=revision or row['kind']!='studio_avatar' or row['status']!='ambiguous'
+                or row['cancel_requested'] or _decode(row['error_json'],{}).get('code')!='provider_reconciliation'
+                or self._latest_creation_job(db,row)!=job_id):
+                raise ProductionQueueConflict('制作状态已改变，请先核对原请求')
+            project=(self.projects_root/row['project_id']).resolve()
+            render=(project/'renders'/str(frozen.get('render_id',''))).resolve()
+            if not project.is_relative_to(self.projects_root.resolve()) or not render.is_relative_to(project/'renders'):
+                raise ProductionQueueConflict('原制作目录无效')
+            execution=frozen.get('avatar_billing_execution') or {}
+            if (frozen.get('avatar_execution') or {}).get('route')!='local-runninghub-ai-app':
+                raise ProductionQueueConflict('仅支持原本地AI应用的未知分段恢复')
+            verify_execution(Studio(self.projects_root),execution)
+            now=_now()
+            with operation_lock(render/'avatar-app/state.lock'):
+                path=render/'avatar-app/state.json'
+                try:
+                    raw=path.read_bytes();state=json.loads(raw)
+                    receipt={'approval_ref':approval_ref,'chunk_index':chunk_index,
+                             'expected_state_sha256':expected_state_sha256,'state_id':state.get('id'),
+                             'execution':execution,'authorized_at':now,'queue_revision':revision}
+                    if state.get('execution')!=frozen.get('avatar_execution') or (render/'avatar-source.mp4').exists():
+                        raise WorkError('原数字人执行记录已改变或已有成片')
+                    validate_submission_reissue(state,receipt,hashlib.sha256(raw).hexdigest())
+                except (OSError,ValueError,WorkError):
+                    raise ProductionQueueConflict('原未知分段状态已改变，请核对后继续；未重复提交') from None
+                frozen['avatar_submission_reissue']=receipt
+                db.execute("UPDATE production_jobs SET frozen_request=?,status='queued',stage='已授权仅用RH币重提未知分段一次，复用成功片段',error_json='{}',safe_resume_point=NULL,retryable=0,worker_id=NULL,lease_expires_at=NULL,finished_at=NULL,updated_at=?,revision=revision+1 WHERE job_id=?",(_json(frozen),now,job_id))
+                self._event(db,job_id,'avatar_segment_reissue_authorized','ambiguous','queued',receipt)
+            return self._public_row(db.execute('SELECT * FROM production_jobs WHERE job_id=?',(job_id,)).fetchone())
+
     def replace_avatar(self, job_id: str, *, revision: int, previous_intent: str,
                        approval_ref: str, maximum: int) -> dict[str, Any]:
         """Operator-only reissue after explicit consent; normal retry never calls this.
