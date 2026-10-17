@@ -17,6 +17,14 @@ test('announced or unavailable packages cannot become creation choices',()=>{
   assert.deepEqual(nativeTemplateCards({styles:[{supported:false,id:'new-motion'}],pending_packages:[{id:'uninstalled'}]},'portrait',null),[]);
 });
 
+test('component-only validation is explicit and never selects native choreography',()=>{
+  const [card]=nativeTemplateCards({styles:[{id:'motiongit-608-v2-5-7',name:'02 · 纸面透视',
+    supported:true,groups:[],scope:'原包控件',execution_modes:['components'],
+    template_ref:{runtime:'motiongit',version:'2.5.7',fingerprint:'signed-paper'}}]},'portrait',null);
+  assert.equal(card.choice.templateExecution,'components');assert.equal(card.componentsOnly,true);
+  assert.match(card.description,/原生镜头组待验收/);assert.match(card.sourceLabel,/官方组件/);
+});
+
 test('one-click library excludes quick components and packages without verified source identity',()=>{
   const styles=[{id:'quick',supported:true,groups:[]},{id:'04-A',supported:true,groups:[]},
     {id:'motiongit-612',name:'仪器台演示 · 完整版',supported:true,groups:[],selection:'console@2.5.2',template_ref:{runtime:'motiongit',version:'2.5.2',fingerprint:'signed-package'}}];

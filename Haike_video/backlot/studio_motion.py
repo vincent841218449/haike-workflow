@@ -356,6 +356,9 @@ def brief(studio, draft, directory):
 
 
 def plan(studio, draft):
+    if draft.get('template_id')==TEMPLATE_ID and str(draft['input'].get('style','')).startswith('motiongit-'):
+        from backlot.studio_motiongit_editor import plan as editor_plan
+        return editor_plan(studio,draft)
     runtime()
     if draft["template_id"] != TEMPLATE_ID: raise WorkError("请选择动效口播")
     folder = (studio.projects_root / draft["id"] / "assets/motion-plans" / uuid4().hex).resolve()
@@ -377,6 +380,9 @@ def plan(studio, draft):
 
 
 def freeze(studio, draft, plan_id, confirmed):
+    if draft.get('template_id')==TEMPLATE_ID and str(draft['input'].get('style','')).startswith('motiongit-'):
+        from backlot.studio_motiongit_editor import freeze as editor_freeze
+        return editor_freeze(studio,draft,plan_id,confirmed)
     if confirmed is not True: raise WorkError("请先确认文案、素材和分镜含义")
     if not isinstance(plan_id, str) or not re.fullmatch(r"[a-f0-9]{32}", plan_id): raise WorkError("请先运行生成前检查")
     folder = studio.projects_root / draft["id"] / "assets/motion-plans" / plan_id

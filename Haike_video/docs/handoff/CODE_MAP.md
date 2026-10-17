@@ -13,7 +13,7 @@
 - AI分镜：studio_storyboard.py原文/时钟；studio_chat_gateway.py网关；studio_chat_route.py冻结路由。studio_adu_components.py同包组件；studio_failure.py脱敏诊断；生图暂停。根docs/tasks/2026-10-16-production-resilience.md。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 原生队列：production_queue{,_worker}.py；单通道/断点/取消/进度保留，所有产物登记作品台账。
-- 模板：studio_template_names.py统一名称；studio_template_registry.py冻结来源，studio_motion_director.py→studio_preflight.py执行显式原生/组件。studio_motiongit{,_native,_macro}.py多包；新版macro执行待验收禁用，scripts/import_motiongit_template.py验签导入。studio_presentation.py核对实际身份/路线，studio_motion_qa.py核对成片；studio_media_layout.py保全素材证据，work_api.py工程绑定版本。根docs/tasks/2026-10-17-adu-template-contract.md。
+- 模板：studio_template_names.py名称；studio_template_registry.py冻结来源/分路线验收，studio_motion_director.py→studio_preflight.py原生/组件。studio_motiongit{,_native,_macro}.py多包/材质/字幕/配乐；5新版组件可制、原生待验。studio_motiongit_editor.py与MotionGit.jsx逐镜/叠加编辑→预览冻结→原队列。scripts/import_motiongit_template.py验签，motiongit_render_matrix.py隔离检查。studio_presentation.py身份；studio_media_layout.py证据，work_api.py工程绑定。根docs/tasks/2026-10-17-adu-template-contract.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
@@ -39,5 +39,5 @@
 - 动效：tests/backlot/test_studio_motion.py；前端tests/motion.test.mjs、gateway-config.test.mjs；真实队列scripts/studio_motion_smoke.py。产品与验收根docs/PRODUCT_AVATAR_MOTION.md、docs/tasks/2026-10-13-adu-integration.md。
 - 本地四模板合成：scripts/studio_local_smoke.py；证据.backlot/studio-v2-local-smoke/summary.json。
 - 零费模板成片矩阵：scripts/template_render_matrix.py使用隔离正式队列；review_render_matrix.py取实际MP4/帧/声画时长/响度，人工结果另存。studio_audio_delivery.py只复制视频流处理交付声音；根docs/tasks/2026-10-16-template-render-matrix.md。
-- 实际工作台零费图文：.backlot/studio-v2-live-smoke.json，作品待用户审核。
+- 工作台零费图文：.backlot/studio-v2-live-smoke.json，待用户审核。
 - 源码检查：根scripts/check.py（Python3.12）；上下文预算：scripts/audit_context_handoff.py。

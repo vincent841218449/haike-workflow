@@ -26,8 +26,10 @@ def task_view(studio, job, scheduled_paths=()):
     except WorkError:
         draft = None
     manual_motion = category == 'motion' and (draft is None or draft.get('template_id') == 'avatar-motion-adu-v1')
+    motion_input=(draft or {}).get('input',{})
+    motiongit_editor = manual_motion and str(motion_input.get('style') or (motion_input.get('motion') or {}).get('style','')).startswith('motiongit-')
     route = "/graphic" if category == "graphic" else "/avatar" if category in {"avatar", "motion"} else "/tasks"
-    edit_url = route + "?draft=" + quote(job["project_id"], safe="") + ("&mode=motion" if manual_motion else "") if category != "other" else route
+    edit_url = route + "?draft=" + quote(job["project_id"], safe="") + ("&mode=motiongit" if motiongit_editor else "&mode=motion" if manual_motion else "") if category != "other" else route
     progress = job.get("progress") or json.loads(job.get('progress_json') or '{}')
     observed = progress.get("basis") == "steps" and progress.get("total", 0) > 0
     complete = job["status"] == "completed"

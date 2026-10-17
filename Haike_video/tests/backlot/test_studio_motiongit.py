@@ -12,6 +12,58 @@ from backlot.studio import atomic_private
 from backlot.work_catalog import WorkError,sha
 
 
+def test_template_material_never_inherits_a_different_package_profile():
+    caps={'styleProfiles':{'defaultProfile':'paper','profiles':{'paper':{'description':'暖纸绿色墨水'}}}}
+    assert m.component_profile({},caps)=='paper'
+    assert m.component_profile({'style_profile':'paper'},caps,'paper')=='paper'
+    with pytest.raises(WorkError,match='不属于当前模板'):
+        m.component_profile({'style_profile':'console'},caps)
+    with pytest.raises(WorkError):m.component_profile({},caps,'dark')
+
+
+@pytest.mark.parametrize('layout,geometry',[('portrait','720:1280'),('landscape','1280:720')])
+def test_native_mother_preserves_selected_aspect_instead_of_padding_into_portrait(layout,geometry):
+    assert m.mother_filter(layout)==f'scale={geometry}:force_original_aspect_ratio=decrease,pad={geometry}:(ow-iw)/2:(oh-ih)/2,fps=60'
+    with pytest.raises(WorkError):m.mother_filter('square')
+
+
+def test_new_package_cannot_resume_an_unbound_old_instance(tmp_path,monkeypatch):
+    atomic_private(tmp_path/'motiongit-source.json',{})
+    with pytest.raises(WorkError,match='缺少精确来源绑定'):
+        m.new_instance({'style':'motiongit-611-v2-5-7'},tmp_path)
+
+
+def test_component_validation_cannot_enable_unvalidated_native_production(monkeypatch):
+    from backlot.studio_template_registry import resolve
+    config={'production_ready':False,'validated_execution_modes':['components']}
+    assert m.execution_modes(config)==['components']
+    monkeypatch.setattr(m,'installed',lambda style:config)
+    with pytest.raises(WorkError,match='这一制作方式尚未完成'):
+        resolve({'input':{'motion':{'style':'motiongit-608-v2-5-7','layout':'portrait'},'templateExecution':'native'}})
+    assert m.execution_modes({'production_ready':False})==[]
+
+
+def test_sentence_narration_map_retains_negation_and_measured_intervals():
+    segments=[{'t0':0,'t1':3,'control':'quote','$text':'不是所有人都需要。'},
+              {'t0':3,'t1':6,'control':'quote','$text':'有条件时才使用。','$purpose':'summary'}]
+    captions=[{'s':.2,'e':2.8,'text':'不是所有人都需要。'},{'s':3.2,'e':5.7,'text':'有条件时才使用。'}]
+    rows=m.narration_map(segments,captions)
+    assert rows[0]['spokenText']==segments[0]['$text']
+    assert rows[0]['beats']==[{'at':.2,'until':2.8,'spokenText':'不是所有人都需要。','timing':'sentence','target':'quote'}]
+    assert rows[1]['purpose']=='summary' and rows[1]['captionIndices']==[1]
+    # A word-based shot cut must not silently split or retime a sentence cue.
+    segments[0]['t1']=2;segments[1]['t0']=2
+    with pytest.raises(WorkError,match='切开'):m.narration_map(segments,captions)
+    with pytest.raises(WorkError,match='归属缺失'):m.narration_map([],captions)
+
+
+def test_template_names_correspond_without_renaming_the_frozen_identity():
+    from backlot.studio_template_names import motiongit_label
+    assert motiongit_label('template-03-native-portrait','作者名称')=='03-A · 多屏展陈'
+    assert motiongit_label('template-04-dark-console','作者名称')=='04-A · 仪器台演示'
+    assert motiongit_label('template-01-integrated','作者名称')=='01 · 现代图文'
+
+
 def test_local_adapter_does_not_expose_generation_or_online_registration(tmp_path):
     for operation in ['submit','api','production','register','update','setup','python','sh']:
         with pytest.raises(WorkError,match='本地模板制作'):m.command({},tmp_path,operation)
@@ -72,6 +124,19 @@ def test_export_never_contains_personal_envelope_or_unlocked_runtime(tmp_path):
         names=z.namelist()
         assert 'inputs/v1/params.json' in names and 'plan/auto_plan.json' in names
         assert not any(x.startswith(('personal/','project/')) or x.endswith('.motion') for x in names)
+
+
+def test_export_binds_the_exact_delivered_video_and_editable_plan(tmp_path):
+    import zipfile
+    instance=tmp_path/'instance';instance.mkdir()
+    presentation={'name':'03-A · 多屏展陈','style':'motiongit-610-v2-5-7','layout':'portrait',
+        'variant':'motion-kit','template_ref':{'fingerprint':'signed-package'},
+        'plan_sha256':'frozen-plan','output_sha256':'actual-final-video','private':'never-export'}
+    archive=tmp_path/'editable-project.zip';m.export_project(instance,archive,presentation=presentation)
+    with zipfile.ZipFile(archive) as z:
+        binding=json.loads(z.read('delivery.json'))
+        assert binding['output_sha256']=='actual-final-video'
+        assert binding['plan_sha256']=='frozen-plan' and 'private' not in binding
 
 
 def test_queue_rejects_changed_frozen_inputs(tmp_path,monkeypatch):

@@ -54,10 +54,19 @@ def resolve(draft):
     motion = draft['input'].get('motion')
     if not motion: return None
     if motion['style'].startswith('motiongit-'):
-        from backlot.studio_motiongit import template_ref, installed
+        from backlot.studio_motiongit import template_ref, installed,execution_modes,component_profile
         config=installed(motion['style'])
-        if config.get('production_ready') is not True:
+        modes=execution_modes(config)
+        if not modes:
             raise WorkError('完整模板尚未完成本地运行验收，未提交收费调用','template_incompatible')
+        selected=draft['input'].get('templateExecution')
+        if selected is None and 'validated_execution_modes' in config:
+            raise WorkError('请明确选择已验收的模板制作方式，未提交收费调用','template_incompatible')
+        if selected and selected not in modes:
+            raise WorkError('所选模板的这一制作方式尚未完成本地验收，未提交收费调用','template_incompatible')
+        if motion.get('profile'):
+            if selected!='components':raise WorkError('当前材质选项只适用于官方组件编排','template_incompatible')
+            component_profile(config,json.loads(Path(config['capabilities']).read_text()),motion['profile'])
         ref = template_ref(config)
         if motion['layout'] != ref['layout'] or draft['input'].get('templateRef') not in (None, ref):
             raise WorkError('所选完整模板版本或画幅已改变，请重新选择', 'template_mismatch')
@@ -81,18 +90,18 @@ def verify_ref(ref):
 
 def pending_packages(layout=None):
     # Catalog announcements are not executable installations.
-    from backlot.studio_motiongit import configuration
-    from backlot.studio_template_names import MOTIONGIT_CATALOG
+    from backlot.studio_motiongit import configuration,execution_modes
+    from backlot.studio_template_names import MOTIONGIT_CATALOG,motiongit_label
     entries=list(configuration().values());result=[]
     for slug,title,ratio in MOTIONGIT_CATALOG:
         if layout and ratio!=layout:continue
         installed=[c for c in entries if c.get('template_id')==slug]
         current=[c for c in installed if c.get('version')=='2.5.7' or slug=='385712']
-        if any(c.get('production_ready') for c in current):continue
+        if any('native' in execution_modes(c) for c in current):continue
         config=current[-1] if current else None
-        result.append({'id':'motiongit:adunext:'+slug,'name':title,'layout':ratio,
+        result.append({'id':'motiongit:adunext:'+slug,'name':motiongit_label(slug,title),'official_name':title,'aliases':[title],'layout':ratio,
             'version':config['version'] if config else None,'supported':False,
             'status':'validation-pending' if config else 'package-required',
-            'reason':'原包已验签，等待本地制作检查' if config else '最新版 .motion 尚未导入；旧版模板继续保留',
+            'reason':('官方组件已可制作；完整原生镜头组仍待验收' if 'components' in execution_modes(config) else '原包已验签，等待本地制作检查') if config else '最新版 .motion 尚未导入；旧版模板继续保留',
             'url':'https://motiongit.com/@adunext/'+slug})
     return result

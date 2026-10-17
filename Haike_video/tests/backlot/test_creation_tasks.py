@@ -66,6 +66,19 @@ def test_explicit_creation_collapses_before_filters_counts_and_pages(setup):
     assert client.get('/api/studio/tasks').json()['counts']['all'] == 2
 
 
+@pytest.mark.parametrize('frozen_input',[{'style':'motiongit-608-v2-5-7'},{'motion':{'style':'motiongit-608-v2-5-7'}}])
+def test_motiongit_manual_task_returns_to_its_own_editor_from_frozen_input(setup,frozen_input):
+    studio,_,queue,client=setup
+    draft=studio.save_draft({'template_id':'avatar-motion-adu-v1','text':'原文','input':{'style':'motiongit-608-v2-5-7'}})
+    project=studio.projects_root/draft['id'];project.mkdir()
+    (project/'project.json').write_text(json.dumps({'title':'新版逐镜编辑'}))
+    job=queue.submit(project_id=draft['id'],kind='studio_motion',source='workbench',priority='normal',
+        parent_job_id='motiongit-editor',frozen_request={'draft':{**draft,'input':frozen_input}})
+    studio.save_draft({**draft,'input':{}})
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['edit_url']==f'/avatar?draft={draft["id"]}&mode=motiongit'
+
+
 def test_provider_wait_is_active_automatic_and_cancel_preserves_unknown_request(setup):
     _, draft, queue, client = setup
     job = submit(queue, draft, kind='studio_avatar')

@@ -160,7 +160,7 @@ class Studio:
             if value['input'].get('motion'):
                 value['input'].setdefault('templateExecution', 'native')
             if template["id"] == "avatar-motion-adu-v1":
-                allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode"}
+                allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode", "profile", "overlays"}
             if set(value["input"]) - allowed: raise WorkError("制作内容包含不支持的字段；API Key只能保存在API设置")
             if template["kind"] == "avatar" and value["input"].get("soundMode") == "voice" and "rate" in value["input"]:
                 from backlot.studio_speech_rate import speech_rate

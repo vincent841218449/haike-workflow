@@ -7,6 +7,7 @@ import { ActionBar, Button, Dialog as Modal, Field, Heading, Notice, PreviewPane
 import {Motion} from './Motion.jsx';
 import {AvatarTemplatePicker} from './AvatarTemplatePicker.jsx';
 import {TemplateExecution} from './TemplateExecution.jsx';
+import {MotionGit} from './MotionGit.jsx';
 import {nativeTemplateCards} from './template-library.js';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
@@ -33,6 +34,7 @@ function useAssetUrl(asset, fallback) {
 }
 
 export function App() {
+  if(new URLSearchParams(location.search).get('mode')==='motiongit')return <MotionGit/>;
   return new URLSearchParams(location.search).get('mode') === 'motion' ? <Motion/> : <BasicAvatar/>;
 }
 function BasicAvatar() {
@@ -296,7 +298,7 @@ function BasicAvatar() {
     <Heading title="数字人口播" helper="给文案一个声音，让你的数字人开口讲。"><div className="creation-header-actions"><Button href="/tasks" variant="text">创作任务<ArrowRight size={15}/></Button>{serverDraft&&<Button href="/avatar?new=1">新建视频</Button>}</div></Heading>
     {blocked&&!blocked.startsWith('已选系统')&&<div className="creation-connection"><Notice message={blocked} error={accountState!==null}><Button variant="text" disabled={accountState===null} onClick={()=>{setConnectionVersion(v=>v+1);voiceLibrary.reload();}}>重新检查连接</Button><a href="/settings">查看 API 设置<ArrowRight size={14}/></a></Notice></div>}
     <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} selectedName={motionName} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
-    {input.motion&&<TemplateExecution value={input.templateExecution||'native'} modes={motionCard?.execution_modes} disabled={saving||draftLoading||uncertain} onChange={templateExecution=>update({templateExecution})} music={input.music}/>}
+    {input.motion&&<TemplateExecution motion={input.motion} value={input.templateExecution||'native'} modes={motionCard?.execution_modes} profiles={motionCard?.style_profiles} profile={input.motion.profile||''} onProfileChange={profile=>update({motion:{...input.motion,profile}})} disabled={saving||draftLoading||uncertain} onChange={templateExecution=>update({templateExecution,motion:{...input.motion,profile:templateExecution==='components'?input.motion.profile||'':''}})} music={input.music}/>}
     <PreparationStrip state={readiness}/>
     <div className="editor-shell avatar-editor"><section className="editor-content" aria-label="填写制作内容" aria-busy={draftLoading}>
       <fieldset className="avatar-form" disabled={saving||draftLoading||uncertain}>

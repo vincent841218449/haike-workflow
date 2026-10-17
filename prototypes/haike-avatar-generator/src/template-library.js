@@ -19,11 +19,12 @@ export function nativeTemplateCards(catalog, layout, motion) {
   return (catalog?.styles || []).filter(s => s.supported &&
     ['adu-legacy','motiongit'].includes(s.template_ref?.runtime) && s.template_ref?.fingerprint).map(s => ({
     ...s, name:s.display_name || (/^\d\d-[A-Z]$/.test(s.id)?`${s.id} · ${s.name}`:s.name), image:s.preview, demo:s.demo,
-    description:PURPOSES[s.id] || s.scope,
-    sourceLabel:s.template_ref.runtime==='motiongit'?`MotionGit · v${s.template_ref.version || s.selection?.split('@')[1]}`:'ADu · 原生镜头组',
+    description:(PURPOSES[s.id] || s.scope)+(s.execution_modes?.length===1&&s.execution_modes[0]==='components'?'；目前启用官方组件编排，原生镜头组待验收':''),
+    componentsOnly:s.execution_modes?.length===1&&s.execution_modes[0]==='components',
+    sourceLabel:s.template_ref.runtime==='motiongit'?`MotionGit · v${s.template_ref.version || s.selection?.split('@')[1]}${s.execution_modes?.length===1&&s.execution_modes[0]==='components'?' · 官方组件':''}`:'ADu · 原生镜头组',
     sourceDetail:s.template_ref.runtime==='motiongit'?s.scope:`${s.groups.length} 个原生镜头组 · ${s.selection}`,
     ratio:layout==='portrait'?'9:16':'16:9',
-    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict', templateExecution:'native'},
+    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict', templateExecution:s.execution_modes?.includes('native')?'native':s.execution_modes?.[0]||'native'},
     selected:motion?.style===s.id&&motion?.layout===layout,
   }));
 }

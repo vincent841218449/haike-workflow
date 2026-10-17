@@ -209,6 +209,19 @@ def motion_sources(request: Request):
     return {"items": call(motion_sources, studio(request))}
 
 
+@router.get('/api/studio/motiongit/contract/{style}')
+async def motiongit_contract(style: str):
+    from backlot.studio_motiongit_editor import contract
+    return await asyncio.to_thread(call,contract,style)
+
+
+@router.get('/api/studio/drafts/{draft_id}/motiongit-preview/{plan_id}/{index}')
+def motiongit_preview(draft_id: str,plan_id: str,index: int,request: Request):
+    s=studio(request);call(s.draft,draft_id)
+    from backlot.studio_motiongit_editor import preview_file
+    return FileResponse(call(preview_file,s,draft_id,plan_id,index),media_type='image/png')
+
+
 @router.get("/api/studio/drafts/{draft_id}/motion-source")
 async def motion_source(draft_id: str, request: Request):
     from backlot.studio_motion import source_metadata
@@ -256,7 +269,7 @@ def motion_project(draft_id: str, revision: int, request: Request):
     if revision < 1: raise HTTPException(404, "工程不存在")
     path = s.projects_root / draft_id / "renders" / ("studio-" + str(revision)) / "editable-project.zip"
     if not path.is_file() or path.is_symlink(): raise HTTPException(404, "工程尚未生成")
-    return FileResponse(path, filename="海客动效口播-可编辑工程.zip")
+    return FileResponse(path, filename="editable-project.zip")
 
 
 @router.get("/api/studio/settings")

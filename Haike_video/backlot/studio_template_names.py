@@ -18,6 +18,21 @@ def label(style, fallback=None):
     return f'{style} · {title}' if style in NAMES and not style.startswith('motiongit-') else title
 
 
+def motiongit_label(slug, official_name):
+    """Display correspondence without treating a family as an old sub-style."""
+    families={
+        'template-01-integrated':'01 · 现代图文',
+        'template-02-expanded':'02 · 纸面透视',
+        'template-03-native':'03-A · 多屏展陈',
+        'template-04-dark-console':'04-A · 仪器台演示',
+        'template-05-native':'05-A · 鲜色角色叙事',
+        'vibrant-poster':'06-A · 活力海报',
+        '385712':'酷炫科技风',
+    }
+    base=slug.removesuffix('-portrait')
+    return families.get(base,official_name)
+
+
 # Public author catalog observed 2026-10-17. A listing is never an installation.
 MOTIONGIT_CATALOG = [
     ('385712','酷炫科技风 · 口播讲解','portrait'),

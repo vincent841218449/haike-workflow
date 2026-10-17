@@ -118,7 +118,7 @@ def engineering(work_id: str, request: Request, version: str):
         if qa.get('archive_sha256') and qa['archive_sha256']!=sha(path):raise HTTPException(409,'工程文件与该视频版本的回执不一致')
         actual=qa.get('presentation') or {}
         if actual.get('output_sha256') and actual['output_sha256']!=sha(media):raise HTTPException(409,'工程回执属于其他视频版本')
-    return FileResponse(path,media_type='application/zip',filename=work['title']+'-可编辑工程.zip')
+    return FileResponse(path,media_type='application/zip',filename='editable-project.zip')
 
 
 @router.get("/api/works/{work_id}/cover")
