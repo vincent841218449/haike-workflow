@@ -89,6 +89,48 @@ def test_flat_balance_rejection_without_status_is_not_an_unknown_submission():
     assert '余额' in result['message']
 
 
+@pytest.mark.parametrize('api_type,coins',[('SHARED','99999'),('NORMAL','0'),('NORMAL',None),('NORMAL','NaN')])
+def test_coin_mode_rejects_wallet_keys_or_unavailable_coins_before_submit(api_type,coins):
+    calls=[]
+    def post(url,**kwargs):
+        calls.append(url)
+        return Response({'code':0,'data':{'apiType':api_type,'remainCoins':coins,'remainMoney':'1000'}})
+    client=RunningHubAIAppClient('test-key',json.loads(PROFILE_PATH.read_text()),SimpleNamespace(post=post))
+    with pytest.raises(RunningHubAvatarError):client.ensure_billing_mode('rh_coins')
+    assert calls==['https://www.runninghub.cn/uc/openapi/accountStatus']
+
+
+def test_coin_mode_verifies_member_key_without_generation():
+    calls=[]
+    def post(url,**kwargs):
+        calls.append((url,kwargs))
+        return Response({'code':0,'data':{'apiType':'NORMAL','remainCoins':'50000','remainMoney':'0'}})
+    client=RunningHubAIAppClient('test-member',json.loads(PROFILE_PATH.read_text()),SimpleNamespace(post=post))
+    assert client.ensure_billing_mode('rh_coins')['apiType']=='NORMAL'
+    assert len(calls)==1 and calls[0][0].endswith('/accountStatus')
+    assert calls[0][1]['allow_redirects'] is False
+
+
+def test_coin_default_preserves_original_credential_and_never_falls_back(tmp_path,monkeypatch):
+    from backlot.studio import atomic_private
+    from backlot.studio_avatar_app import configuration,snapshot,verify_execution,execution_key
+    monkeypatch.delenv('RUNNINGHUB_COINS_API_KEY',raising=False)
+    studio=Studio(tmp_path/'projects')
+    (tmp_path/'.env.secrets.local').write_text('RUNNINGHUB_API_KEY=test-wallet\nRUNNINGHUB_COINS_API_KEY=test-coins\n')
+    path=studio.private/'haike-api/avatar.local.json'
+    atomic_private(path,{'enabled':True})
+    old=snapshot(studio)
+    atomic_private(path,{'enabled':True,'billing_mode':'rh_coins'})
+    coins=snapshot(studio);config=configuration(studio)
+    assert coins['billing_mode']=='rh_coins' and coins['identity']!=old['identity']
+    verify_execution(studio,old)
+    assert execution_key(config,old)=='test-wallet' and execution_key(config,coins)=='test-coins'
+    assert 'test-coins' not in json.dumps(coins)
+    (tmp_path/'.env.secrets.local').write_text('RUNNINGHUB_API_KEY=test-wallet\n')
+    assert not configuration(studio)['ready']
+    with pytest.raises(WorkError,match='会员密钥'):snapshot(studio)
+
+
 @pytest.fixture
 def app_rig(tmp_path,monkeypatch):
     studio=Studio(tmp_path/'projects');folder=studio.projects_root/'studio-test'/'renders/test'
@@ -153,6 +195,41 @@ def test_later_unknown_segment_does_not_borrow_previous_successful_task_id(app_r
     assert result['status']=='submission_unknown' and result['upstream_ids']==['1','2']
     assert result['upstream_id'] is None
     assert run(app_rig)['status']=='submission_unknown' and len(client.calls)==3
+
+
+def test_coin_override_does_not_reissue_unknown_or_change_successful_segments(app_rig,monkeypatch):
+    from backlot.studio_avatar_app import _advance
+    client=app_rig[5];submit=client.submit
+    def third_lost(image,audio):
+        if len(client.calls)==2:
+            client.calls.append(audio);raise TimeoutError('lost')
+        return submit(image,audio)
+    client.submit=third_lost
+    assert run(app_rig)['status']=='submission_unknown'
+    path=app_rig[2]/'avatar-app/state.json';before=json.loads(path.read_text())
+    coins={**app_rig[1],'identity':'member-key','billing_mode':'rh_coins'}
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    assert _advance(*app_rig[:5],[],client=client,billing_execution=coins)['status']=='submission_unknown'
+    after=json.loads(path.read_text())
+    assert after['chunks']==before['chunks'] and len(client.calls)==3
+
+
+def test_coin_override_only_changes_unsubmitted_segments_and_uses_separate_uploads(app_rig,monkeypatch):
+    from backlot.studio_avatar_app import _advance
+    wallet=app_rig[5];wallet.query_failure=True
+    assert run(app_rig)['status']=='running'
+    wallet.query_failure=False
+    coins={**app_rig[1],'identity':'member-key','billing_mode':'rh_coins'}
+    member=type(wallet)();member.calls=[]
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    result=_advance(*app_rig[:5],[],client=None,billing_execution=coins,
+                    client_for_execution=lambda execution:member if execution==coins else wallet)
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert result['status']=='succeeded'
+    assert wallet.calls==['audio-000.wav'] and member.calls==['audio-001.wav','audio-002.wav']
+    assert 'execution' not in state['chunks'][0]
+    assert all(c['execution']==coins for c in state['chunks'][1:])
+    assert state['credential_uploads']['member-key']['image_file']==app_rig[4].name
 
 
 def test_query_disconnect_uses_original_segment_id_and_continues_remaining_only(app_rig):

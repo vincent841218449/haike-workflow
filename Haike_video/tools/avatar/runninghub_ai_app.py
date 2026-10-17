@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from decimal import Decimal, InvalidOperation
 
 import requests
 
@@ -20,6 +21,28 @@ class RunningHubAIAppClient:
 
     def _headers(self):
         return {'Authorization': 'Bearer ' + self.key}
+
+    def account_status(self):
+        try:
+            response=self.session.post(self.profile['base_url']+'/uc/openapi/accountStatus',
+                headers=self._headers(),json={'apikey':self.key},timeout=(15,45),allow_redirects=False)
+        except requests.RequestException:
+            raise RunningHubAvatarError('RunningHub会员额度查询暂时不可用，未提交生成') from None
+        value=self._json(response)
+        return {k:value.get(k) for k in ('apiType','remainCoins','remainMoney','currency','currentTaskCounts')}
+
+    def ensure_billing_mode(self, mode):
+        if mode=='provider_default': return None
+        if mode!='rh_coins': raise RunningHubAvatarError('数字人扣费方式无效，未提交生成')
+        account=self.account_status()
+        if account.get('apiType')!='NORMAL':
+            raise RunningHubAvatarError('RH币模式需要消费级会员密钥；未使用人民币钱包，未提交生成')
+        try:
+            coins=Decimal(str(account.get('remainCoins')))
+            available=coins.is_finite() and coins > 0
+        except InvalidOperation: available=False
+        if not available: raise RunningHubAvatarError('RunningHub RH币余额不可用，未切换人民币钱包，未提交生成')
+        return account
 
     def _json(self, response):
         try:value = response.json()

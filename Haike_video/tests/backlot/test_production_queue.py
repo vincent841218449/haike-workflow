@@ -78,6 +78,31 @@ def test_submit_is_idempotent_and_public_payload_redacts_secrets(tmp_path: Path)
     assert private["frozen_request"] == {"confirmed": True, "nested": {"budget": 5}}
 
 
+def test_coin_billing_change_is_audited_and_never_requeues_an_unknown(tmp_path,monkeypatch):
+    queue,_=_queue(tmp_path)
+    old={'identity':'wallet','profile':{'app_id':'2006270540499128322'}}
+    coins={**old,'identity':'member','billing_mode':'rh_coins'}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+                     parent_job_id='draft-coins',frozen_request={'avatar_execution':old})
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='ambiguous',stage='第三段回执待核对',
+                 error={'code':'provider_reconciliation'},retryable=False)
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    current=queue.get(job['job_id']);revision=current['revision']
+    changed=queue.change_avatar_billing(job['job_id'],revision=revision,execution=coins,approval_ref='user-coins-once')
+    assert changed['status']=='ambiguous' and changed['stage']==current['stage']
+    assert changed['error']['code']=='provider_reconciliation'
+    assert queue.claim_next('worker-two') is None
+    private=queue.get(job['job_id'],include_private=True)['frozen_request']
+    assert private['avatar_execution']==old and private['avatar_billing_execution']==coins
+    assert len(private['avatar_billing_changes'])==1
+    again=queue.change_avatar_billing(job['job_id'],revision=revision,execution=coins,approval_ref='user-coins-once')
+    assert again['revision']==changed['revision']
+    with pytest.raises(ProductionQueueConflict):
+        queue.change_avatar_billing(job['job_id'],revision=changed['revision'],execution={**coins,'profile':{'app_id':'different'}},approval_ref='other')
+    with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
+
+
 @pytest.mark.parametrize('code,old,allowed', [('805',True,True),('805',False,False),('401',True,False)])
 def test_retry_only_rechecks_confirmed_long_avatar_failure(tmp_path,code,old,allowed):
     queue,projects=_queue(tmp_path)

@@ -647,6 +647,39 @@ class ProductionQueue:
             updated = connection.execute('SELECT * FROM production_jobs WHERE job_id=?', (job_id,)).fetchone()
         return self._public_row(updated)
 
+    def change_avatar_billing(self, job_id: str, *, revision: int, execution: dict,
+                              approval_ref: str) -> dict[str, Any]:
+        """Change only future segments; a funding change never reissues an unknown."""
+        from backlot.studio import Studio
+        from backlot.studio_avatar_app import verify_execution
+        approval_ref=_validate_identifier(approval_ref,'扣费方式授权')
+        if type(revision) is not int: raise ProductionQueueConflict('请读取当前制作记录')
+        with self._connection(immediate=True) as db:
+            row=db.execute('SELECT * FROM production_jobs WHERE job_id=?',(job_id,)).fetchone()
+            if row is None: raise ProductionQueueError('生产任务不存在')
+            frozen=_decode(row['frozen_request'],{})
+            changes=frozen.get('avatar_billing_changes',[])
+            existing=next((r for r in changes if r['approval_ref']==approval_ref),None)
+            if existing:
+                if existing['execution']!=execution: raise ProductionQueueConflict('同一次扣费授权不能替换其他配置')
+                return self._public_row(row)
+            if row['revision']!=revision or row['kind']!='studio_avatar' or row['status'] not in {'ambiguous','paused','awaiting_human'} or row['cancel_requested']:
+                raise ProductionQueueConflict('制作状态已改变，未切换进行中的调用')
+            if self._latest_creation_job(db,row)!=job_id:
+                raise ProductionQueueConflict('这条创作已有更新的制作，请继续当前版本')
+            original=frozen.get('avatar_execution') or {}
+            if execution.get('billing_mode')!='rh_coins' or execution.get('profile')!=original.get('profile'):
+                raise ProductionQueueConflict('仅可将后续分段改用RH币，原应用与制作参数必须保持')
+            verify_execution(Studio(self.projects_root),execution)
+            now=_now()
+            receipt={'at':now,'approval_ref':approval_ref,'queue_revision':revision,'execution':execution}
+            frozen.update(avatar_billing_execution=execution,avatar_billing_changes=[*changes,receipt])
+            db.execute('UPDATE production_jobs SET frozen_request=?,updated_at=?,revision=revision+1 WHERE job_id=?',
+                       (_json(frozen),now,job_id))
+            self._event(db,job_id,'avatar_billing_changed',row['status'],row['status'],
+                        {'billing_mode':'rh_coins','approval_ref':approval_ref,'new_identity':execution['identity']})
+            return self._public_row(db.execute('SELECT * FROM production_jobs WHERE job_id=?',(job_id,)).fetchone())
+
     def replace_avatar(self, job_id: str, *, revision: int, previous_intent: str,
                        approval_ref: str, maximum: int) -> dict[str, Any]:
         """Operator-only reissue after explicit consent; normal retry never calls this.

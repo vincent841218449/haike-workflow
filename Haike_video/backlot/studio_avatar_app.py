@@ -27,24 +27,38 @@ PROFILE_PATH = Path(__file__).resolve().parents[1] / 'config/runninghub/infinite
 def configuration(studio):
     from backlot.ai_text import _read_env_file, _effective_value
     path = studio.private / 'haike-api/avatar.local.json'
-    try: enabled = json.loads(path.read_text()).get('enabled') is True
-    except FileNotFoundError: enabled = False
+    try: options = json.loads(path.read_text())
+    except FileNotFoundError: options = {}
     except (ValueError, OSError): raise WorkError('本地数字人配置损坏，请恢复原配置') from None
+    enabled = options.get('enabled') is True
+    mode = options.get('billing_mode', 'provider_default')
+    if mode not in {'provider_default', 'rh_coins'}: raise WorkError('本地数字人扣费方式无效')
     _, values = _read_env_file(studio.projects_root.parent / '.env.secrets.local')
-    key = _effective_value('RUNNINGHUB_API_KEY', values)
+    keys = {name:_effective_value(name, values) for name in ('RUNNINGHUB_API_KEY','RUNNINGHUB_COINS_API_KEY')}
+    key = keys['RUNNINGHUB_COINS_API_KEY' if mode == 'rh_coins' else 'RUNNINGHUB_API_KEY']
     profile = json.loads(PROFILE_PATH.read_text())
-    identity = hashlib.sha256(json.dumps(['https://www.runninghub.cn',key]).encode()).hexdigest()
-    return {'enabled':enabled, 'ready':enabled and bool(key), 'key':key, 'identity':identity, 'profile':profile}
+    def identity(value): return hashlib.sha256(json.dumps(['https://www.runninghub.cn',value]).encode()).hexdigest()
+    return {'enabled':enabled, 'ready':enabled and bool(key), 'key':key, 'identity':identity(key), 'profile':profile,
+            'billing_mode':mode, 'credentials':{identity(value):value for value in keys.values() if value}}
+
+
+def execution_key(config, execution):
+    """Resolve the frozen credential, independently of the current default."""
+    key = config.get('credentials',{}).get(execution.get('identity'))
+    if not key and execution.get('identity') == config['identity']: key = config['key']
+    if not key: raise WorkError('原数字人凭据不可用，请恢复原密钥；不会换密钥重提原请求')
+    return key
 
 
 def snapshot(studio):
     c = configuration(studio)
     if not c['enabled']: return None
-    if not c['ready']: raise WorkError('新数字人应用尚未配置本机 RunningHub 密钥，已保留文案和素材')
+    if not c['ready']: raise WorkError('请先配置本机 RunningHub 会员密钥' if c['billing_mode']=='rh_coins' else '新数字人应用尚未配置本机 RunningHub 密钥，已保留文案和素材')
     return {'route':'local-runninghub-ai-app', 'identity':c['identity'], 'profile':c['profile'],
             'profile_sha256':hashlib.sha256(json.dumps(c['profile'],sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
-            'billing_policy':'actual_usage', 'billing_source':'local-provider',
-            'billing_notice':'数字人按 RunningHub 实际用量结算；RH币与钱包金额分别记录，不按估价重复扣款。'}
+            'billing_policy':'actual_usage', 'billing_source':'local-provider', 'billing_mode':c['billing_mode'],
+            'billing_notice':('数字人使用会员密钥，按 RunningHub 实际 RH 币消耗记录；不自动切回人民币钱包。' if c['billing_mode']=='rh_coins'
+                              else '数字人按 RunningHub 实际用量结算；RH币与钱包金额分别记录，不按估价重复扣款。')}
 
 
 def public_status(studio):
@@ -52,15 +66,16 @@ def public_status(studio):
     return {'enabled':c['enabled'],'ready':c['ready'],'name':c['profile']['name'],
             'app_id':c['profile']['app_id'],'instance_type':c['profile']['instance_type'],
             'max_segment_seconds':c['profile']['max_segment_frames']/25,
-            'billing_source':'local-provider','billing_policy':'actual_usage'}
+            'billing_source':'local-provider','billing_policy':'actual_usage','billing_mode':c['billing_mode']}
 
 
 def verify_execution(studio, execution):
     c=configuration(studio)
     profile=execution.get('profile') or {}
     digest=hashlib.sha256(json.dumps(profile,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-    if execution.get('identity')!=c['identity'] or execution.get('profile_sha256')!=digest or profile.get('app_id')!='2006270540499128322' or profile.get('base_url')!='https://www.runninghub.cn' or not c['key']:
+    if execution.get('profile_sha256')!=digest or profile.get('app_id')!='2006270540499128322' or profile.get('base_url')!='https://www.runninghub.cn' or execution.get('billing_mode','provider_default') not in {'provider_default','rh_coins'}:
         raise WorkError('数字人配置或凭据已改变，请恢复原配置继续原任务')
+    execution_key(c, execution)
 
 
 def frame_segments(total_frames, cues, maximum=1125):
@@ -214,7 +229,7 @@ def _stitch(folder, state, audio, target):
     temporary.replace(target)
 
 
-def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client):
+def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client, billing_execution=None, client_for_execution=None):
     """Advance durable segments sequentially; a lost submit is never replayed."""
     from lib.bailian_speech import operation_lock
     from backlot.studio_avatar import download_result
@@ -223,6 +238,9 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
     path = cache / 'state.json'
     target = folder / 'avatar-source.mp4'
     verify_execution(studio,execution)
+    if billing_execution:
+        verify_execution(studio,billing_execution)
+        if billing_execution['profile']!=execution['profile']: raise WorkError('切换扣费方式不能改变原应用与制作参数')
     if any(not p.resolve().is_relative_to(studio.projects_root.resolve()) for p in (folder,audio,portrait)):
         raise WorkError('数字人输入不属于当前本地项目')
     with operation_lock(cache / 'state.lock'):
@@ -266,15 +284,33 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 chunk['status']='submission_unknown'; save(); return result()
             if chunk['status']=='failed' and not chunk.get('task_id'):
                 state.update(status='failed',message='数字人应用未完成当前分段，已完成片段与原配音保留'); save(); return result()
+            if billing_execution and chunk['status']=='queued' and not chunk.get('task_id'):
+                if (chunk.get('execution') or execution)!=billing_execution:
+                    if chunk.get('audio_file'):
+                        chunk.setdefault('previous_uploads',[]).append({'audio_file':chunk.pop('audio_file'),
+                            'identity':(chunk.get('execution') or execution)['identity']})
+                    chunk['execution']=billing_execution;save()
+            current_execution=chunk.get('execution') or execution
+            verify_execution(studio,current_execution)
+            if current_execution['profile']!=execution['profile']: raise WorkError('数字人分段参数与原应用不一致，未提交调用')
+            transport=client_for_execution(current_execution) if client_for_execution else client
             if on_progress: on_progress(f"数字人分段 {position+1}/{len(state['chunks'])}：正在生成")
             if not chunk.get('task_id'):
-                if not state.get('image_file'): state['image_file']=client.upload(portrait); save()
+                if hasattr(transport,'ensure_billing_mode'):
+                    from tools.avatar.runninghub_avatar import RunningHubAvatarError
+                    try: transport.ensure_billing_mode(current_execution.get('billing_mode','provider_default'))
+                    except RunningHubAvatarError as exc: raise WorkError(str(exc),'unavailable') from None
+                # Uploaded files may belong to the old key's namespace.
+                if current_execution!=execution:
+                    uploads=state.setdefault('credential_uploads',{}).setdefault(current_execution['identity'],{})
+                else: uploads=state
+                if not uploads.get('image_file'): uploads['image_file']=transport.upload(portrait); save()
                 if not chunk.get('audio_file'):
-                    chunk['audio_file']=client.upload(cache/f"audio-{chunk['index']:03d}.wav"); save()
+                    chunk['audio_file']=transport.upload(cache/f"audio-{chunk['index']:03d}.wav"); save()
                 if on_progress: on_progress(f"数字人分段 {position+1}/{len(state['chunks'])}：输入已就绪")
                 chunk.update(status='submitting',submitted_at=datetime.now(timezone.utc).isoformat()); save()
                 try:
-                    receipt = client.submit(state['image_file'],chunk['audio_file'])
+                    receipt = transport.submit(uploads['image_file'],chunk['audio_file'])
                     if receipt.get('task_id'):
                         chunk.update(task_id=receipt['task_id'],status='running'); save()
                     chunk['submit_receipt']={'at':datetime.now(timezone.utc).isoformat(),
@@ -294,7 +330,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                         state.update(status='running',message='数字人任务号已保留，系统将继续查询原请求');save();return result()
                     chunk['status']='submission_unknown'; state.update(status='submission_unknown',message=unknown_message); save(); return result()
             # Query failures retain the checkpointed task ID and only query again.
-            try: queried=client.poll(chunk['task_id'])
+            try: queried=transport.poll(chunk['task_id'])
             except Exception:
                 state.update(status='running',message='数字人原分段查询暂时中断，系统将继续查询'); save(); return result()
             if queried['task_id'] != chunk['task_id']: raise WorkError('数字人查询回执编号不一致，未关联其他任务')
@@ -355,10 +391,17 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
         return result()
 
 
-def produce(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client=None):
+def produce(studio, execution, folder, audio, portrait, cues, *, on_progress=None, client=None, billing_execution=None):
     args=(studio,execution,folder,audio,portrait,cues)
-    if client is not None:return _advance(*args,on_progress=on_progress,client=client)
+    if client is not None:return _advance(*args,on_progress=on_progress,client=client,billing_execution=billing_execution)
+    from contextlib import ExitStack
     from tools.avatar.runninghub_ai_app import RunningHubAIAppClient
     config=configuration(studio)
-    with RunningHubAIAppClient(config['key'],execution['profile']) as transport:
-        return _advance(*args,on_progress=on_progress,client=transport)
+    with ExitStack() as stack:
+        clients={}
+        def transport(value):
+            identity=(value['identity'],value['profile_sha256'])
+            if identity not in clients:
+                clients[identity]=stack.enter_context(RunningHubAIAppClient(execution_key(config,value),value['profile']))
+            return clients[identity]
+        return _advance(*args,on_progress=on_progress,client=None,billing_execution=billing_execution,client_for_execution=transport)
