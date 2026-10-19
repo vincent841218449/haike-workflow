@@ -161,6 +161,30 @@ def app_rig(tmp_path,monkeypatch):
 def run(rig): return produce(*rig[:5],[],client=rig[5])
 
 
+@pytest.mark.parametrize('status,label',[('QUEUED','排队'),('RUNNING','运行中')])
+def test_pending_provider_status_is_visible_without_submitting_again(app_rig,status,label):
+    client=app_rig[5]
+    client.poll=lambda task:{'task_id':task,'status':status,'videos':[]}
+    result=run(app_rig)
+    assert label in result['message'] and result['upstream_id']=='1'
+    run(app_rig)
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert state['chunks'][0]['provider_status']==status and state['chunks'][0]['last_queried_at']
+    assert len(client.calls)==1
+
+
+def test_downloaded_validation_error_is_reported_without_regeneration(app_rig,monkeypatch):
+    def invalid(*args):raise WorkError('数字人分段结果与原语音时长不一致，已保留供应商原结果')
+    monkeypatch.setattr('backlot.studio_avatar_app._verify_clip',invalid)
+    assert run(app_rig)['status']=='running'
+    assert run(app_rig)['status']=='running'
+    with pytest.raises(WorkError,match='原结果校验未通过.*时长不一致'):
+        run(app_rig)
+    state=json.loads((app_rig[2]/'avatar-app/state.json').read_text())
+    assert state['chunks'][0]['task_id']=='1' and len(app_rig[5].calls)==1
+    assert '时长不一致' in state['chunks'][0]['validation_diagnostic']['message']
+
+
 def test_completed_segments_and_whole_audio_are_cached_without_resubmission(app_rig):
     studio,execution,folder,wav,portrait,client=app_rig
     original=sha(wav)
@@ -496,7 +520,7 @@ def test_shortening_preserves_already_successful_chunks(app_rig):
     assert json.loads(path.read_text())['chunks'][0]==completed
 
 
-@pytest.mark.parametrize('seconds,padding',[(2,1),(9.96,1.92)])
+@pytest.mark.parametrize('seconds,padding',[(2,1),(9.96,1.92),(44.88,1.56)])
 def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig,monkeypatch,seconds,padding):
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     from backlot.studio_render import media_probe
@@ -507,9 +531,11 @@ def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig
                     '-ac','1','-c:a','pcm_s16le',str(master)],check=True)
     subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i',f'color=navy:s=80x100:r=25:d={duration}',
                     '-i',str(master),'-af',f'apad=pad_dur={padding}','-t',str(duration),'-c:v','libx264','-c:a','aac',str(provider)],check=True)
+    monkeypatch.setattr('backlot.studio_avatar_app.media_probe',media_probe)
+    if seconds>25:
+        assert _verify_clip(provider,round(seconds*25),master,False)['tail_padding']['final_segment'] is False
     cache=folder/'avatar-app';cache.mkdir()
     shutil.copyfile(provider,cache/'video-000-00.invalid.mp4')
-    monkeypatch.setattr('backlot.studio_avatar_app.media_probe',media_probe)
     monkeypatch.setattr('backlot.studio_avatar_app._verify_clip',_verify_clip)
     monkeypatch.setattr('backlot.studio_avatar_app._stitch',_stitch)
     def no_second_download(*args): raise AssertionError('already downloaded paid result must be reused')
@@ -524,6 +550,7 @@ def test_provider_tail_padding_reuses_original_audio_and_cached_download(app_rig
 
 @pytest.mark.parametrize('seconds,padding,delay,final',[
     (9.96,1.92,0,False),(10.04,1.92,0,True),(9.96,2.04,0,True),(9.96,1.92,.5,True),
+    (44.88,2.04,0,False),(45.04,1.56,0,False),(44.88,1.56,.5,False),
 ])
 def test_short_terminal_padding_keeps_scope_bound_and_audio_alignment(tmp_path,seconds,padding,delay,final):
     from lib.ffmpeg_locator import resolve_ffmpeg_pair

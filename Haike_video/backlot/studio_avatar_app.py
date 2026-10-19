@@ -232,9 +232,11 @@ def _verify_clip(path, frames, reference=None, final_segment=False):
     stream_duration=float(video.get('duration',info['duration'])) if video else 0
     if not video or abs(stream_duration-frames/25) > .5:
         extra=stream_duration-frames/25
-        # Short terminal outputs can carry up to 2 seconds of provider tail.
-        # This never relaxes ordinary segment timing or audio alignment.
-        padding_limit=2.0 if final_segment and frames<=250 else 1.2
+        # The 45-second route also returns longer tails (44.88 -> 46.44s).
+        # Accept at most 2s only for its long inputs or short terminal inputs,
+        # with complete zero-offset audio correspondence before trimming.
+        long_input=625<frames<=1125
+        padding_limit=2.0 if long_input or final_segment and frames<=250 else 1.2
         if not video or reference is None or not .5<extra<=padding_limit+1e-6:
             raise WorkError('数字人分段结果与原语音时长不一致，已保留供应商原结果')
         score=_reference_correlation(path,reference,frames)
@@ -383,6 +385,7 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
             except Exception:
                 state.update(status='running',message='数字人原分段查询暂时中断，系统将继续查询'); save(); return result()
             if queried['task_id'] != chunk['task_id']: raise WorkError('数字人查询回执编号不一致，未关联其他任务')
+            chunk.update(provider_status=queried['status'],last_queried_at=datetime.now(timezone.utc).isoformat())
             if queried.get('billing'): chunk['billing']=queried['billing']
             if queried['status'] in {'FAILED','FAIL','CANCELLED','CANCELED','ERROR'}:
                 chunk.update(status='failed',error_code=queried.get('error_code'),provider_status=queried['status'],
@@ -395,7 +398,8 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 return result()
             if queried['status'] not in {'SUCCESS','SUCCEEDED','COMPLETED'}:
                 done=sum(c['status']=='succeeded' for c in state['chunks'])
-                state.update(status='running',message=f"数字人第 {position+1}/{len(state['chunks'])} 段正在生成，已完成 {done} 段"); save(); return result()
+                phase='在 RunningHub 排队' if queried['status'] in {'QUEUED','PENDING'} else '在 RunningHub 运行中'
+                state.update(status='running',message=f"数字人第 {position+1}/{len(state['chunks'])} 段{phase}，已完成 {done} 段"); save(); return result()
             chunk['results']=queried['videos']; save()
             chunk['phase']='downloading'
             candidates=[]
@@ -418,7 +422,9 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 except OSError:
                     continue
                 try: info=_verify_clip(candidate,frames,reference,position==len(state['chunks'])-1)
-                except WorkError:
+                except WorkError as exc:
+                    chunk['validation_diagnostic']={'code':exc.code,'message':str(exc)[:200],
+                                                    'at':datetime.now(timezone.utc).isoformat()}
                     # Retain bad bytes, then retry the original paid result.
                     invalid=candidate.with_suffix('.invalid.mp4')
                     if invalid.exists(): invalid=candidate.with_suffix('.invalid-'+uuid4().hex[:8]+'.mp4')
@@ -430,6 +436,8 @@ def _advance(studio, execution, folder, audio, portrait, cues, *, on_progress=No
                 state.update(status='running',message=f"数字人第 {position+1} 段已生成，正在重新查询并下载原结果")
                 save()
                 if chunk['download_failures']>=3:
+                    if chunk.get('validation_diagnostic'):
+                        raise WorkError('数字人已生成，原结果校验未通过：'+chunk['validation_diagnostic']['message']+'；原任务号和下载文件保留，不会重新生成', 'unavailable')
                     raise WorkError('数字人原结果连续三次下载或解码未通过，原任务号和片段保留；请修复下载连接后继续原任务', 'unavailable')
                 return result()
             _,selected,info=max(candidates,key=lambda v:v[0])
