@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Film, Info, ListChecks, LoaderCircle, Pause, Play, Plus, RefreshCw, Square, Sparkles } from 'lucide-react';
 import { TaskVideo } from './TaskVideo.jsx';
 import { DouyinRecovery } from './DouyinRecovery.jsx';
-import {AudioCheck} from './AudioCheck.jsx';
 import { api } from './studio-api.js';
 import { Button, Dialog, EmptyState, Heading, Notice } from './ui.jsx';
 import './tasks.css';
@@ -122,7 +121,7 @@ export function CreationTasks() {
     {pagination && pagination.total > pagination.limit && <nav className="creation-pagination" aria-label="任务分页"><Button disabled={!view.offset} onClick={() => setView(v => ({ ...v, offset: Math.max(0, v.offset - 30) }))}><ChevronLeft size={15}/>上一页</Button><span>第 {Math.floor(view.offset / 30) + 1} 页 · 共 {pagination.total} 个任务</span><Button disabled={!pagination.has_more} onClick={() => setView(v => ({ ...v, offset: v.offset + 30 }))}>下一页<ChevronRight size={15}/></Button></nav>}
     </section>
     {selected && <Dialog title={detail?.task.title || '创作任务详情'} wide={!!detail?.task.work_id} onClose={close} busy={busy}>
-      {detail ? <><div className="creation-detail-header"><span className={`creation-state ${detail.task.status}`}><StateIcon task={detail.task}/>{detail.task.status_label}</span><span className="creation-kind">{detail.task.type_label}</span>{detail.task.ratio && <span className="creation-ratio">{detail.task.ratio}</span>}</div>{detail.task.audio_issue?<AudioCheck report={detail.task.audio_check} editUrl={detail.task.edit_url} error={!detail.task.audio_check?'原录音需要重新核对，请返回制作项目，系统会免费检查。':''}/>:<><p className="creation-stage">{detail.task.stage}</p>{!detail.task.work_id&&<Progress task={detail.task}/>}<Notice error message={detail.task.error}/></>}<Notice message={detail.task.notice}/>
+      {detail ? <><div className="creation-detail-header"><span className={`creation-state ${detail.task.status}`}><StateIcon task={detail.task}/>{detail.task.status_label}</span><span className="creation-kind">{detail.task.type_label}</span>{detail.task.ratio && <span className="creation-ratio">{detail.task.ratio}</span>}</div><p className="creation-stage">{detail.task.stage}</p>{!detail.task.work_id&&!detail.task.audio_issue&&<Progress task={detail.task}/>}<Notice error message={detail.task.error}/><Notice message={detail.task.notice}/>
         {!detail.task.is_current&&<div className="creation-latest"><CheckCircle2 size={18}/><span>你正在查看历史制作记录。</span><Button onClick={()=>setSelected(detail.task.current_task_id)}>查看当前制作<ArrowRight size={15}/></Button></div>}
         {!detail.task.work_id&&detail.task.latest_success_id&&<Button variant="primary" onClick={()=>setSelected(detail.task.latest_success_id)}>播放已完成视频<Play size={15}/></Button>}
         {detail.task.billing_pending&&<div className="creation-billing-note"><Info size={16}/>{detail.task.billing_pending_scope==='previous_attempt'?'历史调用费用回执待核对，当前制作和已生成视频不受影响。':detail.task.work_id?'费用回执核对中；不影响已生成视频的播放、下载，系统不会重复生成。':'原请求结果待核对，系统会继续查询，不会新建重复调用。'}</div>}

@@ -10,22 +10,17 @@ export function defaultProductionTone(library, models) {
     items.find(v => canProduceVoice(v, models));
 }
 
-export function knownAudioMismatch(input, job) {
-  const issue = job?.input_issue;
-  return issue?.code === 'audio_script_mismatch' && input.soundMode === 'audio' &&
-    !!input.audio?.id && input.audio.id === issue.audio_id && input.text === issue.text;
+export function voiceDraft(input) {
+  // The creation form always speaks the supplied script. Old recordings remain in history.
+  const {audio,...rest}=input;
+  return {...rest,soundMode:'voice'};
 }
 
-export function currentAudioCheck(input,check) {
-  return input.soundMode==='audio'&&check?.audioId===input.audio?.id&&check?.text===input.text ? check : null;
-}
-
-export function creationReadiness(input, models, tones, job, check) {
+export function creationReadiness(input, models, tones) {
   const materials = input.ai?.materials || [];
   const fields = [
     {id:'text', label:'文案', ready:!!input.text.trim() && [...input.text].length <= 5000},
-    {id:'voice', label:input.soundMode === 'audio' ? '声音核对' : '音色', ready:input.soundMode === 'audio' ? !!input.audio && currentAudioCheck(input,check)?.report?.status==='passed' :
-      canProduceVoice(tones.find(v => v.id === input.toneId), models) && isSpeechRate(input.rate)},
+    {id:'voice', label:'音色', ready:canProduceVoice(tones.find(v => v.id === input.toneId), models) && isSpeechRate(input.rate)},
     {id:'portrait', label:'人物图片', ready:!!input.portrait},
   ];
   const missing=fields.filter(v=>!v.ready);

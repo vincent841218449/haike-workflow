@@ -94,15 +94,36 @@ def test_cache_concurrency_and_changed_text_or_audio_binding(fixture):
     with pytest.raises(WorkError): require_pass(s,d,reports[0])
 
 
-def test_http_revision_ownership_and_no_paid_gateway(fixture, monkeypatch):
+def test_removed_standalone_audio_check_is_not_a_product_route(fixture, monkeypatch):
     s,d,calls=fixture
     monkeypatch.setattr(s,'client',lambda:pytest.fail('preflight must never create a paid client'))
     app=FastAPI();app.state.studio=s;app.include_router(router);client=TestClient(app)
     url=f'/api/studio/drafts/{d["id"]}/audio-check'
-    assert client.post(url,json={'revision':0}).status_code==409
-    report=client.post(url,json={'revision':d['revision']}).json()
-    assert report['status']=='passed' and report['charge_micros']==0
-    assert client.post(url,json={'revision':d['revision'],'audio_id':'foreign'}).status_code==409
+    assert client.post(url,json={'revision':d['revision']}).status_code==404
+    assert calls==[]
+
+
+def test_voice_quote_uses_full_script_and_selected_tone_without_audio_check(fixture,monkeypatch):
+    from PIL import Image
+    from backlot import studio_avatar,studio_audio_check
+    s,d,_=fixture
+    data=io.BytesIO();Image.new('RGB',(300,400),'navy').save(data,format='PNG')
+    portrait=s.save_asset(d['id'],'portrait.png','image',data.getvalue())
+    d={**d,'text':'用户输入的完整文案，金额10万元，不作保证。','input':{
+        'soundMode':'voice','voiceId':'haike/cosyvoice','toneId':'voice_selected','portrait':portrait,'rate':1}}
+    calls=[]
+    class Gateway:
+        def upload(self,*a):return {'id':'image-file'}
+        def request(self,*a):return {'items':[{'id':'haike/avatar'}]}
+        def quote(self,model,inputs,project):
+            calls.append((model,inputs));return {'model':model,'max_charge_micros':'100'}
+    monkeypatch.setattr(s,'client',lambda:Gateway())
+    monkeypatch.setattr(studio_avatar,'validate',lambda *a:None)
+    monkeypatch.setattr(studio_audio_check,'check_audio',lambda *a:pytest.fail('voice creation must not enter recording preflight'))
+    result=studio_avatar.quote(s,d)
+    assert calls==[('haike/cosyvoice',{'text':d['text'],'voice_id':'voice_selected'})]
+    frozen=studio_avatar.frozen_request(s,d,result['id'])
+    assert frozen['draft']==d and 'audio_path' not in frozen['prepared'] and 'audio_check' not in frozen
 
 
 def test_quote_mismatch_gate_precedes_all_uploads_and_quotes(fixture, monkeypatch):

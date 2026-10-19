@@ -181,8 +181,9 @@ def test_failed_nonretryable_task_returns_to_original_draft_and_hides_private_in
     response = client.get(f'/api/studio/tasks/{job["job_id"]}')
     assert response.status_code == 200
     task = response.json()["task"]
-    assert task["edit_url"] == f'/avatar?draft={draft["id"]}&resume_task={job["job_id"]}#creation-voice'
-    assert task['error_code'] == 'audio_script_mismatch' and task['actions']['edit_label'] == '核对录音与文案'
+    assert task["edit_url"] == f'/avatar?draft={draft["id"]}&resume_task={job["job_id"]}&repair=voice#creation-voice'
+    assert task['error_code'] == 'audio_script_mismatch' and task['actions']['edit_label'] == '选择音色并配音'
+    assert task['status_label']=='等待选择音色' and 'audio_check' not in task
     assert task['status']=='awaiting_human' and task['raw_status']=='failed'
     assert task["actions"]["retry"] is False
     assert task["error"] == ''  # The actionable comparison panel replaces the duplicate red alert.

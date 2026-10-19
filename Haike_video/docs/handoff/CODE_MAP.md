@@ -17,7 +17,7 @@
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
-- studio_audio_check.py：SHA绑定/ASR缓存/差异；studio_asr.py与studio_asr_worker.py本地重查；AudioCheck.jsx证据/修复入口。test_studio_audio_check.py；根docs/tasks/2026-10-19-audio-content-preflight.md。
+- App.jsx/voiceDraft：主流程按文案+音色配音，旧录音留历史；studio_asr.py后台字幕时钟，studio_audio_check.py仅兼容历史请求。根docs/tasks/2026-10-19-voice-first-creation.md。
 - 产品/清理/边界：根docs/PRODUCT_STUDIO_V2.md；视觉QA：prototypes/haike-avatar-generator/design-qa.md及qa/studio-v2。
 
 ## 保留的原制作依赖

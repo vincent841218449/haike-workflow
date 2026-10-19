@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {canProduceVoice, defaultProductionTone, creationReadiness, knownAudioMismatch, currentAudioCheck, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
+import {canProduceVoice, defaultProductionTone, creationReadiness, voiceDraft, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
 
 const models=[{id:'haike/cosyvoice'}], legacy={id:'voice_gateway_default',status:'ready'}, preview={id:'official',model:'haike/cosyvoice-system',status:'ready',production_ready:false};
 test('新项目只默认选择能实际制作的音色；没有可用服务时不伪装为就绪',()=>{
@@ -10,13 +10,13 @@ test('新项目只默认选择能实际制作的音色；没有可用服务时�
   assert.equal(canProduceVoice(preview,[{id:preview.model}]),false);
   assert.equal(defaultProductionTone({items:[legacy,{...preview,production_ready:true}],default_voice_id:preview.id},[...models,{id:preview.model}]).id,preview.id);
 });
-test('四项输入的就绪状态涵盖可选素材的授权，已有录音不依赖配音服务',()=>{
+test('四项输入按所选音色制作，涵盖可选素材的授权',()=>{
   const input={text:'我的文案',soundMode:'voice',toneId:legacy.id,portrait:{name:'portrait.png'},ai:{enabled:true,materials:[]}};
   assert.equal(creationReadiness(input,models,[legacy]).ready,true);
   assert.equal(creationReadiness({...input,text:'  '},models,[legacy]).completed,2);
   assert.equal(creationReadiness({...input,text:'字'.repeat(5001)},models,[legacy]).ready,false);
   assert.equal(creationReadiness({...input,ai:{enabled:true,materials:[{rights_confirmed:false}]}},models,[legacy]).ready,false);
-  assert.equal(creationReadiness({...input,soundMode:'audio',audio:{id:'a'}},[],[],null,{text:input.text,audioId:'a',report:{status:'passed'}}).ready,true);
+  assert.equal(creationReadiness({...input,soundMode:'audio',audio:{id:'a'}},[],[]).ready,false);
   assert.equal(creationReadiness({...input,toneId:preview.id},models,[preview]).ready,false);
 });
 
@@ -24,21 +24,19 @@ test('准备提示指出所有缺项，并为素材问题提供可操作定位',
   const state=creationReadiness({text:'',soundMode:'voice',toneId:'missing',portrait:null,ai:{enabled:true,materials:[{}]}},[],[]);
   assert.deepEqual(state.missing.map(v=>v.id),['text','voice','portrait','materials']);
   assert.equal(state.message,'还需：文案、音色、人物图片、素材使用确认');
-  const tooMany=creationReadiness({text:'文案',soundMode:'audio',audio:{id:'a'},portrait:{},ai:{materials:Array(5).fill({rights_confirmed:true})}},[],[],null,{text:'文案',audioId:'a',report:{status:'passed'}});
+  const tooMany=creationReadiness({text:'文案',soundMode:'voice',toneId:legacy.id,portrait:{},ai:{materials:Array(5).fill({rights_confirmed:true})}},models,[legacy]);
   assert.equal(tooMany.ready,false);assert.equal(tooMany.missing[0].id,'materials');
   assert.match(tooMany.message,/最多4份/);
 });
 
-test('核对结果随文案或录音变化立即失效，核对中和差异待审均不能制作',()=>{
-  const input={text:'完整文案',soundMode:'audio',audio:{id:'a'},portrait:{id:'p'}};
-  const check={text:input.text,audioId:'a',report:{status:'passed'}};
-  assert.equal(creationReadiness(input,[],[],null,check).ready,true);
-  for(const candidate of [{...input,text:'新文案'},{...input,audio:{id:'b'}}]){
-    assert.equal(currentAudioCheck(candidate,check),null);
-    assert.equal(creationReadiness(candidate,[],[],null,check).ready,false);
-  }
-  for(const bad of [null,{...check,report:{status:'review'}},{...check,report:{status:'blocked'}},{...check,loading:true,report:undefined}])
-    assert.equal(creationReadiness(input,[],[],null,bad).ready,false);
+test('旧录音草稿只在编辑副本切换为按文案配音，原文和音色素材完整保留',()=>{
+  const original={text:'完整文案',soundMode:'audio',audio:{id:'old-sample'},toneId:legacy.id,voiceId:'haike/cosyvoice',portrait:{id:'p'},motion:{style:'04-A'},rate:1.2};
+  const copy=voiceDraft(original);
+  assert.equal(copy.soundMode,'voice');assert.ok(!('audio' in copy));
+  assert.equal(original.audio.id,'old-sample');assert.equal(original.soundMode,'audio');
+  for(const field of ['text','toneId','voiceId','portrait','motion','rate'])assert.deepEqual(copy[field],original[field]);
+  assert.equal(creationReadiness(copy,models,[legacy]).ready,true);
+  assert.equal(creationReadiness({...copy,toneId:'missing'},models,[legacy]).ready,false);
 });
 test('批量素材在上传前核对剩余容量和全部文件，不截断或上传半个无效批次',()=>{
   const f=name=>({name,size:100});
@@ -54,13 +52,4 @@ test('保存已上传图片不把浏览器File序列化回服务器，重复保�
   assert.equal(saved.id,source.id);assert.equal(saved.url,source.url);
   assert.ok(!('file' in saved));
   assert.deepEqual(persistedAsset(JSON.parse(JSON.stringify({...source,file:{}}))),saved);
-});
-test('已识别录音与文案不符时不显示准备完成，切换配音或换录音后自动解除',()=>{
-  const input={text:'真实文案',soundMode:'audio',audio:{id:'sample'},portrait:{id:'portrait'}};
-  const job={input_issue:{code:'audio_script_mismatch',audio_id:'sample',text:'真实文案'}};
-  assert.equal(knownAudioMismatch(input,job),true);
-  assert.equal(creationReadiness(input,[],[],job).completed,2);
-  assert.equal(knownAudioMismatch({...input,soundMode:'voice'},job),false);
-  assert.equal(knownAudioMismatch({...input,audio:{id:'replacement'}},job),false);
-  assert.equal(knownAudioMismatch({...input,text:'修改后的文案'},job),false);
 });
