@@ -36,6 +36,15 @@ def test_number_notation_punctuation_and_one_asr_typo_are_tolerated():
                   [{'text':'大家好这是海客数字人功能测试画面是否符合锁选模板声音和字幕是否同步'}])['status'] == 'passed'
 
 
+def test_whole_area_emphasis_is_not_a_changed_financial_or_quota_number():
+    from backlot.studio_audio_check import assess
+    text='我们保留完整原文，按本期方案提供社区服务。未来五到十年一整个小区的购买需求，每个小区只放一个名额。'
+    assert assess(text,[{'text':text.replace('一整个','以整个')}])['status']=='passed'
+    assert assess(text,[{'text':text.replace('一整个','整个')}])['status']=='passed'
+    for changed in [text.replace('一整个','两个'), text.replace('一个名额','两个名额'),text.replace('五到十年','五到十二年')]:
+        assert assess(text,[{'text':changed}])['status']!='passed'
+
+
 def test_missing_whole_sentence_and_low_confidence_are_not_auto_passed():
     from backlot.studio_audio_check import assess
     first='今天我们介绍海客数字人的制作流程，先填写文案，再选择人物和声音。'

@@ -64,7 +64,11 @@ def assess(text, cues):
         observed=next((at for start,end,at in spans if start<=c<end),None)
         differences.append({'kind':op,'written':written[a:b][:120],'spoken':heard[c:d][:120],
                             'start_ms':observed})
-    numbers=lambda s:re.findall(r'\d+(?:[./]\d+)?',s)
+    # “一整个小区” is whole-area emphasis, not an amount/quota. ASR may
+    # render its unstressed yi as 以, or omit it. Keep actual counts, money,
+    # dates and units strict (including “一个名额” and “两个小区”).
+    numbers=lambda s:[m[0] for m in re.finditer(r'\d+(?:[./]\d+)?',s)
+                      if not (m[0]=='1' and s[m.end():].startswith('整个'))]
     critical=[]
     if numbers(written)!=numbers(heard): critical.append({'kind':'number','written':numbers(written),'spoken':numbers(heard)})
     negative=lambda s:len(re.findall(r'没有|不会|不能|不可|不要|不得|不是|不|没|未|无',s))
@@ -85,6 +89,37 @@ def assess(text, cues):
             'differences':differences[:12],'critical_differences':critical,
             'message':{'passed':'录音与文案已匹配','review':'录音内容需要核对，请查看关键差异；尚未提交数字人生成',
                        'blocked':'录音与文案不一致，请核对录音，或按文案配音；尚未提交数字人生成'}[status]}
+
+
+def generated_clock_ready(project, request):
+    """Read-only recovery gate: original generated audio + bound offline clock.
+
+    No quoting, transcribing, downloading or generation occurs here. Re-entering
+    the same producer retains its TTS intent and prepared audio checkpoint.
+    """
+    try:
+        draft=request.get('draft') or {}
+        if draft.get('input',{}).get('soundMode')!='voice': return False
+        name=request.get('render_id')
+        if not isinstance(name,str) or Path(name).name!=name: return False
+        project=Path(project).resolve();folder=project/'renders'/name
+        if folder.is_symlink() or not folder.resolve().is_relative_to(project): return False
+        state=json.loads((folder/'gateway-state.json').read_text())
+        tts=state.get('stages',{}).get('tts',{})
+        q=tts.get('quote') or {};original=request.get('quotes',{}).get('tts') or {}
+        if (tts.get('job',{}).get('status')!='succeeded' or q.get('execution_route')!='local-system-voice'
+            or any(q.get(k)!=original.get(k) for k in ('id','model','execution_route'))): return False
+        prepared=state['prepared'];audio=Path(prepared['audio_path'])
+        if audio.is_symlink() or not audio.resolve().is_relative_to(folder.resolve()) or not audio.is_file(): return False
+        saved=json.loads((folder/'local-asr.json').read_text())
+        if (request.get('asr',{}).get('provider')!='local-whisper'
+            or saved.get('fingerprint')!={'audio_sha256':sha(audio),'engine_identity':request['asr']['identity']}): return False
+        from backlot.studio_asr import validate_result
+        from backlot.studio_avatar import clock_captions
+        result=validate_result(saved['result'],prepared['duration'])
+        return assess(draft['text'],clock_captions(result,prepared['duration']))['status']=='passed'
+    except (OSError,ValueError,KeyError,TypeError,WorkError):
+        return False
 
 
 def _binding(studio,draft):

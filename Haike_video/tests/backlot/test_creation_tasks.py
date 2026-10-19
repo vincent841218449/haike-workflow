@@ -69,6 +69,41 @@ def test_template_failure_without_a_new_draft_still_requires_input_repair(setup)
     assert task['actions']['edit_label']=='调整制作方案'
 
 
+def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_can_resume(setup):
+    from backlot.studio import atomic_private
+    from backlot.work_catalog import sha
+    studio,_,queue,client=setup
+    text='保留完整原稿和人物，按本期方案提供社区服务。未来五到十年一整个小区的购买需求，每个小区只放一个名额。'
+    d=studio.save_draft({'template_id':'avatar-safe-circle-v1','text':text,
+        'input':{'soundMode':'voice','voiceId':'haike/cosyvoice','toneId':'voice_selected'}})
+    p=studio.projects_root/d['id'];p.mkdir();(p/'project.json').write_text('{}')
+    q={'id':'existing-quote','model':'haike/cosyvoice','execution_route':'local-system-voice'}
+    request={'draft':d,'render_id':'studio-test','quotes':{'tts':q},'asr':{'provider':'local-whisper','identity':'engine'}}
+    job=queue.submit(project_id=d['id'],kind='studio_avatar',source='workbench',priority='normal',parent_job_id='studio-test',frozen_request=request)
+    queue.claim_next('worker');queue.finish(job['job_id'],'worker',status='awaiting_human',stage='声音核对需处理',
+        error={'code':'audio_check_review'},safe_resume_point='studio_avatar_input')
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['status_label']!='等待选择音色' and not task['actions']['retry']
+    with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
+    folder=p/'renders/studio-test';folder.mkdir(parents=True);audio=folder/'narration.wav';audio.write_bytes(b'original-generated-audio')
+    atomic_private(folder/'gateway-state.json',{'prepared':{'audio_path':str(audio),'duration':20},
+        'stages':{'tts':{'quote':q,'job':{'status':'succeeded'}}}})
+    heard=text.replace('一整个','以整个')
+    atomic_private(folder/'local-asr.json',{'fingerprint':{'audio_sha256':sha(audio),'engine_identity':'engine'},
+        'result':{'provider':'local-whisper','segments':[{'text':heard,'start':0,'end':20,
+            'words':[{'text':heard,'start':0,'end':20,'probability':.99}]}]}})
+    before=queue.get(job['job_id'],include_private=True)
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['actions']['retry'] and task['actions']['retry_label']=='复用原配音继续'
+    assert task['status_label']=='待继续制作' and not task['actions'].get('continue')
+    assert queue.get(job['job_id'],include_private=True)==before
+    audio.write_bytes(b'changed-audio')
+    with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
+    audio.write_bytes(b'original-generated-audio')
+    assert queue.retry(job['job_id'])['status']=='queued'
+    assert queue.get(job['job_id'],include_private=True)['frozen_request']==request
+
+
 @pytest.mark.parametrize('template_id,manual', [('avatar-safe-circle-v1',False),('avatar-motion-adu-v1',True)])
 def test_worker_kind_does_not_send_automatic_avatar_users_to_manual_editor(setup,template_id,manual):
     studio,_,queue,client=setup

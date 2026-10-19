@@ -828,6 +828,11 @@ class ProductionQueue:
                 # Retry replays frozen inputs, so it cannot pick up a repaired
                 # draft. Require the normal quote/continuation boundary instead.
                 raise ProductionQueueConflict('请返回制作页，使用已保存的草稿继续；原任务保留，不重跑旧模板输入')
+            audio_recheck=False
+            if (row['kind']=='studio_avatar' and row['status']=='awaiting_human'
+                and _decode(row['error_json'],{}).get('code')=='audio_check_review'):
+                from backlot.studio_audio_check import generated_clock_ready
+                audio_recheck=generated_clock_ready(self.projects_root/row['project_id'],_decode(row['frozen_request'],{}))
             avatar_recheck=False
             if (row['status']=='failed' and row['kind']=='studio_avatar'
                 and row['safe_resume_point']=='studio_avatar'
@@ -845,7 +850,7 @@ class ProductionQueue:
                         avatar_recheck=(state.get('execution')==frozen.get('avatar_execution')
                                         and bool(frozen.get('avatar_execution')) and long_failure_recoverable(state))
                     except (OSError,ValueError,KeyError,TypeError): pass
-            if not (material_confirmation or avatar_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
+            if not (material_confirmation or avatar_recheck or audio_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(

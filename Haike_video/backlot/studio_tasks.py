@@ -41,6 +41,11 @@ def task_view(studio, job, scheduled_paths=()):
         error = {**error, 'code':'audio_script_mismatch'}
     provider_wait = job['status'] == 'ambiguous' and error.get('code') == 'provider_pending'
     audio_issue = error.get('code') in {'audio_script_mismatch','audio_check_review','audio_check_stale'}
+    generated_audio_issue = audio_issue and not complete and motion_input.get('soundMode')=='voice'
+    generated_audio_ready = False
+    if generated_audio_issue and error.get('code')=='audio_check_review' and job['status']=='awaiting_human':
+        from backlot.studio_audio_check import generated_clock_ready
+        generated_audio_ready=generated_clock_ready(studio.projects_root/job['project_id'],job.get('frozen_request') or {})
     template_issue = (category == 'avatar' and not complete and job['status'] in {'failed','awaiting_human'}
                       and error.get('code') == 'template_incompatible')
     template_draft_updated = False
@@ -56,6 +61,7 @@ def task_view(studio, job, scheduled_paths=()):
     if input_issue:
         edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if audio_issue else '' if template_issue else '#more-fields')
         if audio_issue:edit_url=edit_url.replace('#creation-voice','&repair=voice#creation-voice')
+        if generated_audio_issue:edit_url=edit_url.replace('&repair=voice#creation-voice','')
     elif job['kind']=='studio_avatar':
         edit_url += '&resume_task=' + quote(job['job_id'],safe='')
     material_confirmation = job['kind'] == 'studio_avatar' and job['status'] in {'failed','awaiting_human'} and '抖音' in (job.get('stage') or '')
@@ -102,12 +108,12 @@ def task_view(studio, job, scheduled_paths=()):
     return {
         "id": job["job_id"], "revision": job.get('revision'), "project_id": job["project_id"], "title": title, "excerpt": excerpt,
         "type": category, "type_label": label, "status": display_status, "raw_status":job['status'],
-        "status_label": "待按新方案制作" if template_draft_updated else "待调整制作方案" if template_issue else "等待选择音色" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
+        "status_label": "待继续制作" if generated_audio_ready else "配音对时待处理" if generated_audio_issue else "待按新方案制作" if template_draft_updated else "待调整制作方案" if template_issue else "等待选择音色" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
         "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
         "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
-        "stage": "原任务停在旧版模板校验。新版自动制作草稿已保存，未重新制作；请返回制作页核对后再提交。" if template_draft_updated else "原模板输入需要调整。请返回制作页保存制作方案后继续；直接重试只会重复原来的校验。" if template_issue else "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
+        "stage": "原配音已生成，字幕对时复核已通过。可复用原配音继续，不会重新配音；数字人阶段仍按原任务执行。" if generated_audio_ready else "后台声音核对未通过，当前已停止制作。已选音色保留，请核对原配音；无需重新选择音色。" if generated_audio_issue else "原任务停在旧版模板校验。新版自动制作草稿已保存，未重新制作；请返回制作页核对后再提交。" if template_draft_updated else "原模板输入需要调整。请返回制作页保存制作方案后继续；直接重试只会重复原来的校验。" if template_issue else "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
         "progress": {"percent": percent, "completed": progress.get("completed", 0) if observed else int(complete),
                      "total": progress.get("total", 0) if observed else int(complete),
                      "basis": "steps" if observed else "task" if complete else "unknown"},
@@ -122,11 +128,12 @@ def task_view(studio, job, scheduled_paths=()):
         "billing_policy": (job.get('frozen_request') or {}).get('billing_policy', 'limited'),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else result.get('notice') or "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
-        "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation and not audio_issue and not template_issue,
+        "actions": {"retry": generated_audio_ready or (job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation and not audio_issue and not template_issue),
+                    "retry_label":"复用原配音继续" if generated_audio_ready else "继续原任务",
                     "continue": job['kind'] == 'studio_avatar' and job['status'] == 'awaiting_human' and error.get('code') == 'budget_exceeded' and not job.get('cancel_requested'),
                     "pause": job["status"] == "queued" or provider_wait, "resume": job["status"] == "paused",
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
-                    "edit_label": "查看已修复草稿" if template_draft_updated else "调整制作方案" if template_issue else "选择音色并配音" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
+                    "edit_label": "查看制作内容" if generated_audio_issue else "查看已修复草稿" if template_draft_updated else "调整制作方案" if template_issue else "选择音色并配音" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }
 
 
