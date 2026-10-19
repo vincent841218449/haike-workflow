@@ -326,8 +326,10 @@ def avatar_job(draft_id: str, request: Request):
         private = queue.get(latest['job_id'], include_private=True)
         latest['max_charge_micros'] = private.get('frozen_request',{}).get('max_charge_micros')
         frozen = (private.get('frozen_request') or {}).get('draft') or {}
-        if task_view(studio(request), private).get('error_code') == 'audio_script_mismatch' and (frozen.get('input', {}).get('audio') or {}).get('id'):
-            latest['input_issue'] = {'code':'audio_script_mismatch', 'audio_id':frozen['input']['audio']['id'], 'text':frozen['text']}
+        view=task_view(studio(request),private)
+        if view.get('audio_issue') and (frozen.get('input', {}).get('audio') or {}).get('id'):
+            latest['input_issue'] = {'code':view['error_code'], 'audio_id':frozen['input']['audio']['id'], 'text':frozen['text']}
+            latest.update(status=view['status'],raw_status=view['raw_status'],stage=view['stage'])
     return {"job": latest}
 
 
@@ -510,6 +512,21 @@ async def quote_avatar(draft_id: str, request: Request, data: dict = Body(...)):
         except WorkError: raise
         except Exception: raise WorkError("无法读取报价：请检查统一Key和管理员模型费率；尚未提交付费任务") from None
     return await asyncio.to_thread(call, read)
+
+
+@router.post('/api/studio/drafts/{draft_id}/audio-check')
+async def audio_check(draft_id: str, request: Request, data: dict = Body(...)):
+    mutation(request);s=studio(request);d=call(s.draft,draft_id)
+    if data.get('revision')!=d['revision']: raise HTTPException(409,'草稿已改变，请重新读取后核对')
+    audio_id=(d['input'].get('audio') or {}).get('id')
+    if data.get('audio_id',audio_id)!=audio_id:
+        raise HTTPException(409,'录音已改变，请重新读取后核对')
+    text=data.get('text',d['text'])
+    if not isinstance(text,str) or not 0<len(text.strip())<=5000: raise HTTPException(422,'请填写1至5,000字文案后核对')
+    from backlot.studio_audio_check import check_audio
+    report=await asyncio.to_thread(call,check_audio,s,{**d,'text':text})
+    # The browser receives evidence, never filesystem paths or account identities.
+    return {k:v for k,v in report.items() if k not in {'binding','clock_folder'}}
 
 
 @router.post("/api/studio/works/{work_id}/cover-upload")

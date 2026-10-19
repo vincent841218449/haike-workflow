@@ -35,14 +35,16 @@ def task_view(studio, job, scheduled_paths=()):
     complete = job["status"] == "completed"
     percent = 100 if complete else round(progress["ratio"] * 100) if observed else None
     error = job.get("error") or {}
-    # A legacy failure keeps its raw queue status; only its repair link gains
-    # the structured input classification used by new creations.
+    # Preserve raw history, projecting recoverable input issues consistently
+    # in the list, filters and details instead of presenting a production crash.
     if not error.get('code') and job['kind'] == 'studio_avatar' and job['status'] == 'failed' and '文案不一致' in str(job.get('stage', '')):
         error = {**error, 'code':'audio_script_mismatch'}
     provider_wait = job['status'] == 'ambiguous' and error.get('code') == 'provider_pending'
-    input_issue = error.get('code') in {'audio_script_mismatch', 'template_incompatible', 'budget_exceeded'}
+    audio_issue = error.get('code') in {'audio_script_mismatch','audio_check_review','audio_check_stale'}
+    input_issue = audio_issue or error.get('code') in {'template_incompatible', 'budget_exceeded'}
+    display_status='awaiting_human' if audio_issue and job['status']=='failed' else job['status']
     if input_issue:
-        edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if error['code'] == 'audio_script_mismatch' else '#more-fields')
+        edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if audio_issue else '#more-fields')
     elif job['kind']=='studio_avatar':
         edit_url += '&resume_task=' + quote(job['job_id'],safe='')
     material_confirmation = job['kind'] == 'studio_avatar' and job['status'] in {'failed','awaiting_human'} and '抖音' in (job.get('stage') or '')
@@ -88,31 +90,32 @@ def task_view(studio, job, scheduled_paths=()):
     scheduled = complete and result.get('output_path') in scheduled_paths
     return {
         "id": job["job_id"], "revision": job.get('revision'), "project_id": job["project_id"], "title": title, "excerpt": excerpt,
-        "type": category, "type_label": label, "status": job["status"],
-        "status_label": "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
+        "type": category, "type_label": label, "status": display_status, "raw_status":job['status'],
+        "status_label": "需要核对录音" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
         "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
         "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
-        "stage": "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
+        "stage": "录音需要核对，已保存内容和原调用记录" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
         "progress": {"percent": percent, "completed": progress.get("completed", 0) if observed else int(complete),
                      "total": progress.get("total", 0) if observed else int(complete),
                      "basis": "steps" if observed else "task" if complete else "unknown"},
         "created_at": job.get("created_at"), "updated_at": job.get("updated_at"),
         "started_at": job.get("started_at"), "finished_at": job.get("finished_at"),
         "queue_position": job.get("queue_position"), "wait_reason": job.get("wait_reason"),
-        "error": "" if provider_wait else str(error.get("message") or "") if isinstance(error, dict) else str(error),
+        "error": "" if provider_wait or audio_issue else str(error.get("message") or "") if isinstance(error, dict) else str(error),
         "error_code": error.get('code'), "provider_wait": provider_wait,
+        "audio_issue":audio_issue,
         "max_charge_micros": (job.get('frozen_request') or {}).get('max_charge_micros'),
         "billing_policy": (job.get('frozen_request') or {}).get('billing_policy', 'limited'),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else result.get('notice') or "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
-        "actions": {"retry": (job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation)
+        "actions": {"retry": (job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation and not audio_issue)
                     or (job['status']=='awaiting_human' and error.get('code')=='template_incompatible'),
                     "continue": job['kind'] == 'studio_avatar' and job['status'] == 'awaiting_human' and error.get('code') == 'budget_exceeded' and not job.get('cancel_requested'),
                     "pause": job["status"] == "queued" or provider_wait, "resume": job["status"] == "paused",
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
-                    "edit_label": "按文案配音或替换录音" if error.get('code') == 'audio_script_mismatch' else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
+                    "edit_label": "核对录音与文案" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }
 
 
@@ -167,9 +170,10 @@ def list_tasks(studio, queue, *, status="all", task_type="all", limit=30, offset
     kinds = KINDS.get(task_type)
     scheduled = scheduled_output_paths(studio)
     page = queue.list(kinds=kinds, statuses=STATUSES[status], limit=limit, offset=offset, collapse_creations=True,
+                      project_input_issues=True,
                       include_provider_waits=status=='active', exclude_provider_waits=status=='needs_action',
                       result_output_paths=scheduled if status == 'scheduled' else None)
-    summary = queue.list(kinds=kinds, limit=1, collapse_creations=True)
+    summary = queue.list(kinds=kinds, limit=1, collapse_creations=True,project_input_issues=True)
     counts = {"all": summary["pagination"]["total"], "active": summary["active_count"] + summary["queued_count"] + summary['provider_wait_count'],
               "queued": summary["queued_count"], "needs_action": summary["paused_count"] + summary["waiting_count"] - summary['provider_wait_count'],
               "failed": summary["failure_count"], "completed": summary["completed_count"], "cancelled": summary["cancelled_count"]}
@@ -187,5 +191,13 @@ def detail(studio, queue, job_id):
                        "progress": data.get("progress")})
     scheduled = scheduled_output_paths(studio)
     task = creation_view(studio, queue, queue.get(job_id, include_private=True), scheduled)
+    if task.get('audio_issue'):
+        private=queue.get(job_id,include_private=True)
+        draft=(private.get('frozen_request') or {}).get('draft') or studio.draft(private['project_id'])
+        from backlot.studio_audio_check import saved_check
+        report=saved_check(studio,draft)
+        task['audio_check']={k:v for k,v in report.items() if k not in {'binding','clock_folder'}} if report else None
+        task['audio_check_revision']=draft.get('revision')
+        task['audio_check_url']=f"/api/studio/drafts/{draft['id']}/audio-check"
     attempts = [dict(task_view(studio, m, scheduled), relation=m.get('relation'), current=m['job_id'] == task['current_task_id']) for m in queue.creation_members(job_id)]
     return {"task": task, "events": events, "attempts": attempts}

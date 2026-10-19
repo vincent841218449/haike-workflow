@@ -118,6 +118,11 @@ def quote(studio, draft):
     resolve(draft)
     from backlot.studio_asr import snapshot
     asr = snapshot(studio)  # Verify real speech before avatar spending in every new creation.
+    audio_check=None
+    if draft['input'].get('soundMode')=='audio':
+        from backlot.studio_audio_check import check_audio, require_pass
+        audio_check=check_audio(studio,draft)
+        require_pass(studio,draft,audio_check)
     from backlot.studio_avatar_app import snapshot as avatar_snapshot
     avatar_execution = avatar_snapshot(studio)
     sdk = studio.client()
@@ -147,6 +152,7 @@ def quote(studio, draft):
         if required - models: raise WorkError("数字人或字幕模型尚不可用，请由管理员确认成本费率后再制作")
     data = {"id": identity, "draft": draft, "prepared": prepared, "quotes": quotes, "asr": asr, "key_identity": key_identity(studio), "created_at": datetime.now(timezone.utc).isoformat()}
     if avatar_execution: data['avatar_execution'] = avatar_execution
+    if audio_check: data['audio_check']=audio_check
     with studio.db() as db: db.execute("INSERT INTO studio_quotes VALUES(?,?)", (identity, json.dumps(data, ensure_ascii=False)))
     return public_quote(data)
 
@@ -166,6 +172,9 @@ def frozen_request(studio, draft, quote_id, maximum=None):
     if not row: raise WorkError("请先读取本次制作报价")
     data = json.loads(row[0])
     if data["draft"] != draft or data["key_identity"] != key_identity(studio): raise WorkError("内容或Key已改变，请重新读取报价")
+    if draft['input'].get('soundMode')=='audio':
+        from backlot.studio_audio_check import require_pass
+        require_pass(studio,draft,data.get('audio_check'))
     from backlot.studio_avatar_app import snapshot as avatar_snapshot
     if data.get('avatar_execution') != avatar_snapshot(studio): raise WorkError('数字人应用配置已改变，请重新读取制作信息；未提交调用')
     from backlot.studio_billing import authorization
@@ -401,6 +410,9 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     try:
         publish_progress("准备配音与原始音轨")
         p = state["prepared"]; draft = request["draft"]
+        if request.get('audio_check'):
+            from backlot.studio_audio_check import require_pass
+            require_pass(studio,draft,request['audio_check'])
         if request.get('avatar_execution'):
             from backlot.studio_avatar_app import verify_execution
             verify_execution(studio,request['avatar_execution'])
@@ -438,8 +450,14 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if needs_clock:
             publish_progress("识别真实声音与字幕时间轴")
             if asr["provider"] == "local-whisper":
-                from backlot.studio_asr import transcribe
-                result = transcribe(studio, asr, Path(p["audio_path"]), output_dir, p["duration"])
+                if request.get('audio_check'):
+                    from backlot.studio_audio_check import production_clock
+                    result=production_clock(studio,draft,request['audio_check'],p['audio_path'],p['duration'])
+                    atomic_private(output_dir/'local-asr.json',{'fingerprint':{'audio_sha256':sha(Path(p['audio_path'])),'engine_identity':asr['identity']},
+                                                              'result':result,'customer_charge_micros':'0','source':'audio-content-preflight'})
+                else:
+                    from backlot.studio_asr import transcribe
+                    result = transcribe(studio, asr, Path(p["audio_path"]), output_dir, p["duration"])
             else:
                 result = paid("asr", "haike/tencent-asr", {"audio_file": p["audio_file"]})
             cues = captions(result, p["duration"])
@@ -541,7 +559,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
                     'safe_resume_point':'studio_avatar_receipt','retryable':False}
         if exc.code == "provider_pending":
             return {"status": "ambiguous", "stage": str(exc), "error": {"code": "provider_pending", "message": str(exc), "type": "StudioProviderPending"}, "safe_resume_point": "studio_avatar_provider"}
-        if exc.code in {"audio_script_mismatch", "template_incompatible", "template_mismatch", "budget_exceeded", "local_artifact_missing", "replacement_conflict", "quote_changed"}:
+        if exc.code in {"audio_script_mismatch", "audio_check_review", "audio_check_stale", "template_incompatible", "template_mismatch", "budget_exceeded", "local_artifact_missing", "replacement_conflict", "quote_changed"}:
             return {"status": "awaiting_human", "stage": str(exc), "error": {"code": exc.code, "message": str(exc), "type": "StudioInput"}, "safe_resume_point": "studio_avatar_input"}
         if exc.code == "human_required":
             return {"status": "awaiting_human", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMaterialRightsRequired"}, "retryable": False, "safe_resume_point": "studio_avatar_material_rights"}

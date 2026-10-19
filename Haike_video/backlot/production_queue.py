@@ -396,7 +396,7 @@ class ProductionQueue:
              kinds: tuple[str, ...] | None = None, statuses: tuple[str, ...] | None = None,
              offset: int = 0, result_output_paths: tuple[str, ...] | None = None,
              collapse_creations: bool = False, include_provider_waits: bool = False,
-             exclude_provider_waits: bool = False) -> dict[str, Any]:
+             exclude_provider_waits: bool = False, project_input_issues: bool = False) -> dict[str, Any]:
         limit = min(200, max(1, int(limit)))
         offset = max(0, int(offset))
         clauses, parameters = [], []
@@ -405,7 +405,8 @@ class ProductionQueue:
             parameters.append(project_id)
         for field, values in (("kind", kinds), ("status", statuses)):
             if values is not None:
-                clause = f"{field} IN ({','.join('?' for _ in values)})" if values else "0"
+                selected_field='display_status' if field=='status' and project_input_issues else field
+                clause = f"{selected_field} IN ({','.join('?' for _ in values)})" if values else "0"
                 if field == 'status' and include_provider_waits:
                     clause = f"({clause} OR (status='ambiguous' AND json_extract(error_json,'$.code')='provider_pending'))"
                 clauses.append(clause)
@@ -430,12 +431,19 @@ class ProductionQueue:
                 # Collapse BEFORE filtering, counting or paging. Historical failures
                 # remain addressable by their exact job IDs in the detail endpoint.
                 source = "(SELECT * FROM (SELECT j.*,COALESCE(l.creation_id,j.job_id) AS creation_id,ROW_NUMBER() OVER(PARTITION BY COALESCE(l.creation_id,j.job_id) ORDER BY j.created_at DESC,j.job_id DESC) AS creation_rank FROM production_jobs j LEFT JOIN production_creation_links l ON l.job_id=j.job_id) WHERE creation_rank=1)"
+            count_status='status'
+            if project_input_issues:
+                # UI classification only: never migrate raw history or make a failed job executable.
+                issue="kind='studio_avatar' AND status='failed' AND (json_extract(error_json,'$.code') IN ('audio_script_mismatch','audio_check_review','audio_check_stale') OR (COALESCE(json_extract(error_json,'$.code'),'')='' AND stage LIKE '%文案不一致%'))"
+                source=f"(SELECT j.*, CASE WHEN {issue} THEN 'awaiting_human' ELSE status END AS display_status FROM {source} j)"
+                ordering=ordering.replace('status','display_status')
+                count_status='display_status'
             rows = connection.execute(
                 f"SELECT * FROM {source}{where} ORDER BY {ordering} LIMIT ? OFFSET ?",
                 (*parameters, limit, offset),
             ).fetchall()
             count_rows = connection.execute(
-                f"SELECT status,COUNT(*) AS count,SUM(CASE WHEN status='ambiguous' AND json_extract(error_json,'$.code')='provider_pending' THEN 1 ELSE 0 END) AS provider_waits FROM {source}{where} GROUP BY status", parameters,
+                f"SELECT {count_status} AS status,COUNT(*) AS count,SUM(CASE WHEN status='ambiguous' AND json_extract(error_json,'$.code')='provider_pending' THEN 1 ELSE 0 END) AS provider_waits FROM {source}{where} GROUP BY {count_status}", parameters,
             ).fetchall()
             queued = connection.execute(
                 "SELECT job_id FROM production_jobs WHERE status='queued' "

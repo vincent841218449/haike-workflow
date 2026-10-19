@@ -1,6 +1,6 @@
 # 代码地图
 
-更新时间：2026-10-17
+更新时间：2026-10-19
 
 ## 当前工作台V2
 
@@ -12,12 +12,12 @@
 - 音色：studio_voices.py；studio_personal_voice.py克隆/恢复，studio_voice_reference.py长录音，studio_system_voice.py配音，studio_voice_audition.py免费试听，studio_speech_rate.py语速。前端VoiceLibrary/SpeechRateControl；网关platform_app/voices.py。合同根docs/PRODUCT_VOICE_LIBRARY.md。
 - AI分镜：studio_storyboard.py原文/时钟；studio_chat_gateway.py网关；studio_chat_route.py冻结路由。studio_adu_components.py同包组件；studio_failure.py脱敏诊断；生图暂停。根docs/tasks/2026-10-16-production-resilience.md。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
-- 原生队列：production_queue{,_worker}.py；单通道/断点/取消/进度保留，所有产物登记作品台账。
+- 队列：production_queue{,_worker}.py；单通道/断点/取消/进度，产物登记台账。
 - 模板：studio_template_names.py名称；studio_template_registry.py冻结来源/分路线验收，studio_motion_director.py→studio_preflight.py原生/组件。studio_motiongit{,_native,_macro}.py多包/材质/字幕/配乐；5新版组件可制、原生待验。studio_motiongit_editor.py与MotionGit.jsx逐镜/叠加编辑→预览冻结→原队列。scripts/import_motiongit_template.py验签，motiongit_render_matrix.py隔离检查。studio_presentation.py身份；studio_media_layout.py证据，work_api.py工程绑定。根docs/tasks/2026-10-17-adu-template-contract.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
-- 新字幕：studio_asr.py/脚本studio_asr_worker.py，configure_studio_asr.py验收已有离线模型，冻结引擎/音频SHA并保留原网关任务；test_studio_asr.py。网关runninghub_billing.py区分钱包/币回执，wallet_receipt按实扣×1.5。
+- studio_audio_check.py：SHA绑定/ASR缓存/差异；studio_asr.py与studio_asr_worker.py本地重查；AudioCheck.jsx证据/修复入口。test_studio_audio_check.py；根docs/tasks/2026-10-19-audio-content-preflight.md。
 - 产品/清理/边界：根docs/PRODUCT_STUDIO_V2.md；视觉QA：prototypes/haike-avatar-generator/design-qa.md及qa/studio-v2。
 
 ## 保留的原制作依赖

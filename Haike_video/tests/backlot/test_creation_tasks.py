@@ -182,11 +182,29 @@ def test_failed_nonretryable_task_returns_to_original_draft_and_hides_private_in
     assert response.status_code == 200
     task = response.json()["task"]
     assert task["edit_url"] == f'/avatar?draft={draft["id"]}&resume_task={job["job_id"]}#creation-voice'
-    assert task['error_code'] == 'audio_script_mismatch' and task['actions']['edit_label'] == '按文案配音或替换录音'
+    assert task['error_code'] == 'audio_script_mismatch' and task['actions']['edit_label'] == '核对录音与文案'
+    assert task['status']=='awaiting_human' and task['raw_status']=='failed'
     assert task["actions"]["retry"] is False
-    assert task["error"] == "核对原文与声音，未提交数字人"
+    assert task["error"] == ''  # The actionable comparison panel replaces the duplicate red alert.
+    assert queue.get(job['job_id'])['status']=='failed'
+    pending=client.get('/api/studio/tasks?status=needs_action').json()
+    assert pending['pagination']['total']==1 and pending['tasks'][0]['id']==job['job_id']
+    assert pending['counts']['needs_action']==1 and pending['counts']['failed']==0
+    assert client.get('/api/studio/tasks?status=failed').json()['pagination']['total']==0
     assert "must-not-leak" not in json.dumps(response.json())
     assert response.json()["events"]
+
+
+def test_input_projection_respects_explicit_error_code_and_never_retries_mismatch(setup):
+    _,draft,queue,client=setup
+    job=submit(queue,draft,kind='studio_avatar');queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='failed',stage='文案不一致相关组件异常',error={'code':'internal_error'},retryable=True)
+    assert client.get('/api/studio/tasks?status=failed').json()['pagination']['total']==1
+    assert client.get('/api/studio/tasks/'+job['job_id']).json()['task']['status']=='failed'
+    queue.retry(job['job_id']);queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='failed',stage='文案不一致',error={'code':'audio_check_review'},retryable=True)
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['status']=='awaiting_human' and not task['actions']['retry']
 
 
 def test_avatar_form_receives_exact_failed_audio_binding_without_private_request(setup):

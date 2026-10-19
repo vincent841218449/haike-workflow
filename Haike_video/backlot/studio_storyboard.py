@@ -255,10 +255,10 @@ def validate_plan(body, draft, cues, duration):
 
 
 def verify_spoken_script(text, cues):
-    written=re.sub(r"[^\w\u4e00-\u9fff]","",text).casefold()
-    spoken=re.sub(r"[^\w\u4e00-\u9fff]","","".join(c["text"] for c in cues)).casefold()
-    if not written or not spoken or difflib.SequenceMatcher(None,written,spoken,autojunk=False).ratio()<.7:
-        raise WorkError("录音内容与文案不一致；请选择按文案配音或替换录音，已保存的内容不会丢失", "audio_script_mismatch")
+    from backlot.studio_audio_check import assess
+    report=assess(text,cues)
+    if report['status']!='passed':
+        raise WorkError(report['message'],'audio_script_mismatch' if report['status']=='blocked' else 'audio_check_review')
 
 
 def bind_script_ranges(body, draft, cues, *, max_units=12):

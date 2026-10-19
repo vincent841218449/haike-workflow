@@ -67,6 +67,23 @@ def test_local_result_cached_and_changed_audio_or_engine_cannot_replace_receipt(
     with pytest.raises(WorkError, match="已改变"): studio_asr.transcribe(s, frozen, audio, folder, 3)
 
 
+@pytest.mark.parametrize('returncode',[0,1,'invalid-clock'])
+def test_bounded_recheck_caches_success_or_failure_without_script_prompt(tmp_path,monkeypatch,returncode):
+    s=Studio(tmp_path/'projects');frozen=configure(s,tmp_path)
+    audio=tmp_path/'audio.wav';audio.write_bytes(b'audio');folder=tmp_path/'recheck';folder.mkdir()
+    calls=[]
+    def worker(args,**kwargs):
+        calls.append(args)
+        assert args[args.index('--beam-size')+1]=='10' and '--script' not in args
+        assert kwargs['env']['HF_HUB_OFFLINE']=='1'
+        atomic_private(Path(args[-1]),{'segments':[]} if returncode=='invalid-clock' else result())
+        return type('Run',(),{'returncode':0 if returncode=='invalid-clock' else returncode})()
+    monkeypatch.setattr(studio_asr.subprocess,'run',worker)
+    first=studio_asr.recheck(s,frozen,audio,folder,3)
+    assert bool(first)==(returncode==0)
+    assert studio_asr.recheck(s,frozen,audio,folder,3)==first and len(calls)==1
+
+
 def test_local_job_does_not_submit_gateway_asr_and_old_job_keeps_gateway(tmp_path, monkeypatch):
     s = Studio(tmp_path / "projects"); frozen = configure(s, tmp_path)
     d = s.save_draft({"template_id": "graphic-news-v2", "title": "test", "text": "第一段第二段", "input": {}})

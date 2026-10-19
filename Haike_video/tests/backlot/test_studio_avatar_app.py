@@ -371,6 +371,8 @@ def test_new_audio_submission_freezes_app_and_never_quotes_legacy_workflow(tmp_p
     def unexpected(*args,**kwargs): raise AssertionError('new app must not upload/quote legacy gateway avatar')
     monkeypatch.setattr(studio,'client',lambda:SimpleNamespace(upload=unexpected,quote=unexpected))
     monkeypatch.setattr('backlot.studio_asr.snapshot',lambda s:{'provider':'local-whisper','identity':'local-asr'})
+    monkeypatch.setattr('backlot.studio_asr.transcribe',lambda *a:{'provider':'local-whisper','segments':[
+        {'text':draft['text'],'start':0,'end':3,'words':[{'text':draft['text'],'start':0,'end':3,'probability':.99}]}]})
     result=quote(studio,draft)
     frozen=frozen_request(studio,draft,result['id'])
     assert frozen['avatar_execution']['profile']['app_id']=='2006270540499128322'

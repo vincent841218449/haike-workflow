@@ -39,7 +39,9 @@ def test_no_synthetic_maximum_and_legacy_limits_stay_explicit():
 
 
 @pytest.mark.parametrize('policy',[None,'actual_usage'])
-def test_new_http_creation_freezes_actual_usage_without_budget(rig,policy):
+def test_new_http_creation_freezes_actual_usage_without_budget(rig,policy,monkeypatch):
+    # Budget/idempotency seam; receipt forgery and ownership are tested with real checks separately.
+    monkeypatch.setattr('backlot.studio_audio_check.require_pass',lambda *a:None)
     studio, queue, old, client = rig
     d=studio.save_draft({**studio.draft(old['project_id']), 'title':'新版本'})
     data={'id':'new-quote','draft':d,'key_identity':key_identity(studio),'quotes':{'avatar':{'model':'haike/avatar','max_charge_micros':'13_200_000'.replace('_','')}},'prepared':{}}

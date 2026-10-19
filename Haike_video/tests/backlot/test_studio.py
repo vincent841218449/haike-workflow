@@ -200,7 +200,9 @@ def test_unknown_avatar_without_confirmed_artifact_stays_stopped(studio, monkeyp
     assert gateway.confirmations == 1 and downloads == []
 
 
-def test_quote_budget_and_content_are_frozen(studio):
+def test_quote_budget_and_content_are_frozen(studio, monkeypatch):
+    # This seam tests budget/content freezing; real audio receipts have separate gate tests.
+    monkeypatch.setattr('backlot.studio_audio_check.require_pass',lambda *a:None)
     d=make_draft(studio);data={'id':'q','draft':d,'key_identity':key_identity(studio),'quotes':{'avatar':{'model':'haike/avatar','max_charge_micros':'400000'}},'prepared':{}}
     data['draft']['input']['soundMode']='audio'
     with studio.db() as db:db.execute('INSERT INTO studio_quotes VALUES(?,?)',('q',json.dumps(data)))

@@ -69,12 +69,17 @@ def validate_result(result, duration):
     return {"segments": clean, "clock": "audio-word-timestamps", "provider": "local-whisper"}
 
 
-def transcribe(studio, frozen, audio, folder, duration):
+def verify_engine(studio, frozen):
     c = configuration(studio)
     if frozen.get("identity") != identity(c) or not status(studio)["ready"]:
         raise WorkError("字幕引擎已改变，请恢复原配置后继续原任务")
     if sha(Path(c["model_dir"]) / "model.bin") != c["model_sha256"]:
         raise WorkError("字幕模型文件已改变，请重新验收新任务")
+    return c
+
+
+def transcribe(studio, frozen, audio, folder, duration):
+    c = verify_engine(studio, frozen)
     folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
     fingerprint = {"audio_sha256": sha(Path(audio)), "engine_identity": frozen["identity"]}
     cached = folder / "local-asr.json"
@@ -94,4 +99,24 @@ def transcribe(studio, frozen, audio, folder, duration):
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise WorkError("本地语音识别未完成，音频已保留；未调用收费识别服务", "unavailable") from None
     atomic_private(cached, {"fingerprint": fingerprint, "result": result, "customer_charge_micros": "0"})
+    return result
+
+
+def recheck(studio, frozen, audio, folder, duration):
+    """One bounded offline retry with wider decoding; never prompt with the script."""
+    c=verify_engine(studio,frozen);path=Path(folder)/'local-recheck.json'
+    fingerprint={'audio_sha256':sha(Path(audio)),'engine_identity':frozen['identity']}
+    if path.is_file():
+        saved=json.loads(path.read_text())
+        return saved.get('result') if saved.get('fingerprint')==fingerprint else None
+    output=Path(folder)/'local-recheck-worker.json'
+    worker=Path(__file__).resolve().parents[1]/'scripts/studio_asr_worker.py'
+    result=None
+    try:
+        run=subprocess.run([c['python'],str(worker),'--model-dir',c['model_dir'],'--audio',str(audio),
+                            '--beam-size','10','--output',str(output)],capture_output=True,timeout=300,
+                           env={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','TOKENIZERS_PARALLELISM':'false'})
+        if run.returncode==0: result=validate_result(json.loads(output.read_text()),duration)
+    except (OSError,ValueError,subprocess.TimeoutExpired,WorkError): pass
+    atomic_private(path,{'fingerprint':fingerprint,'result':result})
     return result

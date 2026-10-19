@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {canProduceVoice, defaultProductionTone, creationReadiness, knownAudioMismatch, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
+import {canProduceVoice, defaultProductionTone, creationReadiness, knownAudioMismatch, currentAudioCheck, materialSelection, persistedAsset} from '../src/avatar-creation-model.js';
 
 const models=[{id:'haike/cosyvoice'}], legacy={id:'voice_gateway_default',status:'ready'}, preview={id:'official',model:'haike/cosyvoice-system',status:'ready',production_ready:false};
 test('新项目只默认选择能实际制作的音色；没有可用服务时不伪装为就绪',()=>{
@@ -16,7 +16,7 @@ test('四项输入的就绪状态涵盖可选素材的授权，已有录音不�
   assert.equal(creationReadiness({...input,text:'  '},models,[legacy]).completed,2);
   assert.equal(creationReadiness({...input,text:'字'.repeat(5001)},models,[legacy]).ready,false);
   assert.equal(creationReadiness({...input,ai:{enabled:true,materials:[{rights_confirmed:false}]}},models,[legacy]).ready,false);
-  assert.equal(creationReadiness({...input,soundMode:'audio',audio:{}},[],[]).ready,true);
+  assert.equal(creationReadiness({...input,soundMode:'audio',audio:{id:'a'}},[],[],null,{text:input.text,audioId:'a',report:{status:'passed'}}).ready,true);
   assert.equal(creationReadiness({...input,toneId:preview.id},models,[preview]).ready,false);
 });
 
@@ -24,9 +24,21 @@ test('准备提示指出所有缺项，并为素材问题提供可操作定位',
   const state=creationReadiness({text:'',soundMode:'voice',toneId:'missing',portrait:null,ai:{enabled:true,materials:[{}]}},[],[]);
   assert.deepEqual(state.missing.map(v=>v.id),['text','voice','portrait','materials']);
   assert.equal(state.message,'还需：文案、音色、人物图片、素材使用确认');
-  const tooMany=creationReadiness({text:'文案',soundMode:'audio',audio:{},portrait:{},ai:{materials:Array(5).fill({rights_confirmed:true})}},[],[]);
+  const tooMany=creationReadiness({text:'文案',soundMode:'audio',audio:{id:'a'},portrait:{},ai:{materials:Array(5).fill({rights_confirmed:true})}},[],[],null,{text:'文案',audioId:'a',report:{status:'passed'}});
   assert.equal(tooMany.ready,false);assert.equal(tooMany.missing[0].id,'materials');
   assert.match(tooMany.message,/最多4份/);
+});
+
+test('核对结果随文案或录音变化立即失效，核对中和差异待审均不能制作',()=>{
+  const input={text:'完整文案',soundMode:'audio',audio:{id:'a'},portrait:{id:'p'}};
+  const check={text:input.text,audioId:'a',report:{status:'passed'}};
+  assert.equal(creationReadiness(input,[],[],null,check).ready,true);
+  for(const candidate of [{...input,text:'新文案'},{...input,audio:{id:'b'}}]){
+    assert.equal(currentAudioCheck(candidate,check),null);
+    assert.equal(creationReadiness(candidate,[],[],null,check).ready,false);
+  }
+  for(const bad of [null,{...check,report:{status:'review'}},{...check,report:{status:'blocked'}},{...check,loading:true,report:undefined}])
+    assert.equal(creationReadiness(input,[],[],null,bad).ready,false);
 });
 test('批量素材在上传前核对剩余容量和全部文件，不截断或上传半个无效批次',()=>{
   const f=name=>({name,size:100});
