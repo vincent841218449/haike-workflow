@@ -2,6 +2,18 @@ export function taskUrl(job) {
   return `/tasks?task=${encodeURIComponent(job.job_id)}`;
 }
 
+// Repair links can outlive several attempts. Resolve before freezing a NEW
+// submission; a pending/lost submission must keep its original continuation.
+export async function currentContinuation(request, draftId, previousId) {
+  if (!previousId) return undefined;
+  const {job} = await request(`/api/studio/drafts/${draftId}/avatar-job`);
+  if (!job?.job_id) throw new Error('未能读取原制作记录，请重新打开创作任务继续；未提交新制作。');
+  if (['queued', 'running', 'paused'].includes(job.status)) {
+    throw new Error('当前任务正在制作，请查看原任务进度，无需重复提交。');
+  }
+  return job.job_id;
+}
+
 const pendingKey = 'haike-avatar-pending-submission';
 export function rememberSubmission(storage, submission) {
   if (!submission) {storage.removeItem(pendingKey); return;}

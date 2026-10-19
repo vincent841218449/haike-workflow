@@ -12,7 +12,7 @@ import {MotionGit} from './MotionGit.jsx';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
 import {AvatarMaterials} from './AvatarMaterials.jsx';
-import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from './avatar-submit.js';
+import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission, currentContinuation} from './avatar-submit.js';
 import {DouyinRecovery} from './DouyinRecovery.jsx';
 import { VoiceLibrary, useVoiceLibrary } from './VoiceLibrary.jsx';
 import {CreationStep as Step, PreparationStrip, AvatarVoiceField, AvatarPortraitField, SubmissionStatus} from './AvatarCreationFields.jsx';
@@ -258,7 +258,8 @@ function BasicAvatar() {
         const d=await persistServer();
         setSubmitPhase('准备制作…');
         const q=await api(`/api/studio/drafts/${d.id}/quote`,{revision:d.revision});
-        setQuote(q); pendingSubmission.current={draft:d,quote:q,billingPolicy:'actual_usage',resumeTask:new URLSearchParams(location.search).get('resume_task')||(!['queued','running','paused'].includes(job?.status)?job?.job_id:undefined)};
+        const resumeTask=await currentContinuation(api,d.id,new URLSearchParams(location.search).get('resume_task')||job?.job_id);
+        setQuote(q); pendingSubmission.current={draft:d,quote:q,billingPolicy:'actual_usage',resumeTask};
         rememberSubmission(sessionStorage,pendingSubmission.current);
       }
       setSubmitPhase(uncertain ? '恢复原提交…' : '加入队列…');

@@ -1,8 +1,22 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission} from '../src/avatar-submit.js';
+import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission, currentContinuation} from '../src/avatar-submit.js';
 
 const submission = () => ({draft:{id:'studio-test'},quote:{id:'quote-a',revision:3,known_max_micros:13000000},billingPolicy:'actual_usage'});
+test('旧修复链接沿当前制作记录继续，只读查询不提交制作',async()=>{
+  const calls=[];
+  const latest=await currentContinuation(async(path,body)=>{calls.push([path,body]);return {job:{job_id:'PQ-latest',status:'awaiting_human'}};},'studio-test','PQ-old');
+  assert.equal(latest,'PQ-latest');
+  assert.deepEqual(calls,[['/api/studio/drafts/studio-test/avatar-job',undefined]]);
+  assert.equal(await currentContinuation(()=>assert.fail('新制作无需查询历史'),'studio-new',undefined),undefined);
+});
+test('当前制作已开始或原记录不可用时，停止新提交',async()=>{
+  for(const status of ['queued','running','paused']) {
+    await assert.rejects(currentContinuation(async()=>({job:{job_id:'PQ-live',status}}),'studio-test','PQ-old'),/无需重复提交/);
+  }
+  await assert.rejects(currentContinuation(async()=>({job:null}),'studio-test','PQ-old'),/未提交新制作/);
+  await assert.rejects(currentContinuation(async()=>{throw new Error('offline');},'studio-test','PQ-old'),/offline/);
+});
 test('一键提交冻结报价和版本，按实际使用制作，不要求视频总预算', async()=>{
   const calls=[],job={job_id:'queue-a',parent_job_id:'studio-3',status:'queued'};
   assert.equal(await enqueueAvatar(async(...args)=>{calls.push(args);return job;},submission()),job);

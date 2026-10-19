@@ -225,3 +225,111 @@ def test_producer_uses_local_tts_then_original_avatar_path_and_reuses_both(rig, 
     assert saved["stages"]["avatar"]["job"]["status"] == avatar_status
     assert studio_avatar.run_avatar(project, request, client)["status"] == "completed"
     assert len(remote_calls) == len(seen) == 1
+
+
+def test_personal_bailian_voice_to_coin_avatar_and_selected_04a_resumes_without_repaying(rig, monkeypatch):
+    """Real stage coordinator, TTS intents and RH segment journal; fake suppliers.
+
+    The transcript, audio and video here are test fixtures, not a new user film.
+    Template rendering is checked at its input/output contract, without a GPU.
+    """
+    from backlot import studio_avatar as producer, studio_avatar_app as avatar
+    from backlot import studio_personal_voice as personal, studio_system_voice
+    from backlot import studio_template_auto as auto, studio_motiongit as motion
+    studio, client, _ = rig
+    monkeypatch.delenv('RUNNINGHUB_API_KEY', raising=False)
+    monkeypatch.delenv('RUNNINGHUB_COINS_API_KEY', raising=False)
+    (studio.projects_root.parent/'.env.secrets.local').write_text(
+        'DASHSCOPE_API_KEY=fake-local-provider-key\nRUNNINGHUB_API_KEY=forbidden-wallet-key\nRUNNINGHUB_COINS_API_KEY=fake-coins-key\n')
+    atomic_private(studio.private/'haike-api/avatar.local.json', {'enabled':True,'billing_mode':'rh_coins'})
+    voice_id = 'voice_local_'+'f'*32
+    personal._write(studio,voice_id,{'provider_voice_id':'existing-personal-voice',
+        'credential_identity':studio_system_voice.configuration(studio)['identity'],
+        'target_model':local.TARGET_MODEL,'name':'已选个人音色'})
+    text = '原文开头，不承诺收益。'+'按真实成本核对，不增加未经说明的承诺。'*40
+    text = text[:577]+'原文结尾'
+    assert len(text) == 581
+    draft = studio.save_draft({'template_id':'avatar-safe-circle-v1','title':'隔离测试','text':text,
+        'input':{'soundMode':'voice','voiceId':'haike/cosyvoice','toneId':voice_id,'rate':1,
+                 'subtitles':True,'motion':{'style':'04-A','layout':'portrait'},
+                 'templateExecution':'auto','ai':{'enabled':True,'materials':[]}}})
+    q = client.quote('haike/cosyvoice', {'text':text,'voice_id':voice_id},draft['id'])
+    execution = avatar.snapshot(studio)
+    assert q['execution_route']==local.ROUTE and q['price']['currency']=='CNY'
+    assert execution['billing_mode']=='rh_coins'
+    folder = studio.projects_root/draft['id']/'renders/isolated-mixed'
+    folder.mkdir(parents=True); portrait = folder/'portrait.jpg'; portrait.write_bytes(b'selected-person')
+    calls=[]; task_ids=[]; first_query=True
+    def post(self,url,**kw):
+        nonlocal first_query
+        calls.append((url,kw))
+        if url.endswith('/SpeechSynthesizer'):
+            assert kw['json']['input']['voice']=='existing-personal-voice'
+            assert kw['json']['input']['text']==text
+            assert kw['headers']['Authorization']=='Bearer fake-local-provider-key'
+            value={'request_id':'one-original-tts','usage':{'characters':1064},'output':{'audio':{'url':'https://example.test/original.wav'}}}
+        else:
+            assert kw['headers']['Authorization']=='Bearer fake-coins-key'
+            if url.endswith('/accountStatus'): value={'code':0,'data':{'apiType':'NORMAL','remainCoins':'1000','remainMoney':'999'}}
+            elif url.endswith('/upload/binary'): value={'fileName':'api/'+kw['files']['file'][0]}
+            elif '/run/ai-app/' in url:
+                task_ids.append(str(len(task_ids)+1)); value={'taskId':task_ids[-1],'status':'RUNNING'}
+                assert kw['json']['instanceType']=='plus'
+            elif url.endswith('/query'):
+                task=kw['json']['taskId']; assert task in task_ids
+                value={'taskId':task,'status':'RUNNING' if first_query else 'SUCCESS',
+                       'results':[{'url':'https://example.test/original-'+task+'.mp4','outputType':'mp4'}]}
+                first_query=False
+            else: pytest.fail('unexpected provider call: '+url)
+        return SimpleNamespace(ok=True,status_code=200,json=lambda:value)
+    monkeypatch.setattr(local.requests.Session,'post',post)
+    def download(url,target):
+        if url.endswith('.wav'):
+            with wave.open(str(target),'wb') as w:
+                w.setparams((1,2,24000,0,'NONE','not compressed'));w.writeframes(b'\x01\x02'*(2727*960))
+        else: target.write_bytes(b'original-paid-video')
+    monkeypatch.setattr(producer,'download_result',download)
+    monkeypatch.setattr(avatar,'_verify_clip',lambda *a:{'video':{'width':448,'height':560}})
+    monkeypatch.setattr(avatar,'_stitch',lambda cache,state,audio,target:target.write_bytes(b'joined-original-person'))
+    monkeypatch.setattr(auto,'snapshot',lambda d:{'compiler':'test-only'})
+    monkeypatch.setattr(motion,'precheck',lambda *a:{'paid_calls':0})
+    monkeypatch.setattr('backlot.studio_asr.identity',lambda c:'test-clock')
+    cues=[{'text':text,'startMs':0,'endMs':109080}]
+    monkeypatch.setattr('backlot.studio_asr.transcribe',lambda *a:{'test':True})
+    monkeypatch.setattr(producer,'captions',lambda *a:cues)
+    monkeypatch.setattr(producer,'clock_captions',lambda *a:cues)
+    monkeypatch.setattr('backlot.studio_presentation.verify_native',lambda actual,expected,**kw:None)
+    monkeypatch.setattr('backlot.studio_storyboard.produce',lambda *a:pytest.fail('no paid storyboard'))
+    def preflight(s,d,f,a,c,board,caption_cues,**kw):
+        assert d['input']['motion']=={'style':'04-A','layout':'portrait'}
+        assert d['text']==text and c==cues and caption_cues==cues
+        assert board['workflow']==auto.VERSION
+        return {'mode':'motiongit','notice':'','segments':['selected-04a-plan']}
+    monkeypatch.setattr('backlot.studio_preflight.prepare',preflight)
+    rendered=[]
+    def compose(s,d,f,v,a,c,segments,**kw):
+        from backlot.studio_presentation import selected
+        assert v.read_bytes()==b'joined-original-person' and c==cues
+        assert segments==['selected-04a-plan'] and d['input']['toneId']==voice_id
+        rendered.append(d['input']['motion'])
+        return {'status':'completed','result':{'presentation':{**selected(d),'variant':'motion-kit'}}}
+    monkeypatch.setattr(motion,'compose',compose)
+    request={'id':'isolated-mixed','draft':draft,'render_id':'isolated-mixed',
+        'key_identity':producer.key_identity(studio),'workflow_version':4,'billing_policy':'actual_usage',
+        'avatar_execution':execution,'automatic_template_execution':{'compiler':'test-only'},
+        'presentation':{'id':'adu:04-A:portrait'},'template_ref':{'runtime':'motiongit'},
+        'quotes':{'tts':q},'prepared':{'portrait_path':str(portrait)},
+        'asr':{'provider':'local-whisper','identity':'test-clock'}}
+    project=studio.projects_root/draft['id']
+    first=producer.run_avatar(project,request,client)
+    assert first['error']['code']=='provider_pending' and len(task_ids)==1
+    assert producer.run_avatar(project,request,client)['status']=='completed'
+    assert producer.run_avatar(project,request,client)['status']=='completed'
+    assert len(task_ids)==3 and len(rendered)==2
+    assert sum(url.endswith('/SpeechSynthesizer') for url,_ in calls)==1
+    assert all('/enrollment' not in url and '/create' not in url for url,_ in calls)
+    state=json.loads((folder/'gateway-state.json').read_text())
+    assert state['stages']['tts']['job']['billing_source']=='local-provider'
+    assert state['stages']['avatar']['execution']['billing_mode']=='rh_coins'
+    assert state['stages']['avatar']['job']['billing_policy']=='actual_usage'
+    assert state['stages']['tts']['quote']==q
