@@ -64,6 +64,8 @@ def verify(draft, actual, *, selection_only=False):
         raise WorkError('实际制作方式与所选原生镜头组不一致，不能标记成功', 'template_mismatch')
     if execution == 'components' and actual.get('variant') not in {'source-components-v1','motion-kit'}:
         raise WorkError('实际制作方式与所选组件编排不一致，不能标记成功', 'template_mismatch')
+    if execution == 'auto' and actual.get('variant') != 'motion-kit':
+        raise WorkError('自动制作结果与所选原包组件不一致，不能标记成功', 'template_mismatch')
 
 
 def verify_native(actual, expected_ref, *, rendered=False):

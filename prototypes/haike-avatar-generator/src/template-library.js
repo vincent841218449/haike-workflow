@@ -1,32 +1,25 @@
-const PURPOSES = {
-  '01-A':'观点递进、案例与结论，文字和画面错峰出现',
-  '01-B':'同一主题连续展开，保留物件变形和过渡动作',
-  '01-C':'人物与内容前后分层，适合演示和重点讲解',
-  '01-D':'图文分栏与跨栏交接，适合多段信息讲解',
-  '01-E':'关键词与实体随口播回应，突出表达重点',
-  '02-A':'纸面透视与平衡动作，适合有插图的概念讲解',
-  '02-B':'资料聚合与卡片堆叠，适合分类、清单和交付展示',
-  '03-A':'多屏、作品墙与重点放大，适合录屏和作品展示',
-  '04-A':'深色控制台的固定编舞，适合有明确步骤或输入关系的内容',
-  '05-A':'角色、物件与接力动作，适合有明确参与者的叙事',
-  '06-A':'鲜色竖屏与大字强调，适合步骤、意图和要点讲解',
-  'motiongit-612':'深色仪器台；按内容使用完整包中的原生编舞或官方组件',
-};
-
 export function nativeTemplateCards(catalog, layout, motion) {
-  // A capability in the professional tool is not automatically a one-click template.
-  // Quick TPL has no full-template reference or automatic semantic director.
-  return (catalog?.styles || []).filter(s => s.supported &&
+  return (catalog?.styles || []).filter(s => s.supported && s.automatic_ready === true &&
     ['adu-legacy','motiongit'].includes(s.template_ref?.runtime) && s.template_ref?.fingerprint).map(s => ({
     ...s, name:s.display_name || (/^\d\d-[A-Z]$/.test(s.id)?`${s.id} · ${s.name}`:s.name), image:s.preview, demo:s.demo,
-    description:(PURPOSES[s.id] || s.scope)+(s.execution_modes?.length===1&&s.execution_modes[0]==='components'?'；目前启用官方组件编排，原生镜头组待验收':''),
+    description:'按你的文案自动安排原包文字动效、人物画面和已上传素材；不要求固定步骤或人物数量。',
     componentsOnly:s.execution_modes?.length===1&&s.execution_modes[0]==='components',
-    sourceLabel:s.template_ref.runtime==='motiongit'?`MotionGit · v${s.template_ref.version || s.selection?.split('@')[1]}${s.execution_modes?.length===1&&s.execution_modes[0]==='components'?' · 官方组件':''}`:'ADu · 原生镜头组',
+    sourceLabel:`ADu · v${s.template_ref.version} · 自动制作`,
     sourceDetail:s.template_ref.runtime==='motiongit'?s.scope:`${s.groups.length} 个原生镜头组 · ${s.selection}`,
     ratio:layout==='portrait'?'9:16':'16:9',
-    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict', templateExecution:s.execution_modes?.includes('native')?'native':s.execution_modes?.[0]||'native'},
+    choice:{templateId:'avatar-safe-circle-v1', motion:{style:s.id,layout}, templateRef:s.template_ref, templatePolicy:'strict', templateExecution:'auto'},
     selected:motion?.style===s.id&&motion?.layout===layout,
   }));
+}
+
+// Only an editable copy can adopt a newly selected release. Frozen jobs never pass here.
+export function automaticTemplateChoice(catalog, motion) {
+  const cards=nativeTemplateCards(catalog,motion.layout,motion);
+  const current=cards.find(c=>c.id===motion.style);
+  if(current)return current;
+  const corresponding={'03-A':'motiongit-610-v2-5-7','04-A':motion.layout==='landscape'?'motiongit-611-v2-5-7':'motiongit-612-v2-5-7',
+    'motiongit-612':'motiongit-612-v2-5-7','motiongit-612-v2-5-2':'motiongit-612-v2-5-7'};
+  return cards.find(c=>c.id===corresponding[motion.style]) || null;
 }
 
 export function filterTemplateCards(cards, search) {

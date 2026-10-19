@@ -1,6 +1,7 @@
 import {Button,Field} from './ui.jsx';
 
 export function TemplateExecution({value='native',modes=[],profiles=[],profile='',onProfileChange,disabled,onChange,music,motion}) {
+  if(value==='auto')return <section className="template-execution-settings"><p className="helper">按文案自动制作 · 使用所选模板原包的组件与材质，保留完整配音和字幕，不套用固定样片的步骤或人物数量。声音方案：{music?.mode==='track'?`原声 + ${music.asset?.name||'已选配乐'}`:'原声与动作音效（无背景音乐）'}。</p><Button href={'/avatar?'+new URLSearchParams({mode:'motiongit',style:motion.style,layout:motion.layout})} disabled={disabled}>已有口播 · 高级分镜编辑</Button></section>;
   return <section className="template-execution-settings">
     <Field label="模板制作方式" hint="原生镜头组保留作者完整动作；组件编排按文案组合所选包的组件，不等同于样片镜头。">
       <select value={value} disabled={disabled} onChange={e=>onChange(e.target.value)}>

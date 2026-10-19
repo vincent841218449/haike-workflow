@@ -31,7 +31,7 @@ export function AvatarTemplatePicker({templateId,motion,selectedName,onChoose,di
         {!loading&&!error&&!cards.length&&<EmptyState title="没有找到匹配模板" action={<Button onClick={()=>setSearch('')}>清除搜索</Button>}>换个名称试试，或切换模板分类和画幅。</EmptyState>}
         {tab==='motion'&&pending.length>0&&<details className="template-library-note"><summary>新版模板 · {pending.length} 款待导入或验收</summary>{pending.map(p=><div className="notice" key={p.id}><strong>{p.name}</strong><p>{p.reason}</p><a href={p.url} target="_blank" rel="noreferrer">前往官方模板页</a></div>)}</details>}
         {loading&&<p className="helper" role="status">正在读取本机可用模板…</p>}
-        <p className="helper template-library-note">{tab==='motion'?'使用作者的原生引擎制作；样片中的动作会按本期原文与素材自动安排，不兼容时保留输入，不会自动换风格。':'固定版式，适合直接开始口播制作。'} 无需逐镜审核。</p>
+        <p className="helper template-library-note">{tab==='motion'?'可选模板均已接通自动制作，使用所选版本的原包组件；样片用于了解作者风格，成片按你的完整文案重新编排，固定样片编舞不逐镜照搬。尚未导入或验收的模板不开放选择。':'固定版式，适合直接开始口播制作。'} 无需逐镜审核。</p>
       </>}
     </Dialog>}
   </>;

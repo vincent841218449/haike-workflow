@@ -88,7 +88,7 @@ def validate(studio, draft):
     value = draft["input"]
     validate_voice(value)
     from backlot.studio_storyboard import options, motion_options
-    options(studio, draft)
+    options(studio, draft, require_service=value.get('templateExecution') != 'auto')
     motion_options(draft)
     if value.get('motion'):
         music = value.get('music') or {'mode':'none'}  # Existing drafts used the visible no-BGM default.
@@ -187,7 +187,11 @@ def frozen_request(studio, draft, quote_id, maximum=None):
     presentation = selected(draft)
     if ref and ref['runtime'] in {'adu-legacy','motiongit'}:
         presentation.update(template_ref=ref, adapter='motiongit' if ref['runtime']=='motiongit' else 'adu-motion-video')
-    return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, **billing, "render_id": "studio-" + str(draft["revision"])}
+    automatic = {}
+    if draft['input'].get('templateExecution') == 'auto':
+        from backlot.studio_template_auto import snapshot
+        automatic['automatic_template_execution'] = snapshot(draft)
+    return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, **automatic, **billing, "render_id": "studio-" + str(draft["revision"])}
 
 
 def public_media_address(host, port):
@@ -418,6 +422,10 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             verify_execution(studio,request['avatar_execution'])
         from backlot.studio_presentation import selected, verify
         if request.get('presentation'): verify(draft,request['presentation'],selection_only=True)
+        if draft['input'].get('templateExecution') == 'auto':
+            from backlot.studio_template_auto import snapshot
+            if request.get('automatic_template_execution') != snapshot(draft):
+                raise WorkError('自动模板编译器或原包已改变，原任务保留且未提交新费用', 'template_mismatch')
         if (request.get('template_ref') or {}).get('runtime') == 'motiongit':
             from backlot.studio_presentation import verify_native
             verify_native(request['presentation'],request['template_ref'])
@@ -468,14 +476,18 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             cues = source_captions(draft, cues)
             publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
-        if needs_ai: publish_progress("理解分镜并匹配用户与网络素材")
+        if needs_ai: publish_progress("按文案安排模板与已上传素材" if draft['input'].get('templateExecution') == 'auto' else "理解分镜并匹配用户与网络素材")
         direction_path=output_dir/'native-direction.json'
         adaptive=direction_path.is_file() and json.loads(direction_path.read_text()).get('workflow')=='adu-source-components-v1'
-        storyboard = None if adaptive else produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
+        if draft['input'].get('templateExecution') == 'auto':
+            from backlot.studio_template_auto import storyboard as automatic_storyboard
+            storyboard = automatic_storyboard(studio,draft,output_dir,p['duration'])
+        else:
+            storyboard = None if adaptive else produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
         if needs_ai: publish_progress("分镜与素材已就绪", True)
         from backlot.studio_preflight import prepare
         if draft["input"].get("motion"): publish_progress("检查模板、素材与真实口播时长")
-        composition = prepare(studio, draft, output_dir, Path(p["audio_path"]), clock_cues, storyboard, cues if draft["input"].get("subtitles", True) else [], legacy_variant=request.get('workflow_version', 1) <= 3)
+        composition = prepare(studio, draft, output_dir, Path(p["audio_path"]), clock_cues, storyboard, cues if draft["input"].get("subtitles", True) or draft['input'].get('templateExecution') == 'auto' else [], legacy_variant=request.get('workflow_version', 1) <= 3)
         if composition["notice"]: publish_progress(composition["notice"])
         video = output_dir / "avatar-source.mp4"
         publish_progress("数字人生成与结果下载")
@@ -507,7 +519,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if composition['mode'] == 'motiongit':
             from backlot.studio_motiongit import compose
             from backlot.studio_presentation import verify_native
-            result=compose(studio,draft,output_dir,video,Path(p['audio_path']),cues if draft['input'].get('subtitles',True) else [],composition['segments'],on_progress=on_progress)
+            result=compose(studio,draft,output_dir,video,Path(p['audio_path']),cues if draft['input'].get('subtitles',True) or draft['input'].get('templateExecution')=='auto' else [],composition['segments'],on_progress=on_progress)
             verify_native(result.get('result',{}).get('presentation'),request['template_ref'],rendered=True)
             verify(draft,result['result']['presentation'])
             result['result'].update(composition_mode='motion',requested_presentation=request['presentation'])

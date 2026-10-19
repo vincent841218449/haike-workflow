@@ -155,7 +155,7 @@ class Studio:
             if not isinstance(value["input"], dict): raise WorkError("制作内容格式无效")
             allowed = {"headlines", "details", "conclusion", "materials", "bgm"} if template["kind"] == "graphic" else {"soundMode", "voiceId", "toneId", "rate", "subtitles", "audio", "portrait", "ai", "motion", "templatePolicy", "templateRef", "templateExecution", "music"}
             if value["input"].get("templatePolicy", "auto") not in ("auto", "strict"): raise WorkError("模板策略无效")
-            if value["input"].get("templateExecution", "native") not in ("native", "components"):
+            if value["input"].get("templateExecution", "native") not in ("native", "components", "auto"):
                 raise WorkError("请选择原生镜头组或明确选择组件编排")
             if value['input'].get('motion'):
                 value['input'].setdefault('templateExecution', 'native')

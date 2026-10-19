@@ -7,8 +7,8 @@ import { ActionBar, Button, Dialog as Modal, Field, Heading, Notice, PreviewPane
 import {Motion} from './Motion.jsx';
 import {AvatarTemplatePicker} from './AvatarTemplatePicker.jsx';
 import {TemplateExecution} from './TemplateExecution.jsx';
+import {automaticTemplateChoice} from './template-library.js';
 import {MotionGit} from './MotionGit.jsx';
-import {nativeTemplateCards} from './template-library.js';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
 import {AvatarMaterials} from './AvatarMaterials.jsx';
@@ -120,10 +120,18 @@ function BasicAvatar() {
     setMotionCard(null);setMotionError('');if(!input.motion)return;let live=true;
     api(`/api/studio/motion/catalog?layout=${input.motion.layout}`).then(c=>{
       if(!live)return;
-      const card=nativeTemplateCards(c,input.motion.layout,input.motion).find(s=>s.id===input.motion.style);
-      if(!card)throw new Error('所选模板暂不可用，请重新选择；文案与素材已保留。');
+      const card=automaticTemplateChoice(c,input.motion);
+      if(!card)throw new Error('这个历史模板尚未接通自动制作，请从模板库选择已接通的模板；原文案、音色和人物已保留。');
+      if(card.id!==input.motion.style){
+        setInput(old=>({...old,...card.choice}));setSaved(false);setQuote(null);
+        setToast(`已为编辑草稿载入新版${card.name}的自动制作方式；文案、音色和人物保留，历史任务未改动。`);
+        return;
+      }
       if(input.templateRef&&input.templateRef.fingerprint!==card.choice.templateRef.fingerprint)throw new Error('所选模板版本已更新，请重新选择以使用当前版本；原内容已保留。');
       setMotionCard(card);
+      if(input.templateExecution!=='auto'){
+        setInput(old=>({...old,templateExecution:'auto'}));setSaved(false);setQuote(null);
+      }
     }).catch(e=>{if(live)setMotionError(e.message);});
     return()=>{live=false;};
   },[input.motion?.style,input.motion?.layout,input.templateRef,templateReload]);
@@ -269,6 +277,7 @@ function BasicAvatar() {
   const blocked = accountState === null ? '正在读取模型能力…' : accountState.error ? accountState.message || '暂时无法验证模型能力' : accountState.local_avatar?.enabled&&!accountState.local_avatar.ready ? '稳定版数字人尚未配置本机服务凭据，请联系管理员' : !models.has('haike/avatar') ? '数字人模型尚未开通' : input.soundMode==='voice'&&selectedTone?.production_ready===false ? '已选系统音色，配音服务待接通；可以试听并保存草稿' : (input.subtitles||input.ai?.enabled) && !accountState.local_asr?.ready && !models.has('haike/tencent-asr') ? '字幕识别尚未开通' : '';
   const templateBlocked=input.motion ? motionError || (!currentMotion?'正在核对所选模板…':'') : '';
   const inProgress = ['queued','running'].includes(job?.status) || job?.status==='ambiguous' && job?.error?.code==='provider_pending';
+  const repairedTemplate = input.templateExecution==='auto' && currentMotion && job?.status==='awaiting_human' && job?.error?.code==='template_incompatible';
   const readiness = creationReadiness(input, voices, voiceLibrary.data?.items || []);
   const fallbackTone = defaultProductionTone(voiceLibrary.data, voices);
   const fieldError = field => error?.field === field || (field === 'voice' && error?.field === 'audio') ? error.message : '';
@@ -307,7 +316,7 @@ function BasicAvatar() {
       </fieldset>
       <SubmissionStatus phase={submitPhase} uncertain={uncertain}/>
       <div className="notice-stack avatar-notices"><Notice message={!['text','voice','portrait','materials','audio'].includes(error?.field) ? error?.message : ''} error/></div>
-      {job&&<div className="job-state"><strong>{({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',awaiting_human:'等待处理',ambiguous:'等待供应商返回',cancelled:'已取消',canceled:'已取消'})[job.status]||'等待处理'}</strong><p>{job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
+      {job&&<div className="job-state"><strong>{repairedTemplate?'已载入自动制作方案':({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',awaiting_human:'等待处理',ambiguous:'等待供应商返回',cancelled:'已取消',canceled:'已取消'})[job.status]||'等待处理'}</strong><p>{repairedTemplate?'上次任务使用固定样片编舞，未完成制作。当前编辑草稿已改用所选模板的自动编排；原记录和素材保留，尚未提交新的配音或数字人。':job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&!repairedTemplate&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
       <DouyinRecovery job={job} onJob={setJob}/>
     </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}>
       {selectedSample&&<><div className="poster-frame"><TemplateCover key={selectedSample.id} template={selectedSample}/></div>{selectedSample.sourceLabel&&<p className="template-source-label">{selectedSample.sourceLabel}</p>}<p className="preview-note">{input.motion?selectedSample.description:template.sample?'现有真实样片，制作时使用你的内容。':'模板布局示意，制作时使用你的内容。'}</p>{selectedSample.demo&&<Button className="preview-play" onClick={()=>setModal('sample')}><Play size={16}/>播放所选模板样片</Button>}</>}

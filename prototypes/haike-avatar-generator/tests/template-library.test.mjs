@@ -1,46 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {filterTemplateCards,nativeTemplateCards} from '../src/template-library.js';
+import {automaticTemplateChoice,filterTemplateCards,nativeTemplateCards} from '../src/template-library.js';
 
-test('native picker preserves exact package identity and original preview',()=>{
-  const ref={runtime:'adu-legacy',fingerprint:'real-package-bytes'};
-  const c={styles:[{id:'04-A',name:'仪器台演示',supported:true,groups:[{}],template_ref:ref,
-    preview:'/native.png',demo:'/native.mp4',automatic_name:'自写仿版',automatic_preview:'/fake.svg'}]};
-  const [card]=nativeTemplateCards(c,'portrait',{style:'04-A',layout:'portrait'});
-  assert.equal(card.image,'/native.png');assert.equal(card.demo,'/native.mp4');
-  assert.equal(card.name,'04-A · 仪器台演示');assert.deepEqual(card.choice.templateRef,ref);
+const ref={runtime:'motiongit',version:'2.5.7',fingerprint:'verified-source'};
+const ready={id:'motiongit-612-v2-5-7',display_name:'04-A · 仪器台演示',supported:true,
+  automatic_ready:true,template_ref:ref,groups:[],execution_modes:['components'],
+  preview:'/actual.png',demo:'/actual.mp4'};
+
+test('every selectable motion card preserves the verified automatic package',()=>{
+  const [card]=nativeTemplateCards({styles:[ready]},'portrait',{style:ready.id,layout:'portrait'});
+  assert.equal(card.name,ready.display_name);assert.equal(card.image,'/actual.png');
+  assert.equal(card.demo,'/actual.mp4');assert.deepEqual(card.choice.templateRef,ref);
+  assert.equal(card.choice.templateExecution,'auto');assert.equal(card.choice.motion.style,ready.id);
   assert.equal(card.choice.templatePolicy,'strict');assert.equal(card.selected,true);
-  assert.equal(card.choice.templateExecution,'native');
 });
 
-test('announced or unavailable packages cannot become creation choices',()=>{
-  assert.deepEqual(nativeTemplateCards({styles:[{supported:false,id:'new-motion'}],pending_packages:[{id:'uninstalled'}]},'portrait',null),[]);
+test('native-only, unverified, announced and old releases cannot promise one-click creation',()=>{
+  assert.deepEqual(nativeTemplateCards({styles:[{...ready,automatic_ready:false},
+    {...ready,supported:false},{...ready,template_ref:null},
+    {id:'04-A',supported:true,template_ref:{runtime:'adu-legacy',fingerprint:'old'}}],
+    pending_packages:[{id:'uninstalled'}]},'portrait',null),[]);
 });
 
-test('component-only validation is explicit and never selects native choreography',()=>{
-  const [card]=nativeTemplateCards({styles:[{id:'motiongit-608-v2-5-7',name:'02 · 纸面透视',
-    supported:true,groups:[],scope:'原包控件',execution_modes:['components'],
-    template_ref:{runtime:'motiongit',version:'2.5.7',fingerprint:'signed-paper'}}]},'portrait',null);
-  assert.equal(card.choice.templateExecution,'components');assert.equal(card.componentsOnly,true);
-  assert.match(card.description,/原生镜头组待验收/);assert.match(card.sourceLabel,/官方组件/);
+test('an editing copy adopts only the corresponding visible new release',()=>{
+  const catalog={styles:[ready]};
+  assert.equal(automaticTemplateChoice(catalog,{style:'04-A',layout:'portrait'}).choice.templateExecution,'auto');
+  assert.equal(automaticTemplateChoice(catalog,{style:ready.id,layout:'portrait'}).id,ready.id);
+  assert.equal(automaticTemplateChoice(catalog,{style:'05-A',layout:'portrait'}),null);
+  assert.equal(automaticTemplateChoice(catalog,{style:'04-A',layout:'landscape'}),null);
 });
 
-test('one-click library excludes quick components and packages without verified source identity',()=>{
-  const styles=[{id:'quick',supported:true,groups:[]},{id:'04-A',supported:true,groups:[]},
-    {id:'motiongit-612',name:'仪器台演示 · 完整版',supported:true,groups:[],selection:'console@2.5.2',template_ref:{runtime:'motiongit',version:'2.5.2',fingerprint:'signed-package'}}];
-  const cards=nativeTemplateCards({styles},'portrait',null);
-  assert.deepEqual(cards.map(c=>c.id),['motiongit-612']);
-  assert.equal(cards[0].sourceLabel,'MotionGit · v2.5.2');
-  assert.equal(cards[0].choice.motion.style,'motiongit-612');
-});
-
-test('search supports names, author source and purpose while keeping current choice first',()=>{
-  const cards=[{name:'纸面聚合',id:'02-B',description:'清单',selected:false},
-    {name:'仪器台演示',id:'04-A',sourceLabel:'ADu',selected:false},
-    {name:'仪器台演示 · 完整版',id:'motiongit-612',sourceLabel:'MotionGit',selected:true}];
-  assert.deepEqual(filterTemplateCards(cards,' 仪器台 ').map(c=>c.id),['motiongit-612','04-A']);
-  assert.equal(filterTemplateCards(cards,'清单')[0].id,'02-B');
-  assert.equal(filterTemplateCards(cards,'motiongit')[0].id,'motiongit-612');
+test('search matches exact names and sources, retaining current choice first',()=>{
+  const cards=[{name:'02 · 纸面透视',id:'paper',description:'纸面',selected:false},
+    {name:'04-A · 仪器台演示',id:'console',sourceLabel:'ADu',selected:true}];
+  assert.equal(filterTemplateCards(cards,'仪器台')[0].id,'console');
+  assert.equal(filterTemplateCards(cards,'纸面')[0].id,'paper');
   assert.deepEqual(filterTemplateCards(cards,'不存在'),[]);
-  assert.equal(cards[0].id,'02-B');
+  assert.equal(cards[0].id,'paper');
 });

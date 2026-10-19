@@ -86,10 +86,16 @@ def library(layout):
         selection = guide.get('selection',{})
         recipes = selection.get('recipes',[]) if isinstance(selection,dict) else guide.get('groups',[])
         modes=execution_modes(config)
+        from backlot.studio_template_auto import contract
+        try:
+            automatic = contract(config, json.loads(Path(config['schema']).read_text()), caps)
+        except WorkError:
+            automatic = None
         profiles=caps.get('styleProfiles',{}).get('profiles',{})
         result.append({'id':style, 'name':title, 'display_name':title, 'official_name':official_name,
              'aliases':list(dict.fromkeys([official_name,*config.get('aliases',[])])), 'family':'ADu 完整模板', 'family_id':config.get('family_id',caps.get('styleProfiles',{}).get('templateFamily','04')),
-             'supported':bool(modes), 'status':'candidate',
+             'supported':bool(modes), 'status':'candidate', 'automatic_ready': automatic is not None,
+             'automatic_contract': automatic,
              'selection':config['template_id']+'@'+config['version'], 'template_ref':template_ref(config),
              # The author site currently serves covers with CORP same-origin.
              # Open its normal page rather than proxying a restricted resource.
@@ -290,6 +296,8 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
     if not native and kit_segments:
         timeline['narrationMap']=narration_map(timeline['segments'],timeline['captions'])
         timeline['segments']=[{k:v for k,v in row.items() if k!='$purpose'} for row in timeline['segments']]
+    if draft['input'].get('templateExecution') == 'auto' and not draft['input'].get('subtitles',True):
+        timeline['captions']=[]
     if overlays:timeline['overlays']=replace(overlays)
     music=draft['input'].get('music') or {'mode':'none'}
     if music['mode']=='track':
@@ -366,6 +374,9 @@ def contracts(style=STYLE):
 
 def precheck(studio,draft,folder):
     """Whole-script feasibility before paying for TTS or the avatar, without times."""
+    if draft['input'].get('templateExecution') == 'auto':
+        from backlot.studio_template_auto import precheck as automatic
+        return automatic(studio,draft,folder)
     from backlot.studio_storyboard import TrialRelay,CHAT_MODEL
     from backlot.studio_motion_director import response_json
     config,_,caps=contracts(draft['input']['motion']['style']);path=Path(folder)/'motiongit-content.json'
@@ -460,6 +471,17 @@ def validate_timeline(draft, timeline, cues, storyboard, schema, config=None):
 
 
 def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,caption_cues=None):
+    if draft['input'].get('templateExecution') == 'auto':
+        from backlot.studio_template_auto import select as automatic, snapshot
+        config,schema,caps=contracts(draft['input']['motion']['style'])
+        value=automatic(draft,caption_cues,storyboard,config,schema,caps)
+        receipt={'fingerprint':digest([draft,cues,caption_cues,storyboard,snapshot(draft)]),
+                 'workflow':'motion-kit','segments':value,'compiler':snapshot(draft),'paid_calls':0}
+        path=Path(folder)/'automatic-template-selection.json'
+        if path.exists() and json.loads(path.read_text()) != receipt:
+            raise WorkError('自动编排输入已改变，原计划保留','template_mismatch')
+        atomic_private(path,receipt)
+        return value
     from backlot.studio_storyboard import TrialRelay,CHAT_MODEL
     from backlot.studio_motion_director import response_json
     config,schema,caps=contracts(draft['input']['motion']['style']);folder=Path(folder)
@@ -717,7 +739,12 @@ def finish(studio,draft,folder,instance,*,on_progress=None):
     dimensions = (1920,1080) if config['layout']=='landscape' else (1080,1920)
     if not info.get('audio') or not info.get('video') or abs(info['duration']-report['duration'])>.04 or (info['video']['width'],info['video']['height'])!=dimensions:
         raise WorkError('原生成片的声画或时长未通过，原工程保留','template_incompatible')
-    ffmpeg,_=resolve_ffmpeg_pair();check=subprocess.run([ffmpeg,'-v','error','-i',str(candidate),'-f','null','-'],capture_output=True,timeout=300)
+    if draft['input'].get('templateExecution') == 'auto' and (
+        info['video'].get('codec_name')!='h264' or info['audio'].get('codec_name')!='aac'
+        or info['video'].get('r_frame_rate')!='60/1'
+        or int(info['video'].get('nb_frames',0))!=round(report['duration']*60)):
+        raise WorkError('自动模板成片的编码或帧数未通过，原工程保留','template_incompatible')
+    ffmpeg,_=resolve_ffmpeg_pair();check=subprocess.run([ffmpeg,'-v','error','-xerror','-i',str(candidate),'-f','null','-'],capture_output=True,timeout=300)
     if check.returncode: raise WorkError('原生成片完整解码失败，工程保留','template_incompatible')
     output=folder/'motion-preview.mp4'
     from backlot.studio_audio_delivery import normalize
