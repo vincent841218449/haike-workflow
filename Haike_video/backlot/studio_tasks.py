@@ -41,10 +41,20 @@ def task_view(studio, job, scheduled_paths=()):
         error = {**error, 'code':'audio_script_mismatch'}
     provider_wait = job['status'] == 'ambiguous' and error.get('code') == 'provider_pending'
     audio_issue = error.get('code') in {'audio_script_mismatch','audio_check_review','audio_check_stale'}
+    template_issue = (category == 'avatar' and not complete and job['status'] in {'failed','awaiting_human'}
+                      and error.get('code') == 'template_incompatible')
+    template_draft_updated = False
+    if template_issue and draft:
+        try:
+            current = studio.draft(job['project_id'])
+            template_draft_updated = (current.get('revision',0) > draft.get('revision',0)
+                and current['input'].get('templateExecution') == 'auto' and bool(current['input'].get('motion')))
+        except WorkError:
+            pass
     input_issue = audio_issue or error.get('code') in {'template_incompatible', 'budget_exceeded'}
     display_status='awaiting_human' if audio_issue and job['status']=='failed' else job['status']
     if input_issue:
-        edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if audio_issue else '#more-fields')
+        edit_url += '&resume_task=' + quote(job['job_id'], safe='') + ('#creation-voice' if audio_issue else '' if template_issue else '#more-fields')
         if audio_issue:edit_url=edit_url.replace('#creation-voice','&repair=voice#creation-voice')
     elif job['kind']=='studio_avatar':
         edit_url += '&resume_task=' + quote(job['job_id'],safe='')
@@ -92,12 +102,12 @@ def task_view(studio, job, scheduled_paths=()):
     return {
         "id": job["job_id"], "revision": job.get('revision'), "project_id": job["project_id"], "title": title, "excerpt": excerpt,
         "type": category, "type_label": label, "status": display_status, "raw_status":job['status'],
-        "status_label": "等待选择音色" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
+        "status_label": "待按新方案制作" if template_draft_updated else "待调整制作方案" if template_issue else "等待选择音色" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
         "ratio": ratio, "template_name": template_name, "work_id": work_id,
         "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
         "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
-        "stage": "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
+        "stage": "原任务停在旧版模板校验。新版自动制作草稿已保存，未重新制作；请返回制作页核对后再提交。" if template_draft_updated else "原模板输入需要调整。请返回制作页保存制作方案后继续；直接重试只会重复原来的校验。" if template_issue else "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
         "progress": {"percent": percent, "completed": progress.get("completed", 0) if observed else int(complete),
                      "total": progress.get("total", 0) if observed else int(complete),
                      "basis": "steps" if observed else "task" if complete else "unknown"},
@@ -107,16 +117,16 @@ def task_view(studio, job, scheduled_paths=()):
         "error": "" if provider_wait or audio_issue else str(error.get("message") or "") if isinstance(error, dict) else str(error),
         "error_code": error.get('code'), "provider_wait": provider_wait,
         "audio_issue":audio_issue,
+        "template_issue":template_issue, "template_draft_updated":bool(template_draft_updated),
         "max_charge_micros": (job.get('frozen_request') or {}).get('max_charge_micros'),
         "billing_policy": (job.get('frozen_request') or {}).get('billing_policy', 'limited'),
         "notice": "视频已生成，成片登记尚未完成，请保留原任务并检查制作记录。" if result.get("work_registration_error") else result.get('notice') or "",
         "edit_url": edit_url, "work_url": "/tasks?task=" + quote(job['job_id'], safe="") if work_id else None,
-        "actions": {"retry": (job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation and not audio_issue)
-                    or (job['status']=='awaiting_human' and error.get('code')=='template_incompatible'),
+        "actions": {"retry": job["status"] == "failed" and bool(job.get("retryable")) and not material_confirmation and not audio_issue and not template_issue,
                     "continue": job['kind'] == 'studio_avatar' and job['status'] == 'awaiting_human' and error.get('code') == 'budget_exceeded' and not job.get('cancel_requested'),
                     "pause": job["status"] == "queued" or provider_wait, "resume": job["status"] == "paused",
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
-                    "edit_label": "选择音色并配音" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
+                    "edit_label": "查看已修复草稿" if template_draft_updated else "调整制作方案" if template_issue else "选择音色并配音" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }
 
 

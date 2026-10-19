@@ -824,9 +824,10 @@ class ProductionQueue:
             if row["status"] == "ambiguous":
                 raise ProductionQueueConflict("供应商受理状态不明确，核对原任务后才能恢复")
             material_confirmation = row["status"] == "awaiting_human" and row["kind"] == "studio_avatar" and row["safe_resume_point"] == "studio_avatar_material_rights"
-            template_recheck = (row['status']=='awaiting_human' and row['kind']=='studio_avatar'
-                and row['safe_resume_point']=='studio_avatar_input'
-                and _decode(row['error_json'],{}).get('code')=='template_incompatible')
+            if row['kind']=='studio_avatar' and _decode(row['error_json'],{}).get('code')=='template_incompatible':
+                # Retry replays frozen inputs, so it cannot pick up a repaired
+                # draft. Require the normal quote/continuation boundary instead.
+                raise ProductionQueueConflict('请返回制作页，使用已保存的草稿继续；原任务保留，不重跑旧模板输入')
             avatar_recheck=False
             if (row['status']=='failed' and row['kind']=='studio_avatar'
                 and row['safe_resume_point']=='studio_avatar'
@@ -844,7 +845,7 @@ class ProductionQueue:
                         avatar_recheck=(state.get('execution')==frozen.get('avatar_execution')
                                         and bool(frozen.get('avatar_execution')) and long_failure_recoverable(state))
                     except (OSError,ValueError,KeyError,TypeError): pass
-            if not (material_confirmation or template_recheck or avatar_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
+            if not (material_confirmation or avatar_recheck) and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(

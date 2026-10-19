@@ -112,7 +112,7 @@ def test_delivery_decodes_actual_mp4_and_rejects_incomplete_or_wrong_clock(tmp_p
         verify_delivery(broken, plan)
 
 
-def test_component_retry_keeps_template_input_pause_but_not_budget_pause(tmp_path):
+def test_template_and_budget_input_pauses_do_not_replay_the_old_frozen_request(tmp_path):
     from backlot.production_queue import ProductionQueue, ProductionQueueConflict
 
     projects = tmp_path / "projects"
@@ -141,7 +141,8 @@ def test_component_retry_keeps_template_input_pause_but_not_budget_pause(tmp_pat
         return job
 
     job = waiting("template_incompatible")
-    assert queue.retry(job["job_id"])["status"] == "queued"
+    with pytest.raises(ProductionQueueConflict,match='制作页'):
+        queue.retry(job["job_id"])
     assert queue.get(job["job_id"], include_private=True)["frozen_request"] == {
         "same": "frozen"
     }

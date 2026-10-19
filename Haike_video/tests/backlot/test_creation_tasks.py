@@ -31,6 +31,44 @@ def submit(queue, draft, n=1, kind="studio_graphic"):
                         parent_job_id=f"studio-{n}", frozen_request={"confirmed": True})
 
 
+@pytest.mark.parametrize('status,retryable', [('awaiting_human',False),('failed',True)])
+def test_template_input_failure_opens_saved_edit_instead_of_replaying_old_frozen_request(setup,status,retryable):
+    studio,_,queue,client=setup
+    draft=studio.save_draft({'template_id':'avatar-safe-circle-v1','text':'完整原稿','input':{
+        'soundMode':'voice','toneId':'voice_selected','portrait':{'id':'selected-person'},
+        'motion':{'style':'04-A','layout':'portrait'},'templateExecution':'native'}})
+    project=studio.projects_root/draft['id'];project.mkdir()
+    (project/'project.json').write_text(json.dumps({'title':'旧模板恢复'}))
+    frozen={'draft':draft,'render_id':'studio-1','presentation':{'name':'04-A'}}
+    job=queue.submit(project_id=draft['id'],kind='studio_avatar',source='workbench',priority='normal',
+        parent_job_id='studio-1',frozen_request=frozen)
+    queue.claim_next('worker');queue.finish(job['job_id'],'worker',status=status,stage='旧原生样片要求三步结构',
+        error={'code':'template_incompatible','message':'旧原生样片要求三步结构'},
+        safe_resume_point='studio_avatar_input',retryable=retryable)
+    updated=studio.save_draft({**draft,'input':{**draft['input'],'templateExecution':'auto',
+        'motion':{'style':'motiongit-612-v2-5-7','layout':'portrait'}}})
+    before=queue.get(job['job_id'],include_private=True);events=queue.events(job['job_id'])
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert not task['actions']['retry'] and task['template_issue'] and task['template_draft_updated']
+    assert task['actions']['edit_label']=='查看已修复草稿'
+    assert 'resume_task='+job['job_id'] in task['edit_url'] and '#more-fields' not in task['edit_url']
+    assert task['error']=='旧原生样片要求三步结构'  # Historical evidence stays available.
+    assert '未重新制作' in task['stage'] and task['status_label']=='待按新方案制作'
+    with pytest.raises(ProductionQueueConflict,match='制作页'):queue.retry(job['job_id'])
+    assert queue.get(job['job_id'],include_private=True)==before and queue.events(job['job_id'])==events
+    assert studio.draft(draft['id'])==updated and len(queue.list()['tasks'])==1
+
+
+def test_template_failure_without_a_new_draft_still_requires_input_repair(setup):
+    studio,draft,queue,client=setup
+    job=submit(queue,draft,kind='studio_avatar');queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='awaiting_human',stage='原包校验不通过',
+        error={'code':'template_incompatible'},safe_resume_point='studio_avatar_input')
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['template_issue'] and not task['template_draft_updated'] and not task['actions']['retry']
+    assert task['actions']['edit_label']=='调整制作方案'
+
+
 @pytest.mark.parametrize('template_id,manual', [('avatar-safe-circle-v1',False),('avatar-motion-adu-v1',True)])
 def test_worker_kind_does_not_send_automatic_avatar_users_to_manual_editor(setup,template_id,manual):
     studio,_,queue,client=setup
