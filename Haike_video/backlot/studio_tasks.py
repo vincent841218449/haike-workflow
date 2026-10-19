@@ -43,7 +43,7 @@ def task_view(studio, job, scheduled_paths=()):
     audio_issue = error.get('code') in {'audio_script_mismatch','audio_check_review','audio_check_stale'}
     generated_audio_issue = audio_issue and not complete and motion_input.get('soundMode')=='voice'
     generated_audio_ready = False
-    if generated_audio_issue and error.get('code')=='audio_check_review' and job['status']=='awaiting_human':
+    if generated_audio_issue and error.get('code') in {'audio_check_review','audio_script_mismatch'} and job['status']=='awaiting_human':
         from backlot.studio_audio_check import generated_clock_ready
         generated_audio_ready=generated_clock_ready(studio.projects_root/job['project_id'],job.get('frozen_request') or {})
     template_issue = (category == 'avatar' and not complete and job['status'] in {'failed','awaiting_human'}
@@ -113,7 +113,7 @@ def task_view(studio, job, scheduled_paths=()):
         "presentation": {k:v for k,v in result.get('presentation',{}).items() if k in {'id','name','variant_name'}},
         "requested_presentation": {k:v for k,v in (result.get('requested_presentation') or job.get('frozen_request',{}).get('presentation') or {}).items() if k in {'id','name'}},
         "version_id": version_id, "media_url": media_url, "scheduled": scheduled,
-        "stage": "原配音已生成，字幕对时复核已通过。可复用原配音继续，不会重新配音；数字人阶段仍按原任务执行。" if generated_audio_ready else "后台声音核对未通过，当前已停止制作。已选音色保留，请核对原配音；无需重新选择音色。" if generated_audio_issue else "原任务停在旧版模板校验。新版自动制作草稿已保存，未重新制作；请返回制作页核对后再提交。" if template_draft_updated else "原模板输入需要调整。请返回制作页保存制作方案后继续；直接重试只会重复原来的校验。" if template_issue else "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
+        "stage": "原配音已保存，可直接复用继续制作。字幕使用原文案，不再核对识别文字；不会重新配音。" if generated_audio_ready else "原配音文件或字幕时间轴暂不可用，请管理员恢复原任务文件；已选音色保留，无需重新选择。" if generated_audio_issue else "原任务停在旧版模板校验。新版自动制作草稿已保存，未重新制作；请返回制作页核对后再提交。" if template_draft_updated else "原模板输入需要调整。请返回制作页保存制作方案后继续；直接重试只会重复原来的校验。" if template_issue else "选择音色后，将按原文案配音。原文案、素材及制作记录已保留。" if audio_issue and not complete else "视频制作完成，可直接播放和下载" if complete and not result.get('work_registration_error') else job.get("stage") or LABELS.get(job["status"], "等待处理"),
         "progress": {"percent": percent, "completed": progress.get("completed", 0) if observed else int(complete),
                      "total": progress.get("total", 0) if observed else int(complete),
                      "basis": "steps" if observed else "task" if complete else "unknown"},

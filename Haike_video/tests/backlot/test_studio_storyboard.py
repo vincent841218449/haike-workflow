@@ -32,9 +32,13 @@ def test_server_binds_contiguous_real_clock(data):
     assert 'test-private-value' not in json.dumps(status(s))
 
 
-def test_storyboard_binds_original_text_to_asr_instead_of_model_character_counts(data, tmp_path):
+@pytest.mark.parametrize('sound_mode', ['audio','voice'])
+def test_storyboard_binds_original_text_to_asr_instead_of_model_character_counts(data, tmp_path, monkeypatch, sound_mode):
     from backlot.studio_storyboard import make_plan
     s, d, cues, body = data
+    d['input']['soundMode']=sound_mode
+    if sound_mode=='voice':
+        monkeypatch.setattr('backlot.studio_audio_check.assess',lambda *a:pytest.fail('TTS storyboard must not assess content'))
     body['scenes'][0]['script_end'] = 99
     body['scenes'][1].update(script_start=100, script_end=200)
     response = {'choices': [{'message': {'content': json.dumps(body)}}]}

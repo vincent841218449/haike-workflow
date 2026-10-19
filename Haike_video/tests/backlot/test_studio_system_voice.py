@@ -295,9 +295,11 @@ def test_personal_bailian_voice_to_coin_avatar_and_selected_04a_resumes_without_
     monkeypatch.setattr(motion,'precheck',lambda *a:{'paid_calls':0})
     monkeypatch.setattr('backlot.studio_asr.identity',lambda c:'test-clock')
     cues=[{'text':text,'startMs':0,'endMs':109080}]
+    heard=[{**cues[0],'text':'识别结果两万元，允许改变原文。'}]
+    monkeypatch.setattr('backlot.studio_audio_check.assess',lambda *a:pytest.fail('generated voice must not use content approval'))
     monkeypatch.setattr('backlot.studio_asr.transcribe',lambda *a:{'test':True})
-    monkeypatch.setattr(producer,'captions',lambda *a:cues)
-    monkeypatch.setattr(producer,'clock_captions',lambda *a:cues)
+    monkeypatch.setattr(producer,'captions',lambda *a:heard)
+    monkeypatch.setattr(producer,'clock_captions',lambda *a:heard)
     monkeypatch.setattr('backlot.studio_presentation.verify_native',lambda actual,expected,**kw:None)
     monkeypatch.setattr('backlot.studio_storyboard.produce',lambda *a:pytest.fail('no paid storyboard'))
     def preflight(s,d,f,a,c,board,caption_cues,**kw):

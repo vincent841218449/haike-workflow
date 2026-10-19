@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import ipaddress
 import json
@@ -327,6 +328,26 @@ def clock_captions(result, duration):
 def source_captions(draft, cues):
     """Correct ASR display spelling from the supplied script; keep actual cues."""
     if not cues:return cues
+    if draft.get('input',{}).get('soundMode')=='voice':
+        # TTS already received the source script. Recognition supplies timing,
+        # never approval of that script. Missing anchors merge observed ranges
+        # rather than reject speech, discard text or invent word timestamps.
+        source=draft['text']
+        positions=[i for i,c in enumerate(source) if c.isalnum() or c=='_']
+        written=''.join(source[i] for i in positions).casefold()
+        parts=[re.sub(r'[^\w\u4e00-\u9fff]','',c['text']).casefold() for c in cues]
+        matcher=difflib.SequenceMatcher(None,written,''.join(parts),autojunk=False)
+        mapping={b+j:positions[a+j] for a,b,size in matcher.get_matching_blocks() for j in range(size)} if len(written)==len(positions) else {}
+        boundaries=[(0,0)];offset=len(parts[0])
+        for index,part in enumerate(parts[1:],1):
+            anchors=[mapping[i] for i in range(offset,offset+len(part)) if i in mapping]
+            if anchors and boundaries[-1][1]<anchors[0]<len(source):
+                boundaries.append((index,anchors[0]))
+            offset+=len(part)
+        boundaries.append((len(cues),len(source)))
+        return [{**cues[a],'endMs':cues[b-1]['endMs'],'text':source[start:end],
+                 **({'clock':'sentence'} if b-a>1 else {})}
+                for (a,start),(b,end) in zip(boundaries,boundaries[1:])]
     from backlot.studio_storyboard import bind_script_ranges, verify_spoken_script
     verify_spoken_script(draft['text'], cues)
     units={'scenes':[{'from_cue':i,'to_cue':i,'script_start':0,'script_end':1} for i in range(len(cues))]}
@@ -470,7 +491,9 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
                 result = paid("asr", "haike/tencent-asr", {"audio_file": p["audio_file"]})
             cues = captions(result, p["duration"])
             clock_cues = clock_captions(result, p["duration"])
-            if request.get("workflow_version", 1) >= 2:
+            if draft['input'].get('soundMode')=='voice':
+                clock_cues = source_captions(draft, clock_cues)
+            elif request.get("workflow_version", 1) >= 2:
                 from backlot.studio_storyboard import verify_spoken_script
                 verify_spoken_script(draft["text"], clock_cues)
             cues = source_captions(draft, cues)

@@ -69,7 +69,8 @@ def test_template_failure_without_a_new_draft_still_requires_input_repair(setup)
     assert task['actions']['edit_label']=='调整制作方案'
 
 
-def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_can_resume(setup):
+@pytest.mark.parametrize('code', ['audio_check_review','audio_script_mismatch'])
+def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_can_resume(setup, code):
     from backlot.studio import atomic_private
     from backlot.work_catalog import sha
     studio,_,queue,client=setup
@@ -81,14 +82,14 @@ def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_c
     request={'draft':d,'render_id':'studio-test','quotes':{'tts':q},'asr':{'provider':'local-whisper','identity':'engine'}}
     job=queue.submit(project_id=d['id'],kind='studio_avatar',source='workbench',priority='normal',parent_job_id='studio-test',frozen_request=request)
     queue.claim_next('worker');queue.finish(job['job_id'],'worker',status='awaiting_human',stage='声音核对需处理',
-        error={'code':'audio_check_review'},safe_resume_point='studio_avatar_input')
+        error={'code':code},safe_resume_point='studio_avatar_input')
     task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
     assert task['status_label']!='等待选择音色' and not task['actions']['retry']
     with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
     folder=p/'renders/studio-test';folder.mkdir(parents=True);audio=folder/'narration.wav';audio.write_bytes(b'original-generated-audio')
     atomic_private(folder/'gateway-state.json',{'prepared':{'audio_path':str(audio),'duration':20},
         'stages':{'tts':{'quote':q,'job':{'status':'succeeded'}}}})
-    heard=text.replace('一整个','以整个')
+    heard='识别结果完全不同，不应该阻断按原文生成的配音。'
     atomic_private(folder/'local-asr.json',{'fingerprint':{'audio_sha256':sha(audio),'engine_identity':'engine'},
         'result':{'provider':'local-whisper','segments':[{'text':heard,'start':0,'end':20,
             'words':[{'text':heard,'start':0,'end':20,'probability':.99}]}]}})
@@ -96,6 +97,7 @@ def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_c
     task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
     assert task['actions']['retry'] and task['actions']['retry_label']=='复用原配音继续'
     assert task['status_label']=='待继续制作' and not task['actions'].get('continue')
+    assert '字幕使用原文案' in task['stage'] and '复核已通过' not in task['stage']
     assert queue.get(job['job_id'],include_private=True)==before
     audio.write_bytes(b'changed-audio')
     with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])

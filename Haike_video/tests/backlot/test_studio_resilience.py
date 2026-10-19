@@ -21,6 +21,21 @@ def test_caption_spelling_uses_original_script_without_changing_speech_clock():
     with pytest.raises(WorkError):source_captions({'text':'这是完全不同的语音内容，不是这次口播。'},cues)
 
 
+@pytest.mark.parametrize('heard', ['未来以整个小区不会收两万元。', 'xyz', ''])
+def test_generated_speech_uses_script_without_content_approval(heard, monkeypatch):
+    from backlot.studio_avatar import source_captions
+    monkeypatch.setattr('backlot.studio_audio_check.assess', lambda *a: pytest.fail('TTS must not assess recognized content'))
+    draft={'text':'未来一整个小区只收一万元。\n原文结尾。','input':{'soundMode':'voice'}}
+    cues=[{'startMs':0,'endMs':2500,'text':heard,'clock':'word'},
+          {'startMs':3000,'endMs':5200,'text':'???','clock':'word'},
+          {'startMs':5500,'endMs':7500,'text':'原文结尾。','clock':'word'}]
+    corrected=source_captions(draft,cues)
+    assert ''.join(c['text'] for c in corrected)==draft['text']
+    assert corrected[0]['startMs']==0 and corrected[-1]['endMs']==7500
+    assert all(c['startMs'] in {v['startMs'] for v in cues} and c['endMs'] in {v['endMs'] for v in cues} for c in corrected)
+    assert all(a['endMs']<=b['startMs'] for a,b in zip(corrected,corrected[1:]))
+
+
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     studio = Studio(tmp_path / 'projects')

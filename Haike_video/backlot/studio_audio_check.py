@@ -1,4 +1,4 @@
-"""Offline content preflight. A private, content-bound receipt gates paid work."""
+"""Uploaded-audio content preflight and read-only generated-audio recovery."""
 from __future__ import annotations
 import difflib
 import hashlib
@@ -96,6 +96,7 @@ def generated_clock_ready(project, request):
 
     No quoting, transcribing, downloading or generation occurs here. Re-entering
     the same producer retains its TTS intent and prepared audio checkpoint.
+    Recognition content is not an approval gate for script-driven TTS.
     """
     try:
         draft=request.get('draft') or {}
@@ -115,9 +116,8 @@ def generated_clock_ready(project, request):
         if (request.get('asr',{}).get('provider')!='local-whisper'
             or saved.get('fingerprint')!={'audio_sha256':sha(audio),'engine_identity':request['asr']['identity']}): return False
         from backlot.studio_asr import validate_result
-        from backlot.studio_avatar import clock_captions
-        result=validate_result(saved['result'],prepared['duration'])
-        return assess(draft['text'],clock_captions(result,prepared['duration']))['status']=='passed'
+        validate_result(saved['result'],prepared['duration'])
+        return True
     except (OSError,ValueError,KeyError,TypeError,WorkError):
         return False
 

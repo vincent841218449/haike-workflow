@@ -311,7 +311,8 @@ def motion_clock_segments(segments, frames):
 def make_plan(studio, draft, cues, duration, relay):
     ai = options(studio, draft)
     if not cues: raise WorkError("AI分镜需要真实字幕时间轴，请开通语音识别")
-    if duration is not None: verify_spoken_script(draft["text"],cues)
+    if duration is not None and draft['input'].get('soundMode')!='voice':
+        verify_spoken_script(draft["text"],cues)
     content = [{"type": "text", "text": json.dumps({"script": draft["text"], "brief": ai.get("brief", ""),"source_policy":{"skip_douyin":ai.get("skip_douyin",False),"allow_illustrations":ai.get("allow_images",False)},
                 "cues": [{"id": i, "text": c["text"]} for i, c in enumerate(cues)],
                 "materials": [{k: m.get(k) for k in ("id", "name", "mode", "note", "offset")} for m in ai.get("materials", [])]}, ensure_ascii=False)}]
