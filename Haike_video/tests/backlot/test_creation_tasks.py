@@ -69,6 +69,58 @@ def test_template_failure_without_a_new_draft_still_requires_input_repair(setup)
     assert task['actions']['edit_label']=='调整制作方案'
 
 
+def test_completed_avatar_visual_recovery_is_local_only_and_keeps_frozen_request(setup,monkeypatch):
+    from backlot.studio import atomic_private
+    from backlot.work_catalog import sha
+    from backlot.production_queue_worker import ProductionQueueWorker
+    studio,_,queue,client=setup
+    d=studio.save_draft({'template_id':'avatar-safe-circle-v1','text':'完整原文','input':{
+        'soundMode':'voice','templateExecution':'auto','motion':{'style':'motiongit-test','layout':'portrait'}}})
+    p=studio.projects_root/d['id'];p.mkdir();(p/'project.json').write_text('{}')
+    f=p/'renders/test';f.mkdir(parents=True);audio=f/'narration.wav';audio.write_bytes(b'original-audio')
+    portrait=f/'portrait.png';portrait.write_bytes(b'original-person');video=f/'avatar-source.mp4';video.write_bytes(b'original-video')
+    q={'id':'original','model':'tts','execution_route':'local-system-voice'}
+    request={'draft':d,'render_id':'test','quotes':{'tts':q},'asr':{'provider':'local-whisper','identity':'engine'},
+        'avatar_execution':{'identity':'original-rh-coins'},'template_ref':{'id':'original-04a'}}
+    atomic_private(f/'gateway-state.json',{'prepared':{'audio_path':str(audio),'portrait_path':str(portrait),'duration':1},
+        'stages':{'tts':{'quote':q,'job':{'status':'succeeded'}},'avatar':{'job':{'status':'succeeded'}}}})
+    atomic_private(f/'local-asr.json',{'fingerprint':{'audio_sha256':sha(audio),'engine_identity':'engine'},
+        'result':{'segments':[{'start':0,'end':1,'text':'识别', 'words':[{'start':0,'end':1,'text':'识别'}]}]}})
+    atomic_private(f/'avatar-app/state.json',{'execution':request['avatar_execution'],'status':'succeeded',
+        'chunks':[{'status':'succeeded'}],'output_sha256':sha(video),'audio_sha256':sha(audio),'portrait_sha256':sha(portrait)})
+    instance=f/'motiongit-final';root=instance/'project';root.mkdir(parents=True)
+    (root/'params.json').write_text('{}');(root/'frame.png').write_bytes(b'rendered-frame')
+    atomic_private(instance/'haike-template-ref.json',request['template_ref'])
+    atomic_private(root/'preview.json',{'projectHashes':{'params.json':sha(root/'params.json')},'stills':{'frame.png':sha(root/'frame.png')}})
+    atomic_private(instance/'visual-review.json',{'approved':False,'preview_sha256':sha(root/'preview.json')})
+    job=queue.submit(project_id=d['id'],kind='studio_avatar',source='workbench',priority='normal',parent_job_id='test',frozen_request=request)
+    queue.claim_next('worker');queue.finish(job['job_id'],'worker',status='awaiting_human',stage='画面检查需修正',
+        error={'code':'template_incompatible'},safe_resume_point='studio_avatar_input')
+    task=client.get('/api/studio/tasks/'+job['job_id']).json()['task']
+    assert task['status_label']=='待继续合成' and task['actions']['retry_label']=='继续本地合成'
+    video.write_bytes(b'changed-video')
+    with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
+    video.write_bytes(b'original-video');queue.retry(job['job_id'])
+    saved=queue.get(job['job_id'],include_private=True)
+    assert saved['frozen_request']==request and saved['safe_resume_point']=='studio_avatar_visual_review'
+    calls=[]
+    monkeypatch.setattr('backlot.studio_avatar.run_avatar',lambda p,r,**kw:calls.append(r) or {'status':'completed'})
+    worker=ProductionQueueWorker(queue,studio.projects_root)
+    assert worker._run_studio_avatar(saved)['status']=='completed'
+    assert calls[0]['local_recomposition'] and 'local_recomposition' not in request
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='failed',stage='内部画面复核版本变更',
+        error={'code':'invalid'},safe_resume_point='studio_avatar')
+    (instance/'visual-review.json').unlink()
+    queue.retry(job['job_id'])
+    saved=queue.get(job['job_id'],include_private=True)
+    assert saved['safe_resume_point']=='studio_avatar_visual_review' and saved['frozen_request']==request
+    monkeypatch.setattr('backlot.studio_avatar.run_avatar',lambda *a,**kw:{'status':'failed','safe_resume_point':'studio_avatar'})
+    assert worker._run_studio_avatar(saved)['safe_resume_point']=='studio_avatar_visual_review'
+    video.write_bytes(b'missing-original')
+    assert worker._run_studio_avatar(saved)['status']=='awaiting_human' and len(calls)==1
+
+
 @pytest.mark.parametrize('code', ['audio_check_review','audio_script_mismatch'])
 def test_generated_audio_review_is_not_a_missing_voice_and_only_verified_cache_can_resume(setup, code):
     from backlot.studio import atomic_private

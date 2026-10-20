@@ -203,6 +203,51 @@ def test_native_review_covers_both_official_preview_layers_and_real_still_bytes(
         m.visual_review(None,{},instance)
 
 
+def test_visual_review_distinguishes_presenter_cards_and_preserves_legacy_rejection(tmp_path,monkeypatch):
+    from PIL import Image
+    instance=tmp_path/'instance';project=instance/'project';project.mkdir(parents=True)
+    (instance/'plan').mkdir()
+    frame=project/'frame.png';Image.new('RGB',(10,10),'navy').save(frame)
+    atomic_private(project/'preview.json',{'stills':{'frame.png':sha(frame)},'reviewed':False})
+    atomic_private(project/'params.json',{'presenter':{'mode':'card'},'layout':'portrait'})
+    atomic_private(instance/'plan/report.json',{'mediaBindings':[{'role':'presenter','where':'presenter.src'}]})
+    atomic_private(instance/'layout-policy.json',{'decisions':[]})
+    old={'approved':False,'issues':['人物卡没有80%宽'],'preview_sha256':sha(project/'preview.json')}
+    atomic_private(instance/'visual-review.json',old)
+    calls=[]
+    def review(self,stage,payload):
+        calls.append((stage,payload))
+        return {'choices':[{'message':{'content':'{"approved":true,"issues":[]}'}}]}
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
+    assert m.visual_review(None,{'text':'原文'},instance)['approved']
+    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v5-'+old['preview_sha256'][:16]
+    context=json.loads(calls[0][1]['messages'][1]['content'][0]['text'])['layout_contract']
+    assert context['media_roles']==['presenter'] and context['footage_segments']==[]
+    assert '人物卡' in calls[0][1]['messages'][0]['content']
+    assert '不做原稿语言纠错' in calls[0][1]['messages'][0]['content']
+    assert json.loads(next(instance.glob('visual-review-legacy-*.json')).read_text())==old
+    m.visual_review(None,{'text':'原文'},instance)
+    assert len(calls)==1
+
+
+def test_automatic_card_excerpt_does_not_cut_a_number_or_a_negated_clause():
+    source='小区门口，30块钱的理发店。风险写在合同里，不写在酒桌上。'
+    rows=[{'control':'quote','props':{'text':'小区门口，30','who':'口播原文'},'$text':source[:7],'t0':0,'t1':5},
+          {'control':'quote','props':{'text':'不写在','who':'口播原文'},'$text':source[7:],'t0':5,'t1':12}]
+    revised,changes=m.complete_excerpts(source,rows)
+    assert revised[0]['props']['text']=='小区门口，'
+    assert revised[1]['props']['text']=='风险写在合同里，不写在酒桌上。'
+    assert ''.join(r['$text'] for r in revised)==source
+    assert [(r['t0'],r['t1']) for r in revised]==[(0,5),(5,12)] and len(changes)==2
+    assert rows[0]['props']['text']=='小区门口，30'
+    source='而且我们做的这个AI赛道是非常务实的，在小区卡位住未来5到10年一整个小区的AI购买需求。'
+    cuts=[0,17,40,len(source)]
+    rows=[{'control':'quote','props':{'text':'旧摘句'},'$text':source[a:b],'t0':i,'t1':i+1} for i,(a,b) in enumerate(zip(cuts,cuts[1:]))]
+    revised,_=m.complete_excerpts(source,rows)
+    assert all(r['props']['text'] in source and r['props']['text']!='口播正文' for r in revised)
+    assert revised[1]['props']['text']=='在小区卡位住未来5到10年一整个小区的AI购买需求。'
+
+
 def test_long_timeline_review_samples_every_scene_including_the_final_ones():
     ranges=[(i*4,(i+1)*4) for i in range(30)]
     times=m.preview_times(ranges,120)

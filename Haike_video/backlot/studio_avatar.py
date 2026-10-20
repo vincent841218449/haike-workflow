@@ -514,7 +514,15 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         if composition["notice"]: publish_progress(composition["notice"])
         video = output_dir / "avatar-source.mp4"
         publish_progress("数字人生成与结果下载")
-        if not video.exists() or request.get('avatar_execution'):
+        if request.get('local_recomposition'):
+            previous=state['stages'].get('avatar',{}).get('job',{})
+            if not video.is_file():
+                raise WorkError('原数字人缓存缺失，未提交任何新生成，请恢复原文件','local_artifact_missing')
+            if request.get('avatar_execution'):
+                cached=json.loads((output_dir/'avatar-app/state.json').read_text())
+                if previous.get('status')!='succeeded' or cached.get('status')!='succeeded' or cached.get('output_sha256')!=sha(video):
+                    raise WorkError('原数字人缓存已改变，未提交任何新生成','local_artifact_missing')
+        elif not video.exists() or request.get('avatar_execution'):
             if request.get('avatar_execution'):
                 from backlot.studio_avatar_app import produce as produce_avatar_app
                 job = produce_avatar_app(studio,request['avatar_execution'],output_dir,Path(p['audio_path']),Path(p['portrait_path']),clock_cues,on_progress=publish_progress,

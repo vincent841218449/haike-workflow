@@ -64,7 +64,17 @@ class ProductionQueueWorker:
 
     def _run_studio_avatar(self, job):
         from backlot.studio_avatar import run_avatar
-        return run_avatar(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
+        request=job['frozen_request']
+        if job.get('safe_resume_point')=='studio_avatar_visual_review':
+            from backlot.studio_visual_recovery import ready
+            if not ready(self._project_dir(job),request):
+                return {'status':'awaiting_human','stage':'原配音、数字人或预览文件已改变，请恢复原文件；未提交生成',
+                        'error':{'code':'local_artifact_missing'},'safe_resume_point':'studio_avatar_visual_review'}
+            request={**request,'local_recomposition':True}
+        result=run_avatar(self._project_dir(job), request, on_progress=self._stage_reporter(job))
+        if request.get('local_recomposition') and result.get('status')!='completed':
+            result['safe_resume_point']='studio_avatar_visual_review'
+        return result
 
     def _run_studio_motion(self, job):
         if job['frozen_request'].get('runtime')=='motiongit':
@@ -214,7 +224,7 @@ class ProductionQueueWorker:
                 # File existence cannot prove template identity or a complete
                 # export after a crash. Re-enter the frozen producer: its
                 # receipts validate caches without resubmitting paid stages.
-                return {'status':'queued', 'stage':'自动恢复原制作，复核原模板、产物与模型请求', 'safe_resume_point':'studio_avatar'}
+                return {'status':'queued', 'stage':'自动恢复原制作，复核原模板、产物与模型请求', 'safe_resume_point':'studio_avatar_visual_review' if job.get('safe_resume_point')=='studio_avatar_visual_review' else 'studio_avatar'}
             if job['frozen_request'].get('runtime')=='motiongit' or (job['frozen_request'].get('template_ref') or {}).get('runtime')=='motiongit':
                 return {'status':'queued','stage':'自动核对原生工程、成片版本与输入摘要','safe_resume_point':job['kind']}
             filename = {"studio_graphic": "graphic-preview.mp4", "studio_avatar": "avatar-preview.mp4", "studio_motion": "motion-preview.mp4"}[job["kind"]]

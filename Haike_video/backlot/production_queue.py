@@ -824,10 +824,15 @@ class ProductionQueue:
             if row["status"] == "ambiguous":
                 raise ProductionQueueConflict("供应商受理状态不明确，核对原任务后才能恢复")
             material_confirmation = row["status"] == "awaiting_human" and row["kind"] == "studio_avatar" and row["safe_resume_point"] == "studio_avatar_material_rights"
+            visual_recovery=False
+            if row['kind']=='studio_avatar' and row['status'] in {'failed','awaiting_human'}:
+                from backlot.studio_visual_recovery import ready
+                visual_recovery=ready(self.projects_root/row['project_id'],_decode(row['frozen_request'],{}))
             if row['kind']=='studio_avatar' and _decode(row['error_json'],{}).get('code')=='template_incompatible':
                 # Retry replays frozen inputs, so it cannot pick up a repaired
                 # draft. Require the normal quote/continuation boundary instead.
-                raise ProductionQueueConflict('请返回制作页，使用已保存的草稿继续；原任务保留，不重跑旧模板输入')
+                if not visual_recovery:
+                    raise ProductionQueueConflict('请返回制作页，使用已保存的草稿继续；原任务保留，不重跑旧模板输入')
             audio_recovery=False
             if (row['kind']=='studio_avatar' and row['status']=='awaiting_human'
                 and _decode(row['error_json'],{}).get('code') in {'audio_check_review','audio_script_mismatch'}):
@@ -850,14 +855,14 @@ class ProductionQueue:
                         avatar_recheck=(state.get('execution')==frozen.get('avatar_execution')
                                         and bool(frozen.get('avatar_execution')) and long_failure_recoverable(state))
                     except (OSError,ValueError,KeyError,TypeError): pass
-            if not (material_confirmation or avatar_recheck or audio_recovery) and (row["status"] != "failed" or not bool(row["retryable"])):
+            if not (material_confirmation or avatar_recheck or audio_recovery or visual_recovery) and (row["status"] != "failed" or not bool(row["retryable"])):
                 raise ProductionQueueConflict("该失败任务没有安全重试条件")
             now = _now()
             connection.execute(
                 "UPDATE production_jobs SET status='queued',stage='等待从安全点继续',error_json='{}',"
                 "retryable=0,cancel_requested=0,worker_id=NULL,lease_expires_at=NULL,finished_at=NULL,"
-                "updated_at=?,revision=revision+1 WHERE job_id=?",
-                (now, job_id),
+                "safe_resume_point=?,updated_at=?,revision=revision+1 WHERE job_id=?",
+                ('studio_avatar_visual_review' if visual_recovery else row['safe_resume_point'], now, job_id),
             )
             self._event(connection, job_id, "retried", row["status"], "queued")
             updated = connection.execute("SELECT * FROM production_jobs WHERE job_id=?", (job_id,)).fetchone()

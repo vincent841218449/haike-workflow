@@ -48,6 +48,10 @@ def task_view(studio, job, scheduled_paths=()):
         generated_audio_ready=generated_clock_ready(studio.projects_root/job['project_id'],job.get('frozen_request') or {})
     template_issue = (category == 'avatar' and not complete and job['status'] in {'failed','awaiting_human'}
                       and error.get('code') == 'template_incompatible')
+    local_visual_ready=False
+    if template_issue:
+        from backlot.studio_visual_recovery import ready
+        local_visual_ready=ready(studio.projects_root/job['project_id'],job.get('frozen_request') or {})
     template_draft_updated = False
     if template_issue and draft:
         try:
@@ -105,7 +109,7 @@ def task_view(studio, job, scheduled_paths=()):
         except WorkError:
             pass
     scheduled = complete and result.get('output_path') in scheduled_paths
-    return {
+    value = {
         "id": job["job_id"], "revision": job.get('revision'), "project_id": job["project_id"], "title": title, "excerpt": excerpt,
         "type": category, "type_label": label, "status": display_status, "raw_status":job['status'],
         "status_label": "待继续制作" if generated_audio_ready else "配音对时待处理" if generated_audio_issue else "待按新方案制作" if template_draft_updated else "待调整制作方案" if template_issue else "等待选择音色" if audio_issue and not complete else "等待继续制作" if error.get('code') == 'budget_exceeded' and job['status'] == 'awaiting_human' else "等待供应商返回" if provider_wait else "等待确认素材" if material_confirmation else "已排期" if scheduled else "已完成 · 已选发布版本" if complete and approved else "正在取消后续制作" if job.get("cancel_requested") and not complete else LABELS.get(job["status"], job["status"]),
@@ -135,6 +139,10 @@ def task_view(studio, job, scheduled_paths=()):
                     "cancel": (job["status"] in {"queued", "running", "paused", "awaiting_human"} or provider_wait) and not job.get("cancel_requested"),
                     "edit_label": "查看制作内容" if generated_audio_issue else "查看已修复草稿" if template_draft_updated else "调整制作方案" if template_issue else "选择音色并配音" if audio_issue else "返回制作项目" if error.get('code') == 'budget_exceeded' else "调整模板策略" if input_issue else "返回制作项目"},
     }
+    if local_visual_ready:
+        value.update(status_label='待继续合成',stage='配音和数字人已完整保存，可复用原产物继续所选模板的本地合成，无需重新生成。')
+        value['actions'].update(retry=True,retry_label='继续本地合成',edit_label='查看制作内容')
+    return value
 
 
 def creation_view(studio, queue, job, scheduled):

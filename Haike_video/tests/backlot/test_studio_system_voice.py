@@ -328,6 +328,8 @@ def test_personal_bailian_voice_to_coin_avatar_and_selected_04a_resumes_without_
     assert producer.run_avatar(project,request,client)['status']=='completed'
     assert producer.run_avatar(project,request,client)['status']=='completed'
     assert len(task_ids)==3 and len(rendered)==2
+    assert producer.run_avatar(project,{**request,'local_recomposition':True},client)['status']=='completed'
+    assert len(task_ids)==3 and len(rendered)==3
     assert sum(url.endswith('/SpeechSynthesizer') for url,_ in calls)==1
     assert all('/enrollment' not in url and '/create' not in url for url,_ in calls)
     state=json.loads((folder/'gateway-state.json').read_text())
