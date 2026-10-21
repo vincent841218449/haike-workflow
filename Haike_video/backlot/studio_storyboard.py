@@ -54,13 +54,18 @@ def status(studio):
             "billing": "sponsored", "customer_charge_micros": "0", "procurement_price": None,
             "douyin_authorized": c.get("douyin_commercial_authorized") is True,
             "douyin_login_confirmed": c.get("douyin_login_confirmed") is True,
+            "material_search_ready":False,
+            "material_search_reason":"素材搜索和下载已接通；片段与模板的合成正在本地验收，暂不开放正式制作。",
             "image_verified": verified, "image_paused": c.get("image_paused", False), "max_images": 2, "max_requests_per_job": 12}
 
 
 def options(studio, draft, *, require_service=True):
     ai = draft["input"].get("ai") or {}
-    if not isinstance(ai, dict) or set(ai) - {"enabled", "materials", "brief", "allow_images", "skip_douyin", "max_images"}:
+    if not isinstance(ai, dict) or set(ai) - {"enabled", "materials", "brief", "allow_images", "skip_douyin", "max_images", "material_search"}:
         raise WorkError("AI制作设置无效")
+    if 'material_search' in ai:
+        from backlot.studio_material_search import policy
+        policy(draft)
     if not ai.get("enabled"): return None
     if any(type(ai.get(k, False)) is not bool for k in ("enabled", "allow_images", "skip_douyin")):
         raise WorkError("AI制作开关无效")

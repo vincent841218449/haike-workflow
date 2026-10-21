@@ -22,11 +22,11 @@ def contract(style):
         raise WorkError('这款模板的组件制作尚未完成本地验收','template_incompatible')
     properties=schema['properties']['timeline']['properties']
     definitions={layer:{p['properties']['control']['const']:p['properties'].get('props',{})
-        for p in properties[layer]['items']['oneOf']} for layer in ['segments','overlays']}
+        for p in properties.get(layer,{}).get('items',{}).get('oneOf',[])} for layer in ['segments','overlays']}
     return {'style':style,'layout':config['layout'],'template_ref':motion.template_ref(config),
         'controls':{k:{**caps['controls'][k],'schema':v} for k,v in definitions['segments'].items()},
         'overlays':{k:{**caps['controls'][k],'schema':v} for k,v in definitions['overlays'].items()},
-        'transitions':properties['segments']['items']['oneOf'][0]['properties']['transition']['enum'],
+        'transitions':properties['segments']['items']['oneOf'][0]['properties'].get('transition',{}).get('enum',caps.get('transitions',['cut'])),
         'purposes':sorted(motion.PURPOSES)}
 
 
@@ -81,7 +81,7 @@ def compile_selection(studio,draft,config,schema,caps,duration):
 
 def compile_overlays(studio,draft,schema,caps,cues):
     from jsonschema import Draft202012Validator
-    definitions={p['properties']['control']['const']:p for p in schema['properties']['timeline']['properties']['overlays']['items']['oneOf']}
+    definitions={p['properties']['control']['const']:p for p in schema['properties']['timeline']['properties'].get('overlays',{}).get('items',{}).get('oneOf',[])}
     source=draft['input'].get('overlays',[])
     if not isinstance(source,list) or len(source)>30:raise WorkError('最多配置30个叠加效果')
     def media(value,spec):

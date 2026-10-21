@@ -36,3 +36,10 @@
 @media(max-width:600px){.creation-attempts li{align-items:flex-start;flex-direction:column}.creation-billing-note{align-items:flex-start}.creation-billing-note svg{flex-shrink:0;margin-top:3px}}
 .creation-template-receipt{display:flex;flex-wrap:wrap;gap:12px 24px;margin:16px 0;padding:14px 16px;border:1px solid #e8e3db;border-radius:12px;color:#858b96;font-size:13px}
 .creation-template-receipt strong{color:#343a43;font-weight:600;margin-left:8px}
+.creation-live {position:static;width:auto;height:auto;padding:0;margin:12px 0;overflow:visible;clip-path:none;white-space:normal;font-size:12px;color:#58655e}
+.tasks-welcome p,.tasks-welcome-stats span,.tasks-page-heading p,.creation-overview p,.creation-row-meta,.creation-stage,.creation-history small,.creation-history-list time {color:#59675f;font-size:13px}
+.creation-kind,.creation-state,.creation-statuses small {font-size:12px}.creation-state.completed {color:#286a48}.creation-state.running,.creation-state.queued,.creation-state.awaiting_human,.creation-state.ambiguous {color:#895813}
+.creation-types button,.creation-statuses button,.creation-detail-actions .button,.task-video-actions .button {min-height:44px;font-size:13px}
+.creation-row .creation-progress small {display:block;text-align:left;font-size:12px;color:#59675f}
+.creation-tasks .creation-stage {overflow-wrap:anywhere}
+@media(max-width:700px){.creation-live {font-size:12px;gap:5px;flex-wrap:wrap}.creation-live>span:last-child {font-size:12px}.creation-row-meta,.creation-stage,.creation-kind,.creation-row>.creation-state {font-size:12px}.creation-row {grid-template-columns:minmax(0,1fr) auto 32px}.creation-row h2 button {-webkit-line-clamp:2}.creation-detail-actions .button {flex:1;white-space:normal}.creation-history-list {font-size:13px}.creation-overview p {font-size:13px}.tasks-welcome {position:static}.creation-overview {padding:16px}}

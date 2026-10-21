@@ -190,7 +190,7 @@ def frozen_request(studio, draft, quote_id, maximum=None):
         presentation.update(template_ref=ref, adapter='motiongit' if ref['runtime']=='motiongit' else 'adu-motion-video')
     automatic = {}
     if draft['input'].get('templateExecution') == 'auto':
-        from backlot.studio_template_auto import snapshot
+        from backlot.studio_template_execution import snapshot
         automatic['automatic_template_execution'] = snapshot(draft)
     return {**data, "workflow_version": 4, "template_ref": ref, "presentation":presentation, **automatic, **billing, "render_id": "studio-" + str(draft["revision"])}
 
@@ -444,7 +444,7 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
         from backlot.studio_presentation import selected, verify
         if request.get('presentation'): verify(draft,request['presentation'],selection_only=True)
         if draft['input'].get('templateExecution') == 'auto':
-            from backlot.studio_template_auto import snapshot
+            from backlot.studio_template_execution import snapshot
             if request.get('automatic_template_execution') != snapshot(draft):
                 raise WorkError('自动模板编译器或原包已改变，原任务保留且未提交新费用', 'template_mismatch')
         if (request.get('template_ref') or {}).get('runtime') == 'motiongit':
@@ -499,12 +499,19 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
             cues = source_captions(draft, cues)
             publish_progress("字幕时间轴已就绪", True)
         from backlot.studio_storyboard import produce
-        if needs_ai: publish_progress("按文案安排模板与已上传素材" if draft['input'].get('templateExecution') == 'auto' else "理解分镜并匹配用户与网络素材")
+        if needs_ai:
+            from backlot.studio_material_search import policy as material_policy
+            selected_sources=material_policy(draft)
+            publish_progress("按文案匹配所选素材来源" if selected_sources and selected_sources['providers'] else
+                             "按文案安排模板与已上传素材" if draft['input'].get('templateExecution') == 'auto' else "理解分镜并匹配用户与网络素材")
         direction_path=output_dir/'native-direction.json'
         adaptive=direction_path.is_file() and json.loads(direction_path.read_text()).get('workflow')=='adu-source-components-v1'
         if draft['input'].get('templateExecution') == 'auto':
-            from backlot.studio_template_auto import storyboard as automatic_storyboard
-            storyboard = automatic_storyboard(studio,draft,output_dir,p['duration'])
+            from backlot.studio_material_search import storyboard as automatic_storyboard
+            # Material windows own complete displayed sentences. Native word
+            # anchors remain available to the director, but cannot index this
+            # sentence-based scene plan or split a caption across clips.
+            storyboard = automatic_storyboard(studio,draft,output_dir,p['duration'],cues,paid)
         else:
             storyboard = None if adaptive else produce(studio, draft, output_dir, clock_cues, p["duration"], paid)
         if needs_ai: publish_progress("分镜与素材已就绪", True)

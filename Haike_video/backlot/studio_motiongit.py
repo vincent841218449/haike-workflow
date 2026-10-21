@@ -73,6 +73,19 @@ def execution_modes(config):
     return ['native','components'] if config.get('production_ready') is True else []
 
 
+def sample_file(style,kind):
+    """Serve only registered, hashed local previews; never proxy author media."""
+    if kind not in {'cover','sample'}:
+        raise WorkError('模板预览类型无效','not_found')
+    config=installed(style);identity=config.get('preview_assets',{}).get(kind)
+    if not isinstance(identity,dict):raise WorkError('这款模板尚无本地预览，请查看官方样片','not_found')
+    root=(config_path().parent/'previews'/style).resolve()
+    path=(root/('cover.jpg' if kind=='cover' else 'sample.mp4'))
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root) or sha(path)!=identity.get('sha256'):
+        raise WorkError('模板预览已改变，请重新生成本地预览','template_mismatch')
+    return path
+
+
 def library(layout):
     result = []
     for style, entry in configuration().items():
@@ -81,19 +94,19 @@ def library(layout):
         caps = json.loads(Path(config['capabilities']).read_text())
         from backlot.studio_template_names import name,motiongit_label
         official_name=config.get('display_name',name(style))
-        title = motiongit_label(config['template_id'],official_name)
+        title = official_name
         guide = json.loads(Path(config['guide']).read_text()) if config.get('guide') else {}
         selection = guide.get('selection',{})
         recipes = selection.get('recipes',[]) if isinstance(selection,dict) else guide.get('groups',[])
         modes=execution_modes(config)
-        from backlot.studio_template_auto import contract
+        from backlot.studio_template_execution import contract
         try:
             automatic = contract(config, json.loads(Path(config['schema']).read_text()), caps)
         except WorkError:
             automatic = None
         profiles=caps.get('styleProfiles',{}).get('profiles',{})
         result.append({'id':style, 'name':title, 'display_name':title, 'official_name':official_name,
-             'aliases':list(dict.fromkeys([official_name,*config.get('aliases',[])])), 'family':'ADu 完整模板', 'family_id':config.get('family_id',caps.get('styleProfiles',{}).get('templateFamily','04')),
+             'aliases':list(dict.fromkeys([motiongit_label(config['template_id'],official_name),*config.get('aliases',[])])), 'family':'ADu 完整模板', 'family_id':config.get('family_id',caps.get('styleProfiles',{}).get('templateFamily','04')),
              'supported':bool(modes), 'status':'candidate', 'automatic_ready': automatic is not None,
              'automatic_contract': automatic,
              'selection':config['template_id']+'@'+config['version'], 'template_ref':template_ref(config),
@@ -103,7 +116,7 @@ def library(layout):
              'demo':config.get('demo') if str(config.get('demo','')).startswith('/api/') else None,
              'external_preview_url':'https://motiongit.com/@adunext/'+config['template_id'],
              'scope':f'{len(recipes)}个原生组与{len(caps.get("controls",{}))}个官方组件；按所选执行方式制作',
-             'preview_basis':'作者原版样片；正式制作使用本期内容',
+             'preview_basis':config.get('preview_basis','作者原版样片；正式制作使用本期内容'),
              'groups':[{'id':k,'label':v['label']} for k,v in caps.get('controls',{}).items()],
              'execution_modes':modes,
              'declared_execution_modes':(['native'] if recipes else []) + (['components'] if caps.get('controls') else []),
@@ -132,7 +145,11 @@ def command(config, instance, operation, *args, timeout=180, log=None):
         # Use an explicitly installed media runtime; never bypass its doctor.
         if config.get('media_bin'):env['PATH']=config['media_bin']+os.pathsep+env['PATH']
     argv = [config.get('node','node'),config['helper'],'--offline','run',config['package'],
-            '--instance',str(instance),'--cache',cache,operation,*map(str,args)]
+            '--instance',str(instance),'--cache',cache,operation]
+    if config.get('component_workflow')=='poster-kit' and not native:
+        from backlot.studio_motiongit_poster import arguments
+        args=arguments(instance,operation,args)
+    argv.extend(map(str,args))
     try: result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired: raise WorkError('原生模板本地步骤超时，已保存工程，可恢复原任务', 'unavailable') from None
     if log:
@@ -254,9 +271,9 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
     staging=instance/'input-staging';staging.mkdir(exist_ok=True)
     macro=isinstance(segments,dict) and segments.get('workflow')=='macro'
     native=macro or isinstance(segments,dict) and segments.get('workflow')=='native'
-    atomic_private(instance/'haike-workflow.json',{'workflow':'macro' if macro else 'native' if native else 'motion-kit'})
+    atomic_private(instance/'haike-workflow.json',{'workflow':'macro' if macro else 'native' if native else config.get('component_workflow','motion-kit')})
     scene_values=segments['segments'] if native else segments
-    if not native and draft['input'].get('templateExecution')=='auto':
+    if not native and draft['input'].get('templateExecution')=='auto' and config.get('version')=='2.5.7':
         scene_values,changes=complete_excerpts(draft['text'],scene_values)
         atomic_private(instance/'text-excerpts.json',{'policy':EXCERPT_POLICY,'changes':changes})
     inputs={}
@@ -320,6 +337,16 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
         kit_segments,media_policies,layout_policy=kit_layout(replace(scene_values),controls)
         if draft['input']['motion'].get('profile'):
             for row in kit_segments:row['styleProfile']=profile
+        if config.get('version') in {'2.7.10','2.7.11'} and config['layout']=='portrait' and draft['input'].get('templateExecution')=='auto':
+            # The author's small window clears the new bottom caption reserve.
+            # Scope this to new automatic layouts; manual and frozen old cards
+            # keep their explicit geometry. Never move/crop the complete film.
+            changes=[]
+            for index,row in enumerate(kit_segments):
+                if row.get('presenter')=='card':
+                    row['presenter']='small';changes.append(index)
+            atomic_private(instance/'presenter-layout.json',{'policy':'portrait-caption-clearance/1',
+                'changed_segments':changes,'from':'card','to':'small','source_video_sha256':sha(video)})
         atomic_private(instance/'layout-policy.json',layout_policy)
     timeline={'layout':draft['input']['motion']['layout'],'duration':duration,
               'sourceStart':0,
@@ -327,6 +354,11 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
               'styleProfile':profile,'hud':{'brand':'海客创作'},'mediaPolicies':media_policies,
               'segments':[{**s,'t1':min(s['t1'],duration)} for s in kit_segments],
               'captions':[{'s':c['startMs']/1000,'e':min(c['endMs']/1000,duration),'text':c['text']} for c in caption_cues]}
+    if config.get('version') in {'2.7.10','2.7.11'} and not native and config.get('component_workflow')!='poster-kit':
+        # Explicit current author recipe; old frozen compositions omit these.
+        timeline.update(narrationLayout='balanced',narrationVisualMode='follow-speech',
+                        narrationComposition='readable/1',captionLayout='balanced-lines/1',
+                        highlightReadability='complete-text/1')
     if not native and kit_segments:
         timeline['narrationMap']=narration_map(timeline['segments'],timeline['captions'])
         timeline['segments']=[{k:v for k,v in row.items() if k!='$purpose'} for row in timeline['segments']]
@@ -372,6 +404,15 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
         params={'timeline':timeline}
         schema=json.loads(Path(config['schema']).read_text())
         if 'workflow' in schema.get('properties',{}):params['workflow']='motion-kit'
+        if config.get('component_workflow')=='poster-kit':
+            # poster-kit takes its actual timeline at the root, through
+            # --timeline, rather than a positional motion-kit params wrapper.
+            allowed=schema['properties']['timeline']['properties']
+            params={k:v for k,v in timeline.items() if k in allowed}
+            for row in params['segments']:row.pop('styleProfile',None)
+            if draft['input'].get('templateExecution')=='auto':
+                from backlot.studio_motiongit_poster import content_layout
+                params=content_layout(params)
     atomic_private(staging/'params.json',params)
     command(config,instance,'check-params',staging/'params.json','--inputs',staging,'--language','zh',log=instance/'check-params.log')
     result=command(config,instance,'plan',staging/'params.json','--inputs',staging,'--out',instance/'plan','--language','zh',log=instance/'plan.log')
@@ -409,7 +450,7 @@ def contracts(style=STYLE):
 def precheck(studio,draft,folder):
     """Whole-script feasibility before paying for TTS or the avatar, without times."""
     if draft['input'].get('templateExecution') == 'auto':
-        from backlot.studio_template_auto import precheck as automatic
+        from backlot.studio_template_execution import precheck as automatic
         return automatic(studio,draft,folder)
     from backlot.studio_storyboard import TrialRelay,CHAT_MODEL
     from backlot.studio_motion_director import response_json
@@ -450,7 +491,7 @@ def validate_timeline(draft, timeline, cues, storyboard, schema, config=None):
     """No model-owned paths, invented clocks, missing script or unbound media."""
     from jsonschema import Draft202012Validator
     if not isinstance(timeline, list) or not 1 <= len(timeline) <= 30: raise WorkError('原生模板需要完整分镜', 'template_incompatible')
-    asset_ids = {s['asset']['id'] for s in storyboard['scenes']}
+    asset_ids = {s['asset']['id'] for s in storyboard['scenes'] if s.get('asset')}
     text = ''; previous = 0; used = set()
     normalized = []
     definitions = {p['properties']['control']['const']:p for p in schema['properties']['timeline']['properties']['segments']['items']['oneOf']}
@@ -471,15 +512,21 @@ def validate_timeline(draft, timeline, cues, storyboard, schema, config=None):
         support = scene.get('support')
         if not isinstance(support,list) or not support or any(not isinstance(q,str) or not q.strip() or q not in source for q in support):
             raise WorkError('原生画面缺少本段原文依据', 'template_incompatible')
+        row_assets=set()
         def media_bind(value, spec):
             if spec.get('type') == 'media':
                 if not isinstance(value,str) or not value.startswith('asset:') or value[6:] not in asset_ids: raise WorkError('原生模板只能使用本期真实素材', 'template_incompatible')
-                used.add(value[6:]);return value
+                used.add(value[6:]);row_assets.add(value[6:]);return value
             if isinstance(value,dict):
                 return {k:media_bind(v,spec.get('props',{}).get(k,{})) for k,v in value.items()}
             if isinstance(value,list): return [media_bind(v,{'type':spec.get('of'), 'props':spec.get('props',{})}) for v in value]
             return value
         props = media_bind(scene.get('props'),caps[kind].get('props') and {'type':'object','props':caps[kind]['props']} or {})
+        bindings={s['asset']['id']:s['clip'] for s in storyboard['scenes'] if s.get('asset') and s.get('clip')}
+        for identity in row_assets & bindings.keys():
+            binding=bindings[identity]
+            if abs(start-binding['timeline_in'])>.001 or abs(end-binding['timeline_out'])>.001 or kind!='media' or props.get('sourceStart',0)!=binding['source_in']:
+                raise WorkError('匹配片段必须保留对应原文、时间及采用区间，不能挪到别的镜头','template_incompatible')
         anchors = scene.get('anchors',[])
         if not isinstance(anchors,list) or any(type(i) is not int or not a<=i<=b for i in anchors): raise WorkError('动作没有引用本段真实时钟', 'template_incompatible')
         out={'control':kind,'props':props,'t0':start,'t1':end,'cues':[cues[i]['startMs']/1000 for i in anchors],
@@ -500,15 +547,20 @@ def validate_timeline(draft, timeline, cues, storyboard, schema, config=None):
         normalized.append(out)
     if text != draft['text'] or previous != len(cues): raise WorkError('原生编排遗漏或改写原文', 'template_incompatible')
     required={m['id'] for m in draft['input'].get('ai',{}).get('materials',[]) if m.get('mode')=='must'}
+    required.update(s['asset']['id'] for s in storyboard['scenes'] if s.get('asset') and s.get('clip'))
     if required-used: raise WorkError('原生模板遗漏必须使用的素材', 'template_incompatible')
     return normalized
 
 
 def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,caption_cues=None):
     if draft['input'].get('templateExecution') == 'auto':
-        from backlot.studio_template_auto import select as automatic, snapshot
+        from backlot.studio_template_auto import select as automatic
+        from backlot.studio_template_execution import snapshot, VERSION as current_compiler, select as directed
         config,schema,caps=contracts(draft['input']['motion']['style'])
-        value=automatic(draft,caption_cues,storyboard,config,schema,caps)
+        if snapshot(draft)['compiler']==current_compiler:
+            return directed(studio,draft,folder,cues,storyboard,caption_cues,attempt,diagnostics)
+        from backlot.studio_material_search import VERSION as material_version, segments as material_segments
+        value=(material_segments if storyboard.get('workflow')==material_version else automatic)(draft,caption_cues,storyboard,config,schema,caps)
         receipt={'fingerprint':digest([draft,cues,caption_cues,storyboard,snapshot(draft)]),
                  'workflow':'motion-kit','segments':value,'compiler':snapshot(draft),'paid_calls':0}
         path=Path(folder)/'automatic-template-selection.json'
@@ -535,8 +587,9 @@ def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,capt
     if config.get('guide'):
         guide=json.loads(Path(config['guide']).read_text());selection=guide.get('selection',{})
         contract['native_recipes']=selection.get('recipes',[]) if isinstance(selection,dict) else guide.get('groups',[])
-        contract['native_parameter_schema']=schema['oneOf'][0]
-        if '$defs' in schema:contract['native_parameter_schema']={**contract['native_parameter_schema'],'$defs':schema['$defs']}
+        if schema.get('oneOf'):
+            contract['native_parameter_schema']=schema['oneOf'][0]
+            if '$defs' in schema:contract['native_parameter_schema']={**contract['native_parameter_schema'],'$defs':schema['$defs']}
     if diagnostics: contract['previous_native_diagnostics']=str(diagnostics)[:4000]
     contract['selected_execution'] = draft['input'].get('templateExecution','historical-auto')
     contract['selected_template'] = config.get('display_name', config['template_id'])
@@ -614,13 +667,16 @@ def prepare(studio,draft,folder,audio,cues,storyboard,caption_cues,video=None):
 
 
 def plan_exists(instance):
-    return any((Path(instance)/'plan'/name).is_file() for name in ('report.json','plan.json'))
+    return any((Path(instance)/'plan'/name).is_file() for name in ('report.json','plan.json','host-plan.json'))
 
 
 def plan_info(instance):
     """Keep the two official workflows' distinct plan formats and choreography."""
     instance=Path(instance)
     workflow=json.loads((instance/'haike-workflow.json').read_text())['workflow']
+    if workflow=='poster-kit':
+        from backlot.studio_motiongit_poster import plan_info as poster_plan
+        return poster_plan(instance)
     if workflow=='macro':
         raise WorkError('新版原生规划回执尚待本地验收', 'template_incompatible')
     native=workflow=='native'
@@ -640,6 +696,9 @@ def plan_info(instance):
 
 def review_plan(instance):
     instance=Path(instance);info=plan_info(instance)
+    if info['workflow']=='poster-kit':
+        from backlot.studio_motiongit_poster import review_plan as poster_review
+        return poster_review(instance)
     if info['workflow']=='native':
         plan=json.loads(info['plan_path'].read_text());plan['reviewed']=True
         atomic_private(info['plan_path'],plan)
@@ -667,11 +726,14 @@ def preview_instance(instance):
             for row in rows:
                 end=cursor+row['durationFrames']/60;ranges.append((cursor,end));cursor=end
         else:
-            params=json.loads((project/'params.json').read_text())
+            params=json.loads((report['parameter_path'] if report['workflow']=='poster-kit' else project/'params.json').read_text())
             ranges=[(s['t0'],s['t1']) for s in params.get('timeline',params).get('segments',[])]
     times=preview_times(ranges,report['duration'])
     if not (project/'preview.json').is_file():
         command(config,instance,'preview',project,'--times',','.join(map(str,times)),'--language','zh',timeout=900,log=instance/'preview.log')
+        if report['workflow']=='poster-kit':
+            from backlot.studio_motiongit_poster import preview_receipt
+            preview_receipt(instance)
     return project
 
 
@@ -684,6 +746,8 @@ def visual_review(studio,draft,instance):
     import base64,io
     from PIL import Image
     instance=Path(instance);project=instance/'project';path=project/'preview.json'
+    workflow_file=instance/'haike-workflow.json'
+    poster=workflow_file.is_file() and json.loads(workflow_file.read_text()).get('workflow')=='poster-kit'
     fingerprint=sha(path);receipt=instance/'visual-review.json'
     review=None
     if receipt.is_file():
@@ -696,8 +760,9 @@ def visual_review(studio,draft,instance):
             review=None
     if review is None:
         preview=json.loads(path.read_text());stills=preview_stills(preview);selected=list(stills)
-        report=json.loads((instance/'plan/report.json').read_text())
-        params=json.loads((project/'params.json').read_text());timeline=params.get('timeline',params)
+        info=plan_info(instance) if poster else None
+        report=json.loads((info['plan_path'] if poster else instance/'plan/report.json').read_text())
+        params=json.loads((info['parameter_path'] if poster else project/'params.json').read_text());timeline=params.get('timeline',params)
         layout=json.loads((instance/'layout-policy.json').read_text()) if (instance/'layout-policy.json').is_file() else {}
         context={'layout':timeline.get('layout'),'presenter':{k:v for k,v in timeline.get('presenter',{}).items() if k!='src'},
                  'media_roles':sorted({r.get('role','unspecified') for r in report.get('mediaBindings',[])}),
@@ -744,6 +809,9 @@ def visual_review(studio,draft,instance):
             if not source.is_relative_to(inner_root.resolve()) or not source.is_file() or sha(source)!=identity:
                 raise WorkError('原生预览工程已改变，需重新核验','template_mismatch')
         inner['reviewed']=True;atomic_private(inner_path,inner)
+    if poster:
+        from backlot.studio_motiongit_poster import approve_preview
+        approve_preview(instance)
     preview=json.loads(path.read_text());preview['reviewed']=True
     atomic_private(path,preview)
     # The stamp changes the preview file, not its bound project/still hashes.
@@ -806,9 +874,10 @@ def finish(studio,draft,folder,instance,*,on_progress=None):
     style = config.get('style', STYLE)
     from backlot.studio_template_names import name,motiongit_label
     official_name=config.get('display_name',name(style))
-    presentation={'id':f"adu:{style}:{config['layout']}",'name':motiongit_label(config['template_id'],official_name),
+    presentation={'id':f"adu:{style}:{config['layout']}",'name':official_name if config.get('version') in {'2.7.10','2.7.11','0.2.29-open-beta'} else motiongit_label(config['template_id'],official_name),
         'official_name':official_name,'style':style,'layout':config['layout'],
-        'adapter':'motiongit','variant':'native' if report['workflow']=='macro' else report['workflow'],'variant_name':'官方原生镜头组' if report['workflow'] in {'native','macro'} else '官方组件编排',
+        'adapter':'motiongit','variant':'native' if report['workflow']=='macro' else 'motion-kit' if report['workflow']=='poster-kit' else report['workflow'],
+        'engine_workflow':report['workflow'],'variant_name':'官方原生镜头组' if report['workflow'] in {'native','macro'} else '官方组件编排',
         'template_ref':template_ref(config),'plan_sha256':sha(report['plan_path']),'output_sha256':sha(output),'render_source_sha256':sha(candidate),
         'groups':report['segments'],'visual_review':'sampled-rendered-frames','owner_acceptance':'pending'}
     from backlot.studio_presentation import verify
@@ -850,7 +919,7 @@ def freeze_job(studio,draft,folder,instance):
         raise WorkError('原生模板工程必须属于当前制作项目')
     review_plan(instance)
     files={str(p.relative_to(instance)):sha(p) for p in (instance/'inputs').rglob('*') if p.is_file() and not p.is_symlink()}
-    for name in ['plan/auto_plan.json','plan/report.json','plan/plan.json','plan/inputs.json','clock-alignment.json','haike-workflow.json','layout-policy.json','haike-template-ref.json','music-binding.json','semantic-evidence.json']:
+    for name in ['plan/auto_plan.json','plan/report.json','plan/plan.json','plan/host-plan.json','plan/inputs.json','clock-alignment.json','haike-workflow.json','layout-policy.json','haike-template-ref.json','music-binding.json','semantic-evidence.json']:
         if (instance/name).is_file():files[name]=sha(instance/name)
     if not files: raise WorkError('原生工程缺少冻结输入')
     return {'runtime':'motiongit','draft':draft,'template_ref':template_ref(instance_config(instance)), 'render_id':folder.name,

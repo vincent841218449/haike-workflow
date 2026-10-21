@@ -34,9 +34,9 @@ export function Field({label, hint, error, children, className = ''}) {
     {(error || hint) && <p id={hintId} className={error ? 'field-error' : 'helper'} role={error ? 'alert' : undefined}>{error || hint}</p>}
   </div>;
 }
-export function PreviewPanel({label, metadata, children}) {
+export function PreviewPanel({label, title='版式参考', metadata, children}) {
   const [expanded,setExpanded] = useState(false), id = useId();
-  return <aside className="preview-panel" aria-label={label}><header className="panel-heading"><h2>版式参考</h2><span>{metadata}</span>
+  return <aside className="preview-panel" aria-label={label}><header className="panel-heading"><h2>{title}</h2><span>{metadata}</span>
     <button type="button" className="preview-toggle text-button" aria-expanded={expanded} aria-controls={id} onClick={()=>setExpanded(!expanded)}>{expanded?'收起预览':'查看预览'}<ChevronDown size={16} className={expanded?'':'collapsed'}/></button>
   </header><div id={id} className={`preview-content ${expanded?'expanded':''}`}>{children}</div></aside>;
 }
@@ -66,9 +66,18 @@ export function Dialog({title, description, onClose, children, wide = false, bus
     return () => {dialog.close(); document.body.style.overflow = oldOverflow; if(previous?.isConnected) previous.focus();};
   }, []);
   const close = () => {if(!busy) onClose();};
+  const keepFocus = e => {
+    if(e.key!=='Tab')return;
+    const items=[...ref.current.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')]
+      .filter(element=>element.getClientRects().length>0);
+    if(!items.length){e.preventDefault();return;}
+    const first=items[0],last=items[items.length-1],active=document.activeElement;
+    if(e.shiftKey&&(active===first||!ref.current.contains(active))){e.preventDefault();last.focus();}
+    else if(!e.shiftKey&&(active===last||!ref.current.contains(active))){e.preventDefault();first.focus();}
+  };
   return <dialog ref={ref} className={`modal ${wide ? 'wide' : ''} ${className}`} aria-labelledby={titleId}
     aria-describedby={description ? descriptionId : undefined} aria-busy={busy || undefined}
-    onCancel={e => {e.preventDefault(); close();}} onClick={e => {if(e.target === ref.current) close();}}>
+    onKeyDown={keepFocus} onCancel={e => {e.preventDefault(); close();}} onClick={e => {if(e.target === ref.current) close();}}>
     <header className="modal-heading"><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId} className="helper">{description}</p>}</div>
       <button type="button" className="icon-button" disabled={busy} aria-label="关闭窗口" onClick={close}><X size={20}/></button></header>
     <div className="modal-body">{children}</div>

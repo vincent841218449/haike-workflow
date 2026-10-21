@@ -254,3 +254,19 @@ def test_long_timeline_review_samples_every_scene_including_the_final_ones():
     assert len(times)<=40
     assert all((a+b)/2 in times for a,b in ranges)
     assert 0 in times and round(120-1/60,3) in times
+
+
+def test_local_sample_route_exposes_only_registered_unchanged_preview_bytes(tmp_path,monkeypatch):
+    registry=tmp_path/'registry.json';style='motiongit-sample-test'
+    root=tmp_path/'previews'/style;root.mkdir(parents=True)
+    cover=root/'cover.jpg';cover.write_bytes(b'local test frame')
+    config={'preview_assets':{'cover':{'sha256':sha(cover)}}}
+    monkeypatch.setattr(m,'config_path',lambda:registry)
+    monkeypatch.setattr(m,'installed',lambda requested:config if requested==style else pytest.fail('unknown package'))
+    assert m.sample_file(style,'cover')==cover
+    with pytest.raises(WorkError,match='预览类型'):m.sample_file(style,'../../account.json')
+    with pytest.raises(WorkError,match='尚无本地预览'):m.sample_file(style,'sample')
+    cover.write_bytes(b'changed')
+    with pytest.raises(WorkError,match='预览已改变'):m.sample_file(style,'cover')
+    cover.unlink();target=tmp_path/'private.json';target.write_bytes(b'local test frame');cover.symlink_to(target)
+    with pytest.raises(WorkError,match='预览已改变'):m.sample_file(style,'cover')

@@ -12,16 +12,17 @@ import {MotionGit} from './MotionGit.jsx';
 import {TemplateCover,TemplateSample} from './TemplateSample.jsx';
 import {AiMaterials,AI_DEFAULTS} from './AiMaterials.jsx';
 import {AvatarMaterials} from './AvatarMaterials.jsx';
+import {MaterialSources} from './MaterialSources.jsx';
 import {enqueueAvatar, taskUrl, rememberSubmission, readSubmission, currentContinuation} from './avatar-submit.js';
 import {DouyinRecovery} from './DouyinRecovery.jsx';
 import { VoiceLibrary, useVoiceLibrary } from './VoiceLibrary.jsx';
-import {CreationStep as Step, PreparationStrip, AvatarVoiceField, AvatarPortraitField, SubmissionStatus} from './AvatarCreationFields.jsx';
+import {CreationStep as Step, AvatarVoiceField, AvatarPortraitField, SubmissionStatus} from './AvatarCreationFields.jsx';
 import {defaultProductionTone, creationReadiness, voiceDraft, materialSelection, persistedAsset} from './avatar-creation-model.js';
 import './avatar-creation.css';
 
 const samplePortrait = { name: "人物示例.png", type: "image/png" };
 const assetPath = name => `${import.meta.env.BASE_URL}assets/${name}`;
-const initial = () => {const q=new URLSearchParams(location.search),style=q.get('style');return { templateId: TEMPLATES.some(t=>t.id===q.get('template'))?q.get('template'):TEMPLATES[2].id, text: '', soundMode: 'voice', audio: null, portrait: null, voiceId: 'haike/cosyvoice', toneId:q.get('tone')||'', rate: 1, title: "", subtitles: true,ai:{...AI_DEFAULTS,enabled:true},motion:style?{style,layout:q.get('layout')==='landscape'?'landscape':'portrait'}:null };};
+const initial = () => {const q=new URLSearchParams(location.search),style=q.get('style');return { templateId: TEMPLATES.some(t=>t.id===q.get('template'))?q.get('template'):TEMPLATES[2].id, text: '', soundMode: 'voice', audio: null, portrait: null, voiceId: 'haike/cosyvoice', toneId:q.get('tone')||'', rate: 1, title: "", subtitles: true,ai:{...AI_DEFAULTS,enabled:true},motion:style?{style,layout:q.get('layout')==='landscape'?'landscape':'portrait'}:q.has('template')?null:{style:'catalog-default',layout:'portrait'} };};
 function useAssetUrl(asset, fallback) {
   const [url, setUrl] = useState(fallback);
   useEffect(() => {
@@ -117,14 +118,14 @@ function BasicAvatar() {
     return () => { live = false; };
   }, []);
   useEffect(()=>{
-    setMotionCard(null);setMotionError('');if(!input.motion)return;let live=true;
+    setMotionCard(null);setMotionError('');if(!input.motion||draftLoading)return;let live=true;
     api(`/api/studio/motion/catalog?layout=${input.motion.layout}`).then(c=>{
       if(!live)return;
       const card=automaticTemplateChoice(c,input.motion);
       if(!card)throw new Error('这个历史模板尚未接通自动制作，请从模板库选择已接通的模板；原文案、音色和人物已保留。');
       if(card.id!==input.motion.style){
         setInput(old=>({...old,...card.choice}));setSaved(false);setQuote(null);
-        setToast(`已为编辑草稿载入新版${card.name}的自动制作方式；文案、音色和人物保留，历史任务未改动。`);
+        setToast(input.motion.style==='catalog-default'?`已选择可制作的${card.name}。`:`已为编辑草稿载入${card.name}的自动制作方式；文案、音色和人物保留，历史任务未改动。`);
         return;
       }
       if(input.templateRef&&input.templateRef.fingerprint!==card.choice.templateRef.fingerprint)throw new Error('所选模板版本已更新，请重新选择以使用当前版本；原内容已保留。');
@@ -134,7 +135,7 @@ function BasicAvatar() {
       }
     }).catch(e=>{if(live)setMotionError(e.message);});
     return()=>{live=false;};
-  },[input.motion?.style,input.motion?.layout,input.templateRef,templateReload]);
+  },[input.motion?.style,input.motion?.layout,input.templateRef,templateReload,draftLoading]);
   useEffect(()=>{if(!serverDraft||!job)return;const revision=Number(job.parent_job_id?.replace('studio-',''));api(`/api/studio/drafts/${serverDraft.id}/storyboard${Number.isInteger(revision)&&revision>0?'?revision='+revision:''}`).then(r=>setStoryboard(r.plan)).catch(()=>{});},[job?.status,job?.stage,serverDraft?.id]);
   useEffect(() => {
     if (!toast) return;
@@ -287,8 +288,7 @@ function BasicAvatar() {
     <Heading title="数字人口播" helper="给文案一个声音，让你的数字人开口讲。"><div className="creation-header-actions"><Button href="/tasks" variant="text">创作任务<ArrowRight size={15}/></Button>{serverDraft&&<Button href="/avatar?new=1">新建视频</Button>}</div></Heading>
     {blocked&&!blocked.startsWith('已选系统')&&<div className="creation-connection"><Notice message={blocked} error={accountState!==null}><Button variant="text" disabled={accountState===null} onClick={()=>{setConnectionVersion(v=>v+1);voiceLibrary.reload();}}>重新检查连接</Button><a href="/settings">查看 API 设置<ArrowRight size={14}/></a></Notice></div>}
     <AvatarTemplatePicker templateId={input.templateId} motion={input.motion} selectedName={motionName} disabled={!!(saving||draftLoading||uncertain||uploading||importing)} onChoose={async choice=>{const next={...input,...choice,ai:{...AI_DEFAULTS,...input.ai,enabled:choice.motion?true:input.ai?.enabled||false}};update(next);setStoryboard(null);setSaving(true);try{await persistServer(next);setToast("口播模板已选择并保存，原文案和素材已保留。");}catch(e){setError({field:"template",message:e.message});}finally{setSaving(false);}}}/>
-    {input.motion&&<TemplateExecution motion={input.motion} value={input.templateExecution||'native'} modes={motionCard?.execution_modes} profiles={motionCard?.style_profiles} profile={input.motion.profile||''} onProfileChange={profile=>update({motion:{...input.motion,profile}})} disabled={saving||draftLoading||uncertain} onChange={templateExecution=>update({templateExecution,motion:{...input.motion,profile:templateExecution==='components'?input.motion.profile||'':''}})} music={input.music}/>}
-    <PreparationStrip state={readiness}/>
+    {currentMotion&&<TemplateExecution motion={input.motion} value={input.templateExecution||'native'} modes={motionCard?.execution_modes} profiles={motionCard?.style_profiles} profile={input.motion.profile||''} onProfileChange={profile=>update({motion:{...input.motion,profile}})} disabled={saving||draftLoading||uncertain} onChange={templateExecution=>update({templateExecution,motion:{...input.motion,profile:templateExecution==='components'?input.motion.profile||'':''}})} music={input.music}/>}
     <div className="editor-shell avatar-editor"><section className="editor-content" aria-label="填写制作内容" aria-busy={draftLoading}>
       <fieldset className="avatar-form" disabled={saving||draftLoading||uncertain}>
       <div className="avatar-fields">
@@ -303,6 +303,7 @@ function BasicAvatar() {
           {accountState?.local_avatar?.ready&&<p className="helper after-input">稳定版数字人 · 长口播自动分段，完成后合为一条视频。</p>}
         </Step>
         <Step number="4" field="materials" optional ready={!!input.ai?.materials?.length && input.ai.materials.every(m=>m.rights_confirmed)} error={fieldError('materials')} title="视频素材" helper="有想展示的产品、场景或画面？一起放进来" className="materials-step">
+          <MaterialSources value={input.ai} disabled={saving||draftLoading||uncertain} onChange={ai=>{update({ai});setStoryboard(null);}}/>
           <AvatarMaterials value={input.ai} busy={saving||draftLoading||uncertain} uploading={uploading} onFiles={importMaterials} onChange={ai=>{update({ai});setStoryboard(null);}}/>
         </Step>
       </div>
@@ -319,8 +320,8 @@ function BasicAvatar() {
       <div className="notice-stack avatar-notices"><Notice message={!['text','voice','portrait','materials','audio'].includes(error?.field) ? error?.message : ''} error/></div>
       {job&&<div className="job-state"><strong>{repairedTemplate?'已载入自动制作方案':({queued:'排队中',running:'正在制作',completed:'已完成，可查看',failed:'需要处理',awaiting_human:'等待处理',ambiguous:'等待供应商返回',cancelled:'已取消',canceled:'已取消'})[job.status]||'等待处理'}</strong><p>{repairedTemplate?'上次任务使用固定样片编舞，未完成制作。当前编辑草稿已改用所选模板的自动编排；原记录和素材保留，尚未提交新的配音或数字人。':job.stage}</p><Button href={taskUrl(job)}>查看创作任务</Button>{job.result?.work_id&&<Button href={job?.result?.work_id?`/tasks?work=${encodeURIComponent(job.result.work_id)}`:"/tasks"}>观看成片</Button>}{job.retryable&&!repairedTemplate&&<Button disabled={saving} onClick={retry}>恢复原任务</Button>}{job.status==='failed'&&/抖音/.test(job.stage)&&<Button disabled={saving} onClick={skipDouyin}>跳过抖音并恢复原任务</Button>}</div>}
       <DouyinRecovery job={job} onJob={setJob}/>
-    </section><PreviewPanel label="模板效果预览" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}>
-      {selectedSample&&<><div className="poster-frame"><TemplateCover key={selectedSample.id} template={selectedSample}/></div>{selectedSample.sourceLabel&&<p className="template-source-label">{selectedSample.sourceLabel}</p>}<p className="preview-note">{input.motion?selectedSample.description:template.sample?'现有真实样片，制作时使用你的内容。':'模板布局示意，制作时使用你的内容。'}</p>{selectedSample.demo&&<Button className="preview-play" onClick={()=>setModal('sample')}><Play size={16}/>播放所选模板样片</Button>}</>}
+    </section><PreviewPanel label="模板效果预览" title="所选模板" metadata={input.motion?(input.motion.layout==='portrait'?'9:16':'16:9'):template.ratio}>
+      {selectedSample&&<><div className="poster-frame"><TemplateCover key={selectedSample.id} template={selectedSample}/></div>{selectedSample.sourceLabel&&<p className="template-source-label">{selectedSample.sourceLabel}</p>}<p className="preview-note">{selectedSample.preview_basis || (input.motion?selectedSample.description:template.sample?'现有真实样片，制作时使用你的内容。':'模板布局示意，制作时使用你的内容。')}</p>{selectedSample.demo&&<Button className="preview-play" onClick={()=>setModal('sample')}><Play size={16}/>播放所选模板样片</Button>}</>}
       {input.motion&&!selectedSample&&(motionError?<Notice message={motionError} error><Button onClick={()=>setTemplateReload(v=>v+1)}>重新读取模板</Button></Notice>:<p className="helper" role="status">正在读取所选模板预览…</p>)}
     </PreviewPanel>
     <ActionBar note={<><strong>按实际使用结算</strong>{!inProgress&&!uncertain&&(blocked||templateBlocked||!readiness.ready)?<span className="creation-action-hint">{blocked||templateBlocked||<button type="button" onClick={()=>focusProblem({field:readiness.missing[0].id,message:readiness.message})}>{readiness.message}<ArrowRight size={13}/></button>}</span>:<span>提交后按文案配音，在创作任务查看进度</span>}</>}><Button disabled={saving||draftLoading||importing||uncertain} onClick={saveDraft}>{saved?'草稿已保存':'保存草稿'}</Button>{inProgress?<Button variant="primary" href={taskUrl(job)}>查看创作任务<ArrowRight size={17}/></Button>:<Button variant="primary" loading={!!submitPhase} disabled={importing||saving||draftLoading||!!(blocked||templateBlocked)&&!uncertain} onClick={confirmGeneration}>{uncertain?'恢复原提交':submitPhase||'制作视频'}<ArrowRight size={17}/></Button>}</ActionBar></div>

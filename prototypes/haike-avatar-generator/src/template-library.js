@@ -14,6 +14,7 @@ export function nativeTemplateCards(catalog, layout, motion) {
 
 // Only an editable copy can adopt a newly selected release. Frozen jobs never pass here.
 export function automaticTemplateChoice(catalog, motion) {
+  if(motion.style==='catalog-default')return verticalTemplateCards(catalog,motion).find(c=>c.selectable&&c.template_ref.template_id==='template-04-dark-console-portrait') || verticalTemplateCards(catalog,motion).find(c=>c.selectable) || null;
   const cards=nativeTemplateCards(catalog,motion.layout,motion);
   const current=cards.find(c=>c.id===motion.style);
   if(current)return current;
@@ -26,4 +27,32 @@ export function filterTemplateCards(cards, search) {
   const query=search.trim().toLocaleLowerCase();
   return cards.filter(t=>!query || [t.name,t.id,t.family,t.description,t.sourceLabel,...(t.aliases||[])].join(' ').toLocaleLowerCase().includes(query))
     .sort((a,b)=>Number(b.selected)-Number(a.selected));
+}
+
+// One official identity per slug. While a new release is being verified, retain
+// its explicitly labelled validated release; never disable working production
+// merely because an unvalidated personal package was imported.
+export function verticalTemplateCards(catalog,motion) {
+  const all=(catalog?.styles||[]).filter(s=>s.template_ref?.runtime==='motiongit'&&s.template_ref.layout==='portrait');
+  const latest=new Map();
+  for(const s of all) {
+    const id=s.template_ref.template_id,old=latest.get(id);
+    if(!old||s.template_ref.version.localeCompare(old.template_ref.version,undefined,{numeric:true})>0)latest.set(id,s);
+  }
+  const available=new Map();
+  for(const s of all.filter(s=>s.supported&&s.automatic_ready)) {
+    const id=s.template_ref.template_id,old=available.get(id);
+    if(!old||s.template_ref.version.localeCompare(old.template_ref.version,undefined,{numeric:true})>0)available.set(id,s);
+  }
+  const ready=nativeTemplateCards({styles:[...available.values()]},'portrait',motion).map(s=>{
+    const next=latest.get(s.template_ref.template_id);
+    return next&&next.template_ref.version!==s.template_ref.version?{...s,
+      sourceLabel:`ADu · 已验收 v${s.template_ref.version} · 新版 v${next.template_ref.version} 验证中`}:s;
+  });
+  const enabled=new Set(ready.map(s=>s.template_ref.template_id));
+  const pending=(catalog?.pending_packages||[]).filter(s=>s.layout==='portrait'&&!enabled.has(s.id.replace('motiongit:adunext:',''))).map(s=>({
+    ...s,image:s.preview,demo:s.demo,ratio:'9:16',description:s.reason,sourceLabel:s.version?`ADu · v${s.version} · 验证中`:'ADu · 待导入',
+    external_preview_url:s.url,selectable:false,selected:false,
+  }));
+  return [...ready.map(s=>({...s,selectable:true})),...pending];
 }

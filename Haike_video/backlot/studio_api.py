@@ -215,6 +215,12 @@ async def motiongit_contract(style: str):
     return await asyncio.to_thread(call,contract,style)
 
 
+@router.get('/api/studio/motiongit/sample/{style}/{kind}')
+def motiongit_sample(style: str,kind: str):
+    from backlot.studio_motiongit import sample_file
+    return FileResponse(call(sample_file,style,kind),headers={'Cache-Control':'no-cache'})
+
+
 @router.get('/api/studio/drafts/{draft_id}/motiongit-preview/{plan_id}/{index}')
 def motiongit_preview(draft_id: str,plan_id: str,index: int,request: Request):
     s=studio(request);call(s.draft,draft_id)

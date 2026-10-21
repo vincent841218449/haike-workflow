@@ -5,6 +5,7 @@ import { DouyinRecovery } from './DouyinRecovery.jsx';
 import { api } from './studio-api.js';
 import { Button, Dialog, EmptyState, Heading, Notice } from './ui.jsx';
 import './tasks.css';
+import {taskProgress} from './task-progress.js';
 
 const TYPES = [['all', '全部任务'], ['graphic', '图文视频'], ['avatar', '数字人口播'], ['motion', '动效口播']];
 const STATES = [['all', '全部'], ['active', '生产中'], ['queued', '排队中'], ['needs_action', '需处理'], ['failed', '失败'], ['completed', '已完成'], ['scheduled', '已排期'], ['cancelled', '已取消']];
@@ -16,13 +17,13 @@ const initialView = () => {
     type: TYPES.some(([s]) => s === q.get('type')) ? q.get('type') : 'all', offset: 0 };
 };
 function Progress({ task }) {
-  const p = task.progress, known = p.percent !== null;
+  const p = taskProgress(task), known = p.percent !== null;
   return <div className="creation-progress">
     <div className={`creation-progress-track ${known ? '' : 'indeterminate'}`} role="progressbar" aria-label={`${task.title}制作进度`} aria-valuemin={0} aria-valuemax={100} {...(known ? { 'aria-valuenow': p.percent } : { 'aria-valuetext': task.stage })}>
       <span style={known ? { width: `${p.percent}%` } : undefined}/>
     </div>
-    <span className="creation-progress-value">{known ? `${p.percent}%` : task.provider_wait ? '等待返回' : task.status === 'queued' ? '等待开始' : task.status === 'running' ? '处理中' : '已停止'}</span>
-    {p.basis === 'steps' && <small>{p.completed}/{p.total} 步</small>}
+    <span className="creation-progress-value">{p.label}</span>
+    {p.steps&&task.provider_wait&&<small>已完成 {p.steps}</small>}
   </div>;
 }
 function StateIcon({ task }) {

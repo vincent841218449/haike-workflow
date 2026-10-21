@@ -49,3 +49,7 @@ MOTIONGIT_CATALOG = [
     ('template-01-integrated-portrait','现代图文 · 口播讲解 · 竖屏','portrait'),
     ('template-01-integrated','现代图文 · 口播讲解','landscape'),
 ]
+
+# Observed official portrait releases, 2026-10-21; discovery is not validation.
+CURRENT_PORTRAIT_VERSIONS={slug:('0.2.29-open-beta' if slug=='385712' else '2.7.10' if slug=='vibrant-poster-portrait' else '2.7.11')
+                           for slug,_,layout in MOTIONGIT_CATALOG if layout=='portrait'}

@@ -63,7 +63,7 @@ def resolve(draft):
         if selected is None and 'validated_execution_modes' in config:
             raise WorkError('请明确选择已验收的模板制作方式，未提交收费调用','template_incompatible')
         if selected == 'auto':
-            from backlot.studio_template_auto import snapshot
+            from backlot.studio_template_execution import snapshot
             snapshot(draft)
         elif selected and selected not in modes:
             raise WorkError('所选模板的这一制作方式尚未完成本地验收，未提交收费调用','template_incompatible')
@@ -96,17 +96,20 @@ def verify_ref(ref):
 def pending_packages(layout=None):
     # Catalog announcements are not executable installations.
     from backlot.studio_motiongit import configuration,execution_modes
-    from backlot.studio_template_names import MOTIONGIT_CATALOG,motiongit_label
+    from backlot.studio_template_names import MOTIONGIT_CATALOG,motiongit_label,CURRENT_PORTRAIT_VERSIONS
     entries=list(configuration().values());result=[]
     for slug,title,ratio in MOTIONGIT_CATALOG:
         if layout and ratio!=layout:continue
         installed=[c for c in entries if c.get('template_id')==slug]
-        current=[c for c in installed if c.get('version')=='2.5.7' or slug=='385712']
-        if any(execution_modes(c) for c in current):continue
+        current=[c for c in installed if c.get('version')==CURRENT_PORTRAIT_VERSIONS.get(slug,'2.5.7')]
+        if current and execution_modes(current[-1]):continue
         config=current[-1] if current else None
-        result.append({'id':'motiongit:adunext:'+slug,'name':motiongit_label(slug,title),'official_name':title,'aliases':[title],'layout':ratio,
+        result.append({'id':'motiongit:adunext:'+slug,'name':title,'official_name':title,'aliases':[motiongit_label(slug,title)],'layout':ratio,
             'version':config['version'] if config else None,'supported':False,
+            'preview':config.get('preview') if config and str(config.get('preview','')).startswith('/api/') else None,
+            'demo':config.get('demo') if config and str(config.get('demo','')).startswith('/api/') else None,
+            'preview_basis':config.get('preview_basis') if config else None,
             'status':'validation-pending' if config else 'package-required',
-            'reason':('官方组件已可制作；完整原生镜头组仍待验收' if 'components' in execution_modes(config) else '原包已验签，等待本地制作检查') if config else '最新版 .motion 尚未导入；旧版模板继续保留',
+            'reason':config.get('validation_reason') or ('官方组件已可制作；完整原生镜头组仍待验收' if 'components' in execution_modes(config) else '原包已验签，等待本地制作检查') if config else '最新版 .motion 尚未导入；旧版模板继续保留',
             'url':'https://motiongit.com/@adunext/'+slug})
     return result

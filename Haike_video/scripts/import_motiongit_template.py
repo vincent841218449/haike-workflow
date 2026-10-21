@@ -59,7 +59,8 @@ def import_package(source, root, registry, node='node'):
         result=subprocess.run([node,str(helper),operation,str(package),*map(str,args)],capture_output=True,text=True,timeout=120)
         # Raw output may contain recipient metadata. Keep it private; emit no
         # original stderr, account information, personal URLs or identifiers.
-        atomic_private(directory/(operation+'-receipt.json'),{'returncode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
+        suffix='-'+__import__('hashlib').sha256(json.dumps(args).encode()).hexdigest()[:12] if args else ''
+        atomic_private(directory/(operation+suffix+'-receipt.json'),{'returncode':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         if result.returncode:raise ValueError(f'官方{operation}未通过，脱敏提示之外的回执仅保存在本机')
         return json.loads(result.stdout)
 
@@ -74,10 +75,19 @@ def import_package(source, root, registry, node='node'):
     if not re.fullmatch(r'motiongit-\d+-v[0-9A-Za-z-]+',style):raise ValueError('模板版本身份无效')
     extension=guide.get('extensionLibrary',{})
     capabilities={k:extension[k] for k in ['controls','styleProfiles','transitions'] if k in extension}
+    component_workflow='motion-kit'
+    native_properties=schema.get('properties',{})
+    if public['id']=='vibrant-poster-portrait':
+        from backlot.studio_motiongit_poster import schema_adapter
+        poster_schema=read('read','poster-timeline.schema.json')['content']
+        poster_spec=read('read','poster-kit.spec.json')['content']
+        atomic_private(directory/'poster-public-schema.json',poster_schema)
+        atomic_private(directory/'poster-public-spec.json',poster_spec)
+        schema=schema_adapter(poster_schema,poster_spec);capabilities=poster_spec
+        component_workflow='poster-kit'
     for filename,value in [('guide.json',guide),('schema.json',schema),('capabilities.json',capabilities)]:
         atomic_private(directory/filename,value)
-    properties=schema.get('properties',{})
-    kind='macro' if 'brief' in properties else 'recipe' if 'segments' in properties else 'unsupported'
+    kind='macro' if 'brief' in native_properties else 'recipe' if 'segments' in native_properties else 'unsupported'
     profile=extension.get('styleProfiles',{}).get('defaultProfile','console')
     config={'style':style,'display_name':public['name'],'template_id':public['id'],'version':public['version'],
         'layout':public['layout'],'native_kind':kind,'style_profile':profile,
@@ -85,6 +95,7 @@ def import_package(source, root, registry, node='node'):
         'release_sha256':identity['releaseArchiveSha256'],'node':node,
         'cache':str(directory/'cache-kit'),'native_cache':str(directory/'cache-native'),
         'production_ready':False,'validation_status':'imported-signature-verified'}
+    if component_workflow=='poster-kit':config.update(component_workflow=component_workflow,style_profile='poster')
     for field,filename in [('helper','tools/assistant/motion.mjs'),('schema','schema.json'),('capabilities','capabilities.json'),('guide','guide.json')]:
         config[field]=str(directory/filename);config[field+'_sha256']=sha(directory/filename)
     entries=json.loads(registry.read_text()) if registry.is_file() else {}
