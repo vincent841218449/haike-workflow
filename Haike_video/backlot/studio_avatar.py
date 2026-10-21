@@ -111,7 +111,7 @@ def validate(studio, draft):
     if not composer.is_dir(): raise WorkError("缺少本地Remotion渲染依赖，尚未提交付费调用")
 
 
-def quote(studio, draft):
+def quote(studio, draft, *, reuse_narration=None):
     validate(studio, draft)
     # Verify the real author package before uploading the portrait or quoting providers.
     # Rechecked when freezing, so a stale or forged UI selection is never authority.
@@ -139,7 +139,15 @@ def quote(studio, draft):
     prepare_image(studio.asset(draft["input"]["portrait"]["id"], draft["id"]), portrait)
     prepared = {"portrait_path": str(portrait), "image_file": None if avatar_execution else sdk.upload(portrait, "image")["id"]}
     quotes = {}
-    if draft["input"]["soundMode"] == "audio":
+    reuse_receipt = None
+    if reuse_narration is not None:
+        if not avatar_execution or asr['provider'] != 'local-whisper':
+            raise WorkError('原配音复用当前只支持本地数字人与本地字幕路线')
+        from backlot.studio_narration_reuse import prepare
+        audio = folder / 'narration.wav'
+        reuse_receipt = prepare(studio, draft, reuse_narration, audio)
+        prepared.update(audio_path=str(audio), duration=reuse_receipt['duration'], audio_file=None)
+    elif draft["input"]["soundMode"] == "audio":
         audio = folder / "narration.wav"
         duration = prepare_audio(studio.asset(draft["input"]["audio"]["id"], draft["id"]), audio)
         prepared.update(audio_path=str(audio), duration=duration, audio_file=sdk.upload(audio, "audio")["id"] if not avatar_execution or asr['provider']=='gateway' else None)
@@ -153,6 +161,7 @@ def quote(studio, draft):
         if required - models: raise WorkError("数字人或字幕模型尚不可用，请由管理员确认成本费率后再制作")
     data = {"id": identity, "draft": draft, "prepared": prepared, "quotes": quotes, "asr": asr, "key_identity": key_identity(studio), "created_at": datetime.now(timezone.utc).isoformat()}
     if avatar_execution: data['avatar_execution'] = avatar_execution
+    if reuse_receipt: data['narration_reuse'] = reuse_receipt
     if audio_check: data['audio_check']=audio_check
     with studio.db() as db: db.execute("INSERT INTO studio_quotes VALUES(?,?)", (identity, json.dumps(data, ensure_ascii=False)))
     return public_quote(data)
@@ -160,7 +169,7 @@ def quote(studio, draft):
 
 def public_quote(data):
     return {"id": data["id"], "revision": data["draft"]["revision"], "known_max_micros": sum(int(q["max_charge_micros"]) for q in data["quotes"].values()),
-            "needs_audio_quote": data["draft"]["input"]["soundMode"] == "voice", "ai_trial": data["draft"]["input"].get("ai", {}).get("enabled", False), "avatar_execution":data.get('avatar_execution'), "items": [{"stage": k, "model": q["model"], "max_charge_micros": q["max_charge_micros"], "billing_source": q.get("billing_source", "gateway")} for k, q in data["quotes"].items()] + ([{"stage": "asr", "model": "local/whisper", "max_charge_micros": "0"}] if data.get("asr", {}).get("provider") == "local-whisper" else [])}
+            "needs_audio_quote": data["draft"]["input"]["soundMode"] == "voice" and not data.get('narration_reuse'), "ai_trial": data["draft"]["input"].get("ai", {}).get("enabled", False), "avatar_execution":data.get('avatar_execution'), "items": [{"stage": k, "model": q["model"], "max_charge_micros": q["max_charge_micros"], "billing_source": q.get("billing_source", "gateway")} for k, q in data["quotes"].items()] + ([{"stage": "asr", "model": "local/whisper", "max_charge_micros": "0"}] if data.get("asr", {}).get("provider") == "local-whisper" else [])}
 
 
 def frozen_request(studio, draft, quote_id, maximum=None):
@@ -173,6 +182,9 @@ def frozen_request(studio, draft, quote_id, maximum=None):
     if not row: raise WorkError("请先读取本次制作报价")
     data = json.loads(row[0])
     if data["draft"] != draft or data["key_identity"] != key_identity(studio): raise WorkError("内容或Key已改变，请重新读取报价")
+    if data.get('narration_reuse'):
+        from backlot.studio_narration_reuse import verify as verify_reuse
+        verify_reuse(studio,draft,data['narration_reuse'],data['prepared']['audio_path'])
     if draft['input'].get('soundMode')=='audio':
         from backlot.studio_audio_check import require_pass
         require_pass(studio,draft,data.get('audio_check'))
@@ -435,6 +447,9 @@ def run_avatar(project_dir, request, sdk=None, *, on_progress=None):
     try:
         publish_progress("准备配音与原始音轨")
         p = state["prepared"]; draft = request["draft"]
+        if request.get('narration_reuse'):
+            from backlot.studio_narration_reuse import verify as verify_reuse
+            verify_reuse(studio,draft,request['narration_reuse'],p['audio_path'])
         if request.get('audio_check'):
             from backlot.studio_audio_check import require_pass
             require_pass(studio,draft,request['audio_check'])

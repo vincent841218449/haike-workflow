@@ -23,6 +23,14 @@ PURPOSES={'neutral-emphasis','neutral-list','ordered-process','real-comparison',
           'user-requested-action','software-project-workflow'}
 
 
+def output_segments(rows, duration):
+    """Conform only the terminal hold to the measured 60fps output clock."""
+    result=[{**r,'t1':min(r['t1'],duration)} for r in rows]
+    if result and abs(rows[-1]['t1']-duration) <= 1/60 + 1e-9:
+        result[-1]['t1']=duration
+    return result
+
+
 def config_path():
     return Path(os.environ.get('HAIKE_MOTIONGIT_REGISTRY') or Path(__file__).resolve().parents[1] / '.backlot/motiongit/registry.json')
 
@@ -359,7 +367,7 @@ def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays
               'sourceStart':0,
               'presenter':{'src':'presenter.mp4'},'voiceover':'narration.wav','music':'','ending':'cut',
               'styleProfile':profile,'hud':{'brand':'海客创作'},'mediaPolicies':media_policies,
-              'segments':[{**s,'t1':min(s['t1'],duration)} for s in kit_segments],
+              'segments':output_segments(kit_segments,duration),
               'captions':[{'s':c['startMs']/1000,'e':min(c['endMs']/1000,duration),'text':c['text']} for c in caption_cues]}
     if config.get('version') in {'2.7.10','2.7.11'} and not native and config.get('component_workflow')!='poster-kit':
         # Explicit current author recipe; old frozen compositions omit these.

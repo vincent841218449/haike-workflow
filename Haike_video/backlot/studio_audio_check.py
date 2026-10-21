@@ -106,12 +106,19 @@ def generated_clock_ready(project, request):
         project=Path(project).resolve();folder=project/'renders'/name
         if folder.is_symlink() or not folder.resolve().is_relative_to(project): return False
         state=json.loads((folder/'gateway-state.json').read_text())
-        tts=state.get('stages',{}).get('tts',{})
-        q=tts.get('quote') or {};original=request.get('quotes',{}).get('tts') or {}
-        if (tts.get('job',{}).get('status')!='succeeded' or q.get('execution_route')!='local-system-voice'
-            or any(q.get(k)!=original.get(k) for k in ('id','model','execution_route'))): return False
         prepared=state['prepared'];audio=Path(prepared['audio_path'])
-        if audio.is_symlink() or not audio.resolve().is_relative_to(folder.resolve()) or not audio.is_file(): return False
+        if request.get('narration_reuse'):
+            from backlot.studio import Studio
+            from backlot.studio_narration_reuse import verify
+            verify(Studio(project.parent),draft,request['narration_reuse'],audio)
+            owner=project
+        else:
+            tts=state.get('stages',{}).get('tts',{})
+            q=tts.get('quote') or {};original=request.get('quotes',{}).get('tts') or {}
+            if (tts.get('job',{}).get('status')!='succeeded' or q.get('execution_route')!='local-system-voice'
+                or any(q.get(k)!=original.get(k) for k in ('id','model','execution_route'))): return False
+            owner=folder.resolve()
+        if audio.is_symlink() or not audio.resolve().is_relative_to(owner) or not audio.is_file(): return False
         saved=json.loads((folder/'local-asr.json').read_text())
         if (request.get('asr',{}).get('provider')!='local-whisper'
             or saved.get('fingerprint')!={'audio_sha256':sha(audio),'engine_identity':request['asr']['identity']}): return False
