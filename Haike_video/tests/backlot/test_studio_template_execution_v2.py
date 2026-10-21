@@ -41,3 +41,26 @@ def test_new_director_keeps_original_template_text_and_source_clock(monkeypatch,
     monkeypatch.setattr(author,'select',selected)
     assert execution.select(None,d,tmp_path,cues,{},cues)==['source-grounded-timeline']
     assert d==before
+
+
+def test_poster_auto_director_uses_author_integrated_palette_variants(monkeypatch,tmp_path):
+    from backlot import studio_motiongit as author
+    from backlot.studio_motiongit_poster import AUTO_EXPRESSIONS
+    d={'text':'用户原文','input':{'templateExecution':'auto','motion':{'style':'motiongit-624-v2-7-10'}}}
+    monkeypatch.setattr(execution,'snapshot',lambda d:{'component_scope':AUTO_EXPRESSIONS})
+    def selected(*args,**kwargs):
+        assert kwargs['component_scope']==AUTO_EXPRESSIONS
+        assert 'highlight' not in kwargs['component_scope']
+        return []
+    monkeypatch.setattr(author,'select',selected)
+    assert execution.select(None,d,tmp_path,[],{},[])==[]
+
+
+def test_unintegrated_poster_variant_is_rejected_even_if_model_or_cache_selects_it():
+    from backlot.studio_motiongit import validate_component_scope
+    from backlot.studio_motiongit_poster import AUTO_EXPRESSIONS
+    for segment in [{'control':'highlight','variant':'underline'},
+                    {'control':'kinetic','variant':'beat'},{'control':'kinetic'}]:
+        with pytest.raises(WorkError,match='已适配'):
+            validate_component_scope({'segments':[segment]},AUTO_EXPRESSIONS)
+    validate_component_scope({'segments':[{'control':'kinetic','variant':'wave'}]},AUTO_EXPRESSIONS)

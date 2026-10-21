@@ -2,7 +2,7 @@ export function nativeTemplateCards(catalog, layout, motion) {
   return (catalog?.styles || []).filter(s => s.supported && s.automatic_ready === true &&
     ['adu-legacy','motiongit'].includes(s.template_ref?.runtime) && s.template_ref?.fingerprint).map(s => ({
     ...s, name:s.display_name || (/^\d\d-[A-Z]$/.test(s.id)?`${s.id} · ${s.name}`:s.name), image:s.preview, demo:s.demo,
-    description:'按你的文案自动安排原包文字动效、人物画面和已上传素材；不要求固定步骤或人物数量。',
+    description:s.template_ref.template_id==='385712'?'使用官方原生基础表达编排，保留完整字幕、人物与原声；复杂样片镜头组仍在验收。':s.template_ref.template_id==='vibrant-poster-portrait'?'按文案组合原包已适配的七种海报动效，保留人物、完整原声和字幕。':'按你的文案自动安排原包文字动效、人物画面和已上传素材；不要求固定步骤或人物数量。',
     componentsOnly:s.execution_modes?.length===1&&s.execution_modes[0]==='components',
     sourceLabel:`ADu · v${s.template_ref.version} · 自动制作`,
     sourceDetail:s.template_ref.runtime==='motiongit'?s.scope:`${s.groups.length} 个原生镜头组 · ${s.selection}`,

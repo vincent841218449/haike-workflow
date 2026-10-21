@@ -107,6 +107,10 @@ def library(layout):
         profiles=caps.get('styleProfiles',{}).get('profiles',{})
         from backlot.studio_motiongit_samples import official_sample
         example = official_sample(config['template_id'])
+        kinetic=config.get('template_id')=='385712'
+        if kinetic:
+            from backlot.studio_motiongit_kinetic import SCENES
+            scope=f'{len(SCENES)}种官方原生基础表达；原片复杂组逐组验收中'
         result.append({'id':style, 'name':title, 'display_name':title, 'official_name':official_name,
              'aliases':list(dict.fromkeys([motiongit_label(config['template_id'],official_name),*config.get('aliases',[])])), 'family':'ADu 完整模板', 'family_id':config.get('family_id',caps.get('styleProfiles',{}).get('templateFamily','04')),
              'supported':bool(modes), 'status':'candidate', 'automatic_ready': automatic is not None,
@@ -115,11 +119,11 @@ def library(layout):
              'preview':config.get('preview') if str(config.get('preview','')).startswith('/api/') else None,
              'demo':config.get('demo') if str(config.get('demo','')).startswith('/api/') else None,
              'external_preview_url':'https://motiongit.com/@adunext/'+config['template_id'],
-             'scope':f'{len(recipes)}个原生组与{len(caps.get("controls",{}))}个官方组件；按所选执行方式制作',
+             'scope':scope if kinetic else '自动编排采用7种官方配色已适配表达；高级编辑保留70组件，其余变体须检查实际预览' if config.get('component_workflow')=='poster-kit' else f'{len(recipes)}个原生组与{len(caps.get("controls",{}))}个官方组件；按所选执行方式制作',
              'preview_basis':config.get('preview_basis','作者原版样片；正式制作使用本期内容'),
-             'groups':[{'id':k,'label':v['label']} for k,v in caps.get('controls',{}).items()],
+             'groups':[{'id':k,'label':v[0]} for k,v in SCENES.items()] if kinetic else [{'id':k,'label':v['label']} for k,v in caps.get('controls',{}).items()],
              'execution_modes':modes,
-             'declared_execution_modes':(['native'] if recipes else []) + (['components'] if caps.get('controls') else []),
+             'declared_execution_modes':['native'] if kinetic else (['native'] if recipes else []) + (['components'] if caps.get('controls') else []),
              'validation_status':config.get('validation_status','legacy-validated'),
              'style_profiles':[{'id':k,'name':{'light':'浅色画面','dark':'深色画面','blue':'蓝色章节','paper':'暖纸与绿色墨水','console':'冷蓝仪器台'}.get(k,k),
                  'description':v.get('description','')} for k,v in profiles.items()],
@@ -260,6 +264,9 @@ def complete_excerpts(source,segments):
 
 def make_plan(studio,draft,instance,video,audio,caption_cues,segments,*,overlays=None):
     """Rebuild for real avatar bytes after preflight; never reuse a still's plan."""
+    if isinstance(segments,dict) and segments.get('workflow')=='kinetic':
+        from backlot.studio_motiongit_kinetic import make_plan as kinetic_plan
+        return kinetic_plan(studio,draft,instance,video,audio,caption_cues,segments)
     if isinstance(segments,dict) and segments.get('workflow')=='macro':
         # This release's bilingual, measured-word caption contract has not yet
         # passed the signed runner. Never manufacture a caption schema or spend
@@ -552,7 +559,18 @@ def validate_timeline(draft, timeline, cues, storyboard, schema, config=None):
     return normalized
 
 
-def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,caption_cues=None):
+def validate_component_scope(body,scope):
+    if scope is None:return
+    if not isinstance(body.get('segments'),list):raise WorkError('自动编排未提供已适配的完整镜头列表','template_incompatible')
+    for row in body.get('segments',[]):
+        if not isinstance(row,dict):raise WorkError('自动编排的已适配镜头格式无效','template_incompatible')
+        if row.get('control') not in scope or row.get('variant') not in scope[row['control']]:
+            raise WorkError('自动编排只能选择本模板已适配的控件与变体，原声已保留','template_incompatible')
+        if row['control']=='checklist' and row.get('purpose')!='confirmed-completion':
+            raise WorkError('海报完成标记只适用于原文明确已完成的动作','template_incompatible')
+
+
+def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,caption_cues=None,component_scope=None):
     if draft['input'].get('templateExecution') == 'auto':
         from backlot.studio_template_auto import select as automatic
         from backlot.studio_template_execution import snapshot, VERSION as current_compiler, select as directed
@@ -573,15 +591,25 @@ def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,capt
     config,schema,caps=contracts(draft['input']['motion']['style']);folder=Path(folder)
     path=folder/('motiongit-selection.json' if not attempt else f'motiongit-selection-{attempt}.json');identity=digest([draft,cues,storyboard,template_ref(config)])
     if caption_cues is not None:identity=digest([identity,caption_cues])
+    if component_scope is not None:identity=digest([identity,component_scope])
     if path.is_file():
         saved=json.loads(path.read_text())
         if saved['fingerprint']!=identity: raise WorkError('原生编排输入已改变', 'template_mismatch')
         if not saved.get('approved'): raise WorkError('原生编排语义未通过内部检查', 'template_incompatible')
+        validate_component_scope(saved,component_scope)
         return validate_selection(draft,saved,cues,storyboard,schema,config)
     relay=TrialRelay(studio,folder/'ai-requests')
     contract={'script':draft['text'],'controls':caps['controls'], 'scenes':storyboard['scenes'], 'cues':[{**c,'id':i} for i,c in enumerate(cues)]}
     segment_controls={d['properties']['control']['const'] for d in schema['properties']['timeline']['properties']['segments']['items']['oneOf']}
     contract['controls']={k:v for k,v in caps['controls'].items() if k in segment_controls}
+    if component_scope is not None:
+        contract['controls']={k:{**v,'variants':component_scope[k]} for k,v in contract['controls'].items() if k in component_scope}
+        if config.get('template_id')=='vibrant-poster-portrait':
+            import copy
+            contract['controls']=copy.deepcopy(contract['controls'])
+            # The portrait host's 44px minimum cannot fit 24 full-width CJK
+            # characters in its measured 902px text area. Keep phrase breaks.
+            contract['controls']['kinetic']['props']['lines']['max']=16
     prechecked=folder/'motiongit-content.json'
     if prechecked.is_file():contract['content_precheck']=json.loads(prechecked.read_text())
     if config.get('guide'):
@@ -600,6 +628,9 @@ def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,capt
     system+='''\n先按完整原文选择同包工作流，不能混排不同引擎。有语义、真实数量、媒体和原速动作容量完整成立的native_recipes时，可返回 {"workflow":"native","segments":[{"recipe":"实际recipe","text":"连续原文","from_cue":0,"to_cue":0,"inputs":{},"assets":{},"anchors":{"实际角色":0},"support":["本段原文依据"],"facts":{"cardinality中的键":[{"name":"原文实际实体","quote":"包含实体的原文引用"}]}}]}。inputs/assets按真实schema；媒体值为asset:编号，不能填路径或示例素材。阶段/数量来自原文，不能照抄模板要求，步骤和参与者不能凑数。native不适合整篇时，选同包motion-kit组件，添加workflow:"motion-kit"并使用上述control格式。不要为了复刻一个局部强行套满整片，不得循环组补时长。'''
     system+='''\n素材先按实际内容判断用途：media/kenburns必须带framing:{"role":"footage或screenshot或product或evidence或logo","focus":{"x":0.5,"y":0.5}}。情境视频是主画面，优先kenburns/zoom大图，按人物/动作实测焦点放大，保留主角脸、手和关键物件；截图/产品证据保留完整信息，必要时选局部聚焦。不能把公交站说成写字楼、演讲者说成当事人。镜头不能用小窗和大面积空背景消耗观看面积。'''
     system+='\n组件镜头另填purpose，只从visual_purposes选择与原文和实际动作相符的一项。分镜不能切开sentence_captions的完整句；字幕与原声保持真实时间。'
+    if draft['input'].get('templateExecution')=='components':
+        contract.pop('native_recipes',None)
+        system+='\n本次选择同包组件编排，只返回workflow:"motion-kit"。只采用controls明确列出的控件与variants；不要返回固定native镜头组。'
     if draft['input'].get('templateExecution') == 'native':
         system += '\n用户明确选择原生镜头组，只能返回workflow:native，不能改用motion-kit组件或自写效果；无法成立时明确返回无可行原生编排。'
     if draft['input'].get('templateExecution') == 'components':
@@ -612,6 +643,7 @@ def select(studio,draft,folder,cues,storyboard,*,attempt=0,diagnostics=None,capt
     suffix=f'-repair-{attempt}' if attempt else ''
     body=response_json(relay.call('motiongit-kit-plan-v2'+suffix,{'model':CHAT_MODEL,'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(contract,ensure_ascii=False)}],'max_completion_tokens':6500,'stream':False}))
     if not isinstance(body,dict) or set(body)-{'workflow','segments'} or 'segments' not in body: raise WorkError('原生分镜结构无效','template_incompatible')
+    validate_component_scope(body,component_scope)
     normalized=validate_selection(draft,body,cues,storyboard,schema,config)
     review=response_json(relay.call('motiongit-kit-review-v1'+suffix,{'model':CHAT_MODEL,'messages':[{'role':'system','content':'独立核对原文和实际画面文字/动作。检查否定、条件、数量、单位、真实素材与全片完整性；流程、合并、完成章、点赞不能编造。只返回JSON {"approved":true,"issues":[]}；引用存在不能代替语义成立。'}, {'role':'user','content':json.dumps({'script':draft['text'],'timeline':normalized},ensure_ascii=False)}],'max_completion_tokens':1500,'stream':False}))
     if not isinstance(review,dict) or type(review.get('approved')) is not bool or not isinstance(review.get('issues'),list): raise WorkError('原生语义核对结果无效','template_incompatible')
@@ -641,6 +673,9 @@ def validate_selection(draft,body,cues,storyboard,schema,config):
 def prepare(studio,draft,folder,audio,cues,storyboard,caption_cues,video=None):
     """Official plan before expensive avatar; final build uses the real mother."""
     config,_,_=contracts(draft['input']['motion']['style']);folder=Path(folder)
+    if config.get('template_id')=='385712':
+        from backlot.studio_motiongit_kinetic import prepare as kinetic_prepare
+        return kinetic_prepare(studio,draft,folder,audio,cues,storyboard,caption_cues,video)
     from lib.ffmpeg_locator import resolve_ffmpeg_pair
     ffmpeg,_=resolve_ffmpeg_pair();placeholder=folder/'motiongit-internal-layout.mp4'
     if not placeholder.exists():
@@ -674,6 +709,9 @@ def plan_info(instance):
     """Keep the two official workflows' distinct plan formats and choreography."""
     instance=Path(instance)
     workflow=json.loads((instance/'haike-workflow.json').read_text())['workflow']
+    if workflow=='kinetic':
+        from backlot.studio_motiongit_kinetic import plan_info as kinetic_plan
+        return kinetic_plan(instance)
     if workflow=='poster-kit':
         from backlot.studio_motiongit_poster import plan_info as poster_plan
         return poster_plan(instance)
@@ -696,6 +734,7 @@ def plan_info(instance):
 
 def review_plan(instance):
     instance=Path(instance);info=plan_info(instance)
+    if info['workflow']=='kinetic':return
     if info['workflow']=='poster-kit':
         from backlot.studio_motiongit_poster import review_plan as poster_review
         return poster_review(instance)
@@ -709,6 +748,9 @@ def review_plan(instance):
 
 def preview_instance(instance):
     config=instance_config(instance);instance=Path(instance);project=instance/'project'
+    if plan_info(instance)['workflow']=='kinetic':
+        from backlot.studio_motiongit_kinetic import preview_instance as kinetic_preview
+        return kinetic_preview(instance)
     review_plan(instance)
     # A failed official native preview leaves a log at a path its next run
     # creates as a link. Preserve the whole failed build, then prepare afresh.
@@ -748,6 +790,7 @@ def visual_review(studio,draft,instance):
     instance=Path(instance);project=instance/'project';path=project/'preview.json'
     workflow_file=instance/'haike-workflow.json'
     poster=workflow_file.is_file() and json.loads(workflow_file.read_text()).get('workflow')=='poster-kit'
+    kinetic=workflow_file.is_file() and json.loads(workflow_file.read_text()).get('workflow')=='kinetic'
     fingerprint=sha(path);receipt=instance/'visual-review.json'
     review=None
     if receipt.is_file():
@@ -760,9 +803,9 @@ def visual_review(studio,draft,instance):
             review=None
     if review is None:
         preview=json.loads(path.read_text());stills=preview_stills(preview);selected=list(stills)
-        info=plan_info(instance) if poster else None
-        report=json.loads((info['plan_path'] if poster else instance/'plan/report.json').read_text())
-        params=json.loads((info['parameter_path'] if poster else project/'params.json').read_text());timeline=params.get('timeline',params)
+        info=plan_info(instance) if poster or kinetic else None
+        report=json.loads((info['plan_path'] if info else instance/'plan/report.json').read_text())
+        params=json.loads((info['parameter_path'] if info else project/'params.json').read_text());timeline=params.get('timeline',params)
         layout=json.loads((instance/'layout-policy.json').read_text()) if (instance/'layout-policy.json').is_file() else {}
         context={'layout':timeline.get('layout'),'presenter':{k:v for k,v in timeline.get('presenter',{}).items() if k!='src'},
                  'media_roles':sorted({r.get('role','unspecified') for r in report.get('mediaBindings',[])}),
@@ -855,7 +898,10 @@ def finish(studio,draft,folder,instance,*,on_progress=None):
         candidate.rename(instance/f'video-unverified-{index}.mp4')
     if not candidate.exists():
         if on_progress:on_progress('按官方模板渲染视频与声音',4,5)
-        command(config,instance,'render',project,'--out',candidate,'--language','zh',timeout=3600,log=instance/'render.log')
+        if report['workflow']=='kinetic':
+            from backlot.studio_motiongit_kinetic import render as kinetic_render
+            kinetic_render(instance,candidate)
+        else:command(config,instance,'render',project,'--out',candidate,'--language','zh',timeout=3600,log=instance/'render.log')
     info=media_probe(candidate)
     dimensions = (1920,1080) if config['layout']=='landscape' else (1080,1920)
     if not info.get('audio') or not info.get('video') or abs(info['duration']-report['duration'])>.04 or (info['video']['width'],info['video']['height'])!=dimensions:
@@ -876,8 +922,8 @@ def finish(studio,draft,folder,instance,*,on_progress=None):
     official_name=config.get('display_name',name(style))
     presentation={'id':f"adu:{style}:{config['layout']}",'name':official_name if config.get('version') in {'2.7.10','2.7.11','0.2.29-open-beta'} else motiongit_label(config['template_id'],official_name),
         'official_name':official_name,'style':style,'layout':config['layout'],
-        'adapter':'motiongit','variant':'native' if report['workflow']=='macro' else 'motion-kit' if report['workflow']=='poster-kit' else report['workflow'],
-        'engine_workflow':report['workflow'],'variant_name':'官方原生镜头组' if report['workflow'] in {'native','macro'} else '官方组件编排',
+        'adapter':'motiongit','variant':'native' if report['workflow'] in {'macro','kinetic'} else 'motion-kit' if report['workflow']=='poster-kit' else report['workflow'],
+        'engine_workflow':report['workflow'],'variant_name':'官方原生基础表达' if report['workflow']=='kinetic' else '官方原生镜头组' if report['workflow'] in {'native','macro'} else '官方组件编排',
         'template_ref':template_ref(config),'plan_sha256':sha(report['plan_path']),'output_sha256':sha(output),'render_source_sha256':sha(candidate),
         'groups':report['segments'],'visual_review':'sampled-rendered-frames','owner_acceptance':'pending'}
     from backlot.studio_presentation import verify
@@ -919,6 +965,8 @@ def freeze_job(studio,draft,folder,instance):
         raise WorkError('原生模板工程必须属于当前制作项目')
     review_plan(instance)
     files={str(p.relative_to(instance)):sha(p) for p in (instance/'inputs').rglob('*') if p.is_file() and not p.is_symlink()}
+    if plan_info(instance)['workflow']=='kinetic':
+        files.update({str(p.relative_to(instance)):sha(p) for p in (instance/'input-staging').rglob('*') if p.is_file() and not p.is_symlink()})
     for name in ['plan/auto_plan.json','plan/report.json','plan/plan.json','plan/host-plan.json','plan/inputs.json','clock-alignment.json','haike-workflow.json','layout-policy.json','haike-template-ref.json','music-binding.json','semantic-evidence.json']:
         if (instance/name).is_file():files[name]=sha(instance/name)
     if not files: raise WorkError('原生工程缺少冻结输入')
@@ -949,16 +997,39 @@ def run_job(project_dir,request,*,on_progress=None):
 
 def export_project(instance,archive,*,presentation=None):
     # Only user inputs and editable public production data; never personal/core caches.
-    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
-        for name in ('inputs','plan'):
-            for path in (instance/name).rglob('*'):
-                if path.is_file() and not path.is_symlink(): z.write(path,path.relative_to(instance))
-        if (instance/'layout-policy.json').is_file():z.write(instance/'layout-policy.json','layout-policy.json')
-        for name in ('haike-template-ref.json','haike-workflow.json','clock-alignment.json','semantic-evidence.json','music-binding.json'):
-            path=instance/name
-            if path.is_file() and not path.is_symlink():z.write(path,name)
-        if presentation:
-            z.writestr('delivery.json',json.dumps({'schema':'haike-motion-delivery/1',
-                **{k:presentation[k] for k in ('name','style','layout','variant','template_ref','plan_sha256','output_sha256')}},
-                ensure_ascii=False,indent=2))
-        z.writestr('README.txt','本期可编辑参数和素材。使用你自己的已验证原始 .motion 包与官方随包入口恢复；个人包和调用凭据不包含在此工程中。\n')
+    import hashlib
+    import tempfile
+    instance=Path(instance);archive=Path(archive);files={};payloads={}
+    workflow=instance/'haike-workflow.json'
+    kinetic=workflow.is_file() and json.loads(workflow.read_text()).get('workflow')=='kinetic'
+    for name in (('inputs','plan','input-staging') if kinetic else ('inputs','plan')):
+        root=instance/name
+        if root.is_symlink():raise WorkError('工程输入目录不能是外部链接','template_mismatch')
+        for path in root.rglob('*'):
+            if path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(instance.resolve()):files[str(path.relative_to(instance))]=path
+    for name in ('layout-policy.json','haike-template-ref.json','haike-workflow.json','clock-alignment.json','semantic-evidence.json','music-binding.json'):
+        path=instance/name
+        if path.is_file() and not path.is_symlink():files[name]=path
+    if presentation:
+        payloads['delivery.json']=json.dumps({'schema':'haike-motion-delivery/1',
+            **{k:presentation[k] for k in ('name','style','layout','variant','template_ref','plan_sha256','output_sha256')}},ensure_ascii=False,indent=2).encode()
+    payloads['README.txt']='本期可编辑参数和素材。使用你自己的已验证原始 .motion 包与官方随包入口恢复；个人包和调用凭据不包含在此工程中。\n'.encode()
+    if archive.is_file():
+        try:
+            with zipfile.ZipFile(archive) as z:
+                valid=z.testzip() is None and len(z.namelist())==len(files)+len(payloads) and set(z.namelist())==files.keys()|payloads.keys()
+                if valid:
+                    for name,path in files.items():
+                        with z.open(name) as source:
+                            if hashlib.file_digest(source,'sha256').hexdigest()!=sha(path):valid=False;break
+                if valid and all(z.read(n)==v for n,v in payloads.items()):return
+        except (OSError,ValueError,zipfile.BadZipFile):pass
+        raise WorkError('已有工程与本次输入不一致，旧工程已保留；请使用新的制作版本','template_mismatch')
+    archive.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=archive.parent,prefix='editable-',suffix='.tmp',delete=False) as stream:temporary=Path(stream.name)
+    try:
+        with zipfile.ZipFile(temporary,'w',compression=zipfile.ZIP_DEFLATED) as z:
+            for name,path in files.items():z.write(path,name)
+            for name,value in payloads.items():z.writestr(name,value)
+        temporary.replace(archive)
+    finally:temporary.unlink(missing_ok=True)

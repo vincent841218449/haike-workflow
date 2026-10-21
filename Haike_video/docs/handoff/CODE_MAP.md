@@ -1,6 +1,6 @@
 # 代码地图
 
-更新时间：2026-10-19
+更新时间：2026-10-21
 
 ## 当前工作台V2
 
@@ -13,7 +13,7 @@
 - AI分镜：studio_storyboard.py原文/时钟；studio_chat_gateway.py网关；studio_chat_route.py冻结路由。studio_adu_components.py同包组件；studio_failure.py脱敏诊断；生图暂停。根docs/tasks/2026-10-16-production-resilience.md。
 - 动效：studio_motion.py固定ADu目录/时钟/素材/规划/冻结/导出，studio_motion_quick.py九TPL白名单；Motion.jsx/motion-model.js/motion.css共用ui.jsx和AvatarModeBar。/api/studio/motion/*、drafts/*/motion-{source,plan,job,project}。
 - 队列：production_queue{,_worker}.py；单通道/断点/取消/进度，产物登记台账；studio_visual_recovery.py核对成功声画/工程SHA，仅本地恢复。
-- 模板：studio_template_registry.py冻结来源；studio_template_auto.py五新版确定性自动编排/源码SHA，studio_motiongit.py原包预检/交付；旧原生studio_motion_director.py→studio_preflight.py不变。studio_motiongit_editor.py/MotionGit.jsx高级70控件编辑。scripts/automatic_template_matrix.py隔离缓存声画回归；studio_presentation.py所选/实际，work_api.py工程SHA绑定。根docs/tasks/2026-10-19-automatic-template-integration.md。
+- 模板：studio_template_registry.py冻结来源；studio_template_auto.py旧编排，studio_template_execution.py新版分发；studio_motiongit.py预检/交付/幂等ZIP。studio_motiongit_kinetic.py基础原生表达，studio_forced_alignment.py＋scripts/studio_alignment_worker.py按原文声学定位。studio_motiongit_poster.py海报范围；studio_motiongit_editor.py高级编辑。scripts/three_template_acceptance.py隔离验收；studio_presentation.py所选/实际、work_api.py工程SHA。根docs/tasks/2026-10-21-three-template-enablement.md。
 - 作品：work_catalog.py、work_api.py、work_publish.py；版本选择、人工确认、资料/封面/授权、冻结发布包和幂等提交。
 - 发布：CreatorHub app/main.py中POST /api/publish/{id}/cancel，engine/monitor.py条件状态更新；日历同步/取消/提交互斥。
 - 统一网关：根api-platform/、Haike_video/scripts/haike_api.py；Key私有配置.backlot/haike-api/client-config.json（不读取或提交秘密）。
@@ -28,7 +28,7 @@
 - 基础媒体：lib/ffmpeg_locator.py、lib/subprocess_window.py；tools/video/{video_compose,hyperframes_compose}.py和tools/audio/audio_mixer.py。
 - 素材管理/证据/互动切割：material_library*.py、material_crop.py、material_interaction*.py；原二剪published_clip_*.py、published_remix*.py，旧独立UI已删除。
 - 外站复刻/研究包：remake_*.py、copy_skill_research_pack.py、research_pack_*.py；每日科技后端daily_*.py保留内部历史依赖。
-- 原完整路径/历史功能地图见LEGACY_CODE_MAP_20261013.md，不把保留后台误认为仍有对应主菜单。
+- 历史地图见LEGACY_CODE_MAP_20261013.md，保留后台不代表仍有主菜单。
 
 ## 验证入口
 

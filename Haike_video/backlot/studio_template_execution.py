@@ -12,6 +12,8 @@ VERSIONS={'2.7.10','2.7.11'}
 
 
 def contract(config,schema,caps):
+    from backlot import studio_motiongit_kinetic as kinetic
+    if kinetic.matches(config):return kinetic.contract(config,schema,caps)
     if config.get('version') not in VERSIONS:
         from backlot.studio_template_auto import contract as old
         return old(config,schema,caps)
@@ -22,13 +24,25 @@ def contract(config,schema,caps):
     controls={d['properties']['control']['const'] for d in definitions}
     if not {'title','quote','media'}<=controls:
         raise WorkError('模板缺少本期口播的公开编排合同','template_incompatible')
+    scope=None
+    if config.get('template_id')=='vibrant-poster-portrait':
+        from backlot.studio_motiongit_poster import AUTO_EXPRESSIONS
+        scope=copy.deepcopy(AUTO_EXPRESSIONS)
+        if any(k not in controls or k not in caps['controls'] or
+               not set(variants)<=set(caps['controls'][k].get('variants',[])) for k,variants in scope.items()):
+            raise WorkError('海报原包已适配表达与实际组件合同不一致','template_incompatible')
     return {'compiler':VERSION,'compiler_sha256':sha(Path(__file__)),
+            'selector_sha256':sha(Path(__file__).with_name('studio_motiongit.py')),
             'template_ref':template_ref(config),'profile':component_profile(config,caps),
-            'controls':sorted(controls & caps['controls'].keys()),'fixed_sample_replay':False,
+            'controls':sorted(scope if scope else controls & caps['controls'].keys()),
+            'component_scope':scope,'fixed_sample_replay':False,
             'selection':'source-grounded-author-controls','native_modes':execution_modes(config)}
 
 
 def snapshot(draft):
+    if draft['input']['motion']['style'].startswith('motiongit-626-'):
+        from backlot.studio_motiongit import contracts
+        return contract(*contracts(draft['input']['motion']['style']))
     if not re.fullmatch(r'motiongit-\d+-v2-7-(?:10|11)',draft['input']['motion']['style']):
         from backlot.studio_template_auto import snapshot as old
         return old(draft)
@@ -40,6 +54,8 @@ def precheck(studio,draft,folder):
     from backlot.studio_material_search import production_precheck
     production_precheck(draft)
     value=snapshot(draft)
+    from backlot import studio_motiongit_kinetic as kinetic
+    if value['compiler']==kinetic.VERSION:return kinetic.precheck(studio,draft,folder)
     if value['compiler']!=VERSION:
         from backlot.studio_template_auto import precheck as old
         return old(studio,draft,folder)
@@ -61,5 +77,6 @@ def select(studio,draft,folder,cues,board,caption_cues,attempt=0,diagnostics=Non
     from backlot.studio_motiongit import select as author_select
     current=copy.deepcopy(draft)
     current['input']['templateExecution']='components'
+    scope=snapshot(draft).get('component_scope') if draft['input']['motion']['style'].startswith('motiongit-624-') else None
     return author_select(studio,current,folder,cues,board,caption_cues=caption_cues,
-                         attempt=attempt,diagnostics=diagnostics)
+                         attempt=attempt,diagnostics=diagnostics,component_scope=scope)

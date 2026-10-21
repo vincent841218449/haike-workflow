@@ -6,6 +6,13 @@ from pathlib import Path
 from backlot.studio import atomic_private
 from backlot.work_catalog import WorkError,sha
 
+# poster-kit-guide.json declares seven expressions integrated with the native
+# palette. The remaining library variants are not artistically accepted by the
+# author; a generic white-text variant must not be selected on the pale stage.
+AUTO_EXPRESSIONS={'kinetic':['wave'],'qa':['flip'],'flow':['chain'],
+                  'polaroid':['drop'],'mindmap':['radial'],
+                  'checklist':['clipboard'],'cta':['button']}
+
 
 def schema_adapter(schema,spec):
     """Expose a host envelope without changing the signed public contract."""
@@ -64,6 +71,7 @@ def content_layout(timeline):
                 # Reserve that motion inside the content zone, rather than
                 # clipping text or relaxing the measured safety check.
                 row['area']=({'x':100,'y':445,'w':800,'h':680} if row['control']=='title'
+                             else {'x':100,'y':445,'w':880,'h':680} if row['control']=='kinetic'
                              else {'x':60,'y':445,'w':960,'h':680})
             props=row.get('props',{})
             if row['control']=='title' and len(props.get('line1',''))>12 and not props.get('line2'):

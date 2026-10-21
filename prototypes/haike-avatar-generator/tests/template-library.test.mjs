@@ -71,3 +71,13 @@ test('official examples propagate to both selectable and pending cards without c
   assert.equal(cards[1].selectable,false);assert.equal(cards[1].image,pending.preview);
   assert.equal(cards[1].demo,pending.demo);
 });
+
+test('validated kinetic native adapter is selectable with its real scope and exact source',()=>{
+  const current={...ready,id:'motiongit-626-v0-2-29-open-beta',execution_modes:['native'],
+    template_ref:{...ref,version:'0.2.29-open-beta',layout:'portrait',template_id:'385712'}};
+  const [card]=verticalTemplateCards({styles:[current],pending_packages:[]});
+  assert.equal(card.selectable,true);assert.equal(card.componentsOnly,false);
+  assert.equal(card.choice.templateRef,current.template_ref);
+  assert.match(card.description,/原生基础表达.*复杂样片镜头组仍在验收/);
+  assert.equal(card.choice.templateExecution,'auto');
+});
