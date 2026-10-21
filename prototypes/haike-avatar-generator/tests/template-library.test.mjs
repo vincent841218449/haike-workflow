@@ -59,3 +59,15 @@ test('fresh drafts choose a verified portrait release rather than a removed basi
   assert.equal(automaticTemplateChoice({styles:[old,pending]},{style:'catalog-default',layout:'portrait'}).id,old.id);
   assert.equal(automaticTemplateChoice({styles:[pending]},{style:'catalog-default',layout:'portrait'}),null);
 });
+
+test('official examples propagate to both selectable and pending cards without changing execution',()=>{
+  const old={...ready,official_sample:true,preview_basis:'官方中文案例',preview:'https://media.openaicut.com/cover.jpg',demo:'https://media.openaicut.com/sample.mp4',template_ref:{...ref,layout:'portrait',template_id:'console'}};
+  const pending={id:'motiongit:adunext:poster',layout:'portrait',official_sample:true,preview:'https://media.openaicut.com/poster.jpg',demo:'https://media.openaicut.com/poster.mp4'};
+  const cards=verticalTemplateCards({styles:[old],pending_packages:[pending]});
+  assert.equal(cards.length,2);
+  for(const card of cards)assert.equal(card.official_sample,true);
+  assert.equal(cards[0].choice.templateRef,old.template_ref);
+  assert.equal(cards[0].choice.motion.style,old.id);
+  assert.equal(cards[1].selectable,false);assert.equal(cards[1].image,pending.preview);
+  assert.equal(cards[1].demo,pending.demo);
+});

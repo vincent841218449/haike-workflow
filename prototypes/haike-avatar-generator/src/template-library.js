@@ -52,7 +52,7 @@ export function verticalTemplateCards(catalog,motion) {
   const enabled=new Set(ready.map(s=>s.template_ref.template_id));
   const pending=(catalog?.pending_packages||[]).filter(s=>s.layout==='portrait'&&!enabled.has(s.id.replace('motiongit:adunext:',''))).map(s=>({
     ...s,image:s.preview,demo:s.demo,ratio:'9:16',description:s.reason,sourceLabel:s.version?`ADu · v${s.version} · 验证中`:'ADu · 待导入',
-    external_preview_url:s.url,selectable:false,selected:false,
+    external_preview_url:s.external_preview_url||s.url,selectable:false,selected:false,
   }));
   return [...ready.map(s=>({...s,selectable:true})),...pending];
 }

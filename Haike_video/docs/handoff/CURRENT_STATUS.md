@@ -9,7 +9,7 @@
 - 口播：四输入→按实际使用入队→/tasks，无总预算；旧预算恢复同任务。新默认本地AI应用2006270540499128322，45秒分段/核对裁尾/原音拼接/缓存防重；旧已受理请求沿原号查询。根docs/PRODUCT_RUNNINGHUB_AI_APP.md。
 - /tasks进度/版本/播放/下载/审核/排期，冻结输入/产物；根docs/PRODUCT_CREATION_TASKS.md。7系统声及个人克隆接本机v3 Flash；免费克隆一次提交，长录音自动20秒；免费缓存试听；语速0.80–1.50×同步试听/制作，原意图/Key隔离。128后端/30前端；根docs/PRODUCT_VOICE_LIBRARY.md。
 - 动效：/avatar?mode=motion，ADu固定f52490bd/3.14.0-rc.1，11风格/54竖屏组、10风格/47横屏组、九横屏TPL。真实时钟/素材→不可变计划→原队列→待审视频+工程；49历史包保留，候选组未逐组人工验收。
-- ADu：主入口4款已验收竖屏组件/历史包保留；最新7包已验签，5款19.6秒组件/ZIP通过，不代表完整原生通过。新素材链搜索下载通过，真实媒体槽几何、海报对比及科技风compose仍阻塞，收费前拦截。UI官方名/手机单列/真实步骤已改。根docs/tasks/2026-10-21-studio-integration-acceptance.md。
+- ADu：4款竖屏组件可制作/历史包保留；最新7包已验签、7款官网中文案例可播，5款19.6秒组件/ZIP通过，不代表原生全通过。素材搜索下载通过，真实媒体槽/海报对比仍阻塞；科技风正常入口check/plan/prepare及3帧preview过，自动编排/交付待接。收费前拦截。根docs/tasks/2026-10-21-studio-integration-acceptance.md。
 - Key：云端/v2后台0600。CosyVoice实扣0.0012；腾讯历史未知冻0.001729。RunningHub钱包实扣×1.5已上线；7秒报价上限0.84，原158秒回执成本0.264/售价0.396。Pexels零价检索/下载解码通过；新字幕Whisper词级/旧任务原ASR；生图暂停。根docs/tasks/2026-10-14-relay-live-verification.md。
 - 日历：未来北京时间、单条或不同作品每天/每周排期、CAS/重复阻断/批量原子保存、最终版+资料+授权+账号门、未知提交恢复原键、回执取消。CreatorHub调度器真实执行；本机休眠/关服务影响执行。
 - 旧页/构建已归档，素材与凭据保留；.haike-archives/studio-v2-20261013/manifest.json。

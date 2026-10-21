@@ -97,6 +97,7 @@ def pending_packages(layout=None):
     # Catalog announcements are not executable installations.
     from backlot.studio_motiongit import configuration,execution_modes
     from backlot.studio_template_names import MOTIONGIT_CATALOG,motiongit_label,CURRENT_PORTRAIT_VERSIONS
+    from backlot.studio_motiongit_samples import official_sample
     entries=list(configuration().values());result=[]
     for slug,title,ratio in MOTIONGIT_CATALOG:
         if layout and ratio!=layout:continue
@@ -111,5 +112,5 @@ def pending_packages(layout=None):
             'preview_basis':config.get('preview_basis') if config else None,
             'status':'validation-pending' if config else 'package-required',
             'reason':config.get('validation_reason') or ('官方组件已可制作；完整原生镜头组仍待验收' if 'components' in execution_modes(config) else '原包已验签，等待本地制作检查') if config else '最新版 .motion 尚未导入；旧版模板继续保留',
-            'url':'https://motiongit.com/@adunext/'+slug})
+            'url':'https://motiongit.com/@adunext/'+slug, **official_sample(slug)})
     return result

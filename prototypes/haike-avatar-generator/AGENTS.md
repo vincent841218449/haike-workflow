@@ -57,3 +57,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - A template-only edit of an existing creation continues its explicit task family and reuses matching narration/avatar/materials. Local-only recomposition must refuse new chargeable stages when artifacts are missing.
 - Routine material decisions and intermediate checks run automatically. Require input only for missing/contradictory content, explicit new paid regeneration, or raising the aggregate fee cap. Provider waits query the original intent; pending billing receipts do not block returned media.
 - One explicitly linked creation occupies one task row; preserve exact historical attempts and video versions in a collapsed history. Playback and download need no review click. Preparing publication requires selecting one exact version; actual publication retains its existing explicit authorization.
+
+## Accepted portrait catalog (2026-10-21)
+
+- The creation picker shows every official MotionGit 9:16 identity, using the official Chinese name, cover and full playable author example. Use the public media CDN published by the catalog/detail page; preserve its source link. Local test presenters belong to acceptance evidence, not official examples.
+- Keep sample identity separate from the frozen executable package/version. Official playback does not enable unverified production. Track the remaining native choreography, media slot and delivery gaps in `../../docs/tasks/2026-10-21-studio-integration-acceptance.md` until actual outputs pass.

@@ -1,0 +1,63 @@
+{
+  "schema": "haike-official-template-samples/1",
+  "checked_at": "2026-10-21",
+  "catalog_url": "https://motiongit.com/templates?ratio=9%3A16&lang=zh",
+  "templates": [
+    {
+      "template_id": "385712",
+      "name": "酷炫科技风 · 口播讲解",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/385712?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/bdaf1a3638b92d8e299ca77670ab55e3387f01124186f80c65a43b5259c9f0b9/original.jpg",
+      "video": "https://media.openaicut.com/previews/626/0.2.9-open-beta-zh-11eae4868d37.mp4"
+    },
+    {
+      "template_id": "template-01-integrated-portrait",
+      "name": "现代图文 · 口播讲解 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/template-01-integrated-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/38dbac9d6b49515c7efcca6625733ec863ca57c4097515778b78cea3a7745cf1/original.jpg",
+      "video": "https://media.openaicut.com/previews/606/draft-zh-9086d86d6129.mp4"
+    },
+    {
+      "template_id": "vibrant-poster-portrait",
+      "name": "活力海报 · 口播讲解 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/vibrant-poster-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/b15098be9b593a68e246cd7c8ce67b659297287ce160a9d59adc946f84f47bfc/original.jpg",
+      "video": "https://media.openaicut.com/previews/624/draft-zh-11cf23913cdd.mp4"
+    },
+    {
+      "template_id": "template-05-native-portrait",
+      "name": "鲜色角色 · 叙事讲解 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/template-05-native-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/39d0abbec1568a918fa8640df956296569cff344f77f6d64035ed9bd80752203/original.jpg",
+      "video": "https://media.openaicut.com/previews/614/draft-zh-6382724d35a0.mp4"
+    },
+    {
+      "template_id": "template-04-dark-console-portrait",
+      "name": "科技控制台 · 口播讲解 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/template-04-dark-console-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/da9025f3816d66773a682d923ba4e4bf16046de41abe94279f4af1eb6d601b24/original.jpg",
+      "video": "https://media.openaicut.com/previews/612/2.5.7-zh-a93efdfb29ba.mp4"
+    },
+    {
+      "template_id": "template-02-expanded-portrait",
+      "name": "纸面透视 · 口播讲解 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/template-02-expanded-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/92a88a809a3cdda1137cc3ed22cec44f1f58a4d9d1b6928cb5219acd7f6077b6/original.jpg",
+      "video": "https://media.openaicut.com/previews/608/draft-zh-927e16779f16.mp4"
+    },
+    {
+      "template_id": "template-03-native-portrait",
+      "name": "深色立体 · 多屏展陈 · 竖屏",
+      "ratio": "9:16",
+      "url": "https://motiongit.com/@adunext/template-03-native-portrait?lang=zh",
+      "cover": "https://media.openaicut.com/cover-cache/v1/c8cb85e0b99afeae504bc2171dce303dd7447f91e0949fdd12906c6aeadfce64/original.jpg",
+      "video": "https://media.openaicut.com/previews/610/draft-zh-3200b44b2818.mp4"
+    }
+  ]
+}

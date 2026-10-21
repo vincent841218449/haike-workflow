@@ -105,13 +105,13 @@ def library(layout):
         except WorkError:
             automatic = None
         profiles=caps.get('styleProfiles',{}).get('profiles',{})
+        from backlot.studio_motiongit_samples import official_sample
+        example = official_sample(config['template_id'])
         result.append({'id':style, 'name':title, 'display_name':title, 'official_name':official_name,
              'aliases':list(dict.fromkeys([motiongit_label(config['template_id'],official_name),*config.get('aliases',[])])), 'family':'ADu 完整模板', 'family_id':config.get('family_id',caps.get('styleProfiles',{}).get('templateFamily','04')),
              'supported':bool(modes), 'status':'candidate', 'automatic_ready': automatic is not None,
              'automatic_contract': automatic,
              'selection':config['template_id']+'@'+config['version'], 'template_ref':template_ref(config),
-             # The author site currently serves covers with CORP same-origin.
-             # Open its normal page rather than proxying a restricted resource.
              'preview':config.get('preview') if str(config.get('preview','')).startswith('/api/') else None,
              'demo':config.get('demo') if str(config.get('demo','')).startswith('/api/') else None,
              'external_preview_url':'https://motiongit.com/@adunext/'+config['template_id'],
@@ -123,7 +123,7 @@ def library(layout):
              'validation_status':config.get('validation_status','legacy-validated'),
              'style_profiles':[{'id':k,'name':{'light':'浅色画面','dark':'深色画面','blue':'蓝色章节','paper':'暖纸与绿色墨水','console':'冷蓝仪器台'}.get(k,k),
                  'description':v.get('description','')} for k,v in profiles.items()],
-             'runtime_label':'MotionGit 官方运行器'})
+             'runtime_label':'MotionGit 官方运行器', **example})
     return result
 
 
