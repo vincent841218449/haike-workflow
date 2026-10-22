@@ -966,6 +966,17 @@ def compose(studio,draft,folder,video,audio,caption_cues,segments,*,on_progress=
     return finish(studio,draft,folder,instance,on_progress=on_progress)
 
 
+def bound_queue_draft(draft,ref):
+    """Carry the verified queue identity into completion without changing stored input."""
+    import copy
+    recorded=draft.get('input',{}).get('templateRef')
+    if recorded is not None and recorded!=ref:
+        raise WorkError('草稿模板与原队列冻结版本不一致，原产物保留','template_mismatch')
+    result=copy.deepcopy(draft)
+    result.setdefault('input',{})['templateRef']=copy.deepcopy(ref)
+    return result
+
+
 def freeze_job(studio,draft,folder,instance):
     folder=Path(folder).resolve();instance=Path(instance).resolve()
     project=(studio.projects_root/draft['id']).resolve()
@@ -978,7 +989,8 @@ def freeze_job(studio,draft,folder,instance):
     for name in ['plan/auto_plan.json','plan/report.json','plan/plan.json','plan/host-plan.json','plan/inputs.json','clock-alignment.json','haike-workflow.json','layout-policy.json','haike-template-ref.json','music-binding.json','semantic-evidence.json']:
         if (instance/name).is_file():files[name]=sha(instance/name)
     if not files: raise WorkError('原生工程缺少冻结输入')
-    return {'runtime':'motiongit','draft':draft,'template_ref':template_ref(instance_config(instance)), 'render_id':folder.name,
+    ref=template_ref(instance_config(instance))
+    return {'runtime':'motiongit','draft':bound_queue_draft(draft,ref),'template_ref':ref, 'render_id':folder.name,
             'instance':instance.name,'files':files,'binding_sha256':digest(files),'local_only':True}
 
 
@@ -997,7 +1009,8 @@ def run_job(project_dir,request,*,on_progress=None):
             path=(instance/name).resolve()
             if not path.is_relative_to(instance.resolve()) or not path.is_file() or sha(path)!=identity:
                 raise WorkError('原生队列素材或计划已改变','template_mismatch')
-        return finish(studio,request['draft'],folder,instance,on_progress=on_progress)
+        draft=bound_queue_draft(request['draft'],request['template_ref'])
+        return finish(studio,draft,folder,instance,on_progress=on_progress)
     except WorkError as exc:
         return {'status':'failed','stage':str(exc),'error':{'code':exc.code,'message':str(exc),'type':'StudioMotionGit'},
                 'retryable':exc.code=='unavailable','safe_resume_point':'studio_motion'}

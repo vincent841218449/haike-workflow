@@ -12,6 +12,34 @@ from backlot.studio import atomic_private
 from backlot.work_catalog import WorkError,sha
 
 
+@pytest.mark.parametrize('embedded_ref',[None,{'runtime':'motiongit','template_id':'385712'},{'runtime':'motiongit','template_id':'wrong'}])
+def test_queue_completion_uses_the_frozen_template_identity(tmp_path,monkeypatch,embedded_ref):
+    from backlot import studio_presentation
+    project=tmp_path/'projects'/'example';instance=project/'renders/studio-1/motiongit-final'
+    instance.mkdir(parents=True);(instance/'source.txt').write_text('frozen source')
+    ref={'runtime':'motiongit','template_id':'385712'}
+    draft={'id':'example','input':{'motion':{'style':'motiongit-626-v0-2-29-open-beta','layout':'portrait'},'templateExecution':'auto'}}
+    if embedded_ref is not None:draft['input']['templateRef']=embedded_ref
+    files={'source.txt':sha(instance/'source.txt')}
+    request={'runtime':'motiongit','draft':draft,'template_ref':ref,'render_id':'studio-1','instance':'motiongit-final','files':files,'binding_sha256':m.digest(files)}
+    monkeypatch.setattr(m,'verify_ref',lambda value:None)
+    monkeypatch.setattr(m,'installed',lambda style:{'display_name':'科技风'})
+    observed=[]
+    def finish(studio,bound,*args,**kwargs):
+        observed.append(bound)
+        studio_presentation.verify(bound,{'id':'adu:motiongit-626-v0-2-29-open-beta:portrait','adapter':'motiongit','template_ref':ref,'variant':'native','engine_workflow':'kinetic'})
+        return {'status':'completed'}
+    monkeypatch.setattr(m,'finish',finish)
+    result=m.run_job(project,request)
+    if embedded_ref is not None and embedded_ref!=ref:
+        assert result['status']=='failed' and result['error']['code']=='template_mismatch'
+        assert observed==[]
+    else:
+        assert result['status']=='completed'
+        assert observed[0]['input']['templateRef']==ref
+    assert draft['input'].get('templateRef')==embedded_ref  # Never rewrite a stored request.
+
+
 def test_template_material_never_inherits_a_different_package_profile():
     caps={'styleProfiles':{'defaultProfile':'paper','profiles':{'paper':{'description':'暖纸绿色墨水'}}}}
     assert m.component_profile({},caps)=='paper'
