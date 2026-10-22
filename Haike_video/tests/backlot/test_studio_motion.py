@@ -84,9 +84,34 @@ def test_subtitles_preserve_half_open_clock_and_reject_overlap(setup,tmp_path):
     cues=[{'start':0,'end':1.4,'text':'本期','en':'This episode'},{'start':1.4,'end':391/60,'text':'完整口播','en':''}]
     m.brief(s,{**d,'input':{**d['input'],'captions':cues}},tmp_path)
     assert 'This episode' in (tmp_path/'subs.js').read_text()
+    rows=json.loads((tmp_path/'subs.js').read_text().removeprefix('const SUBS=').strip().removesuffix(';'))
+    assert all(row['sp']==[] for row in rows)  # No fabricated word/karaoke timings.
     cues[1]['start']=1.3
     with pytest.raises(WorkError,match='不能重叠'):
         m.brief(s,{**d,'input':{**d['input'],'captions':cues}},tmp_path)
+
+
+def test_frozen_subtitles_cannot_change_without_a_new_plan(setup):
+    s,d,_=setup;p=m.plan(s,d)
+    subtitles=s.projects_root/d['id']/'assets/motion-plans'/p['id']/'subs.js'
+    subtitles.write_text('const SUBS=[]; // modified after review')
+    with pytest.raises(WorkError,match='字幕已改变'):
+        m.freeze(s,d,p['id'],True)
+
+
+def test_paper_delivery_restores_one_shared_caption_layer_without_editing_author_files(tmp_path):
+    style=tmp_path/'style.css';style.write_text('#ov{display:none}')
+    html='<html><head><link href="style.css"></head><body><div id="ov"></div><script src="subtitles.js"></script></body></html>'
+    (tmp_path/'index.html').write_text(html)
+    result=m.paper_caption_delivery(tmp_path)
+    assert result['clock']=='final-output' and style.read_text()=='#ov{display:none}'
+    assert 'haike-caption-delivery.css' in (tmp_path/'index.html').read_text()
+    assert 'display:block!important' in (tmp_path/'haike-caption-delivery.css').read_text()
+    assert 'data-pb-node="subs"' in (tmp_path/'haike-caption-delivery.css').read_text()
+    m.paper_caption_delivery(tmp_path)
+    assert (tmp_path/'index.html').read_text().count('haike-caption-delivery.css')==1
+    (tmp_path/'index.html').write_text('<html><head></head></html>')
+    with pytest.raises(WorkError,match='统一字幕挂载'):m.paper_caption_delivery(tmp_path)
 
 
 def bundle(entries):

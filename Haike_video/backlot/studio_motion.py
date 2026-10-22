@@ -78,7 +78,7 @@ def capabilities(layout):
     return json.loads(command("auto-capabilities", "--layout", layout).stdout)
 
 
-def library(layout="portrait"):
+def library(layout="portrait", editor=False):
     root = runtime()
     catalog = json.loads((root / "references/template-catalog.json").read_text(encoding="utf-8"))
     caps = capabilities(layout)
@@ -88,18 +88,29 @@ def library(layout="portrait"):
             group = [g for g in caps["groups"] if g["style"] == item["id"] and layout in g["layouts"]]
             preview = item.get("portraitPreview", item.get("preview")) if layout == "portrait" else item.get("preview")
             demo = item.get("portraitDemo", item.get("demo")) if layout == "portrait" else item.get("demo")
-            styles.append({"id": item["id"], "name": item["title"], "family": family["title"], "family_id": family["id"],
+            from backlot.studio_template_names import name, label
+            styles.append({"id": item["id"], "name": name(item['id'], item['title']), "display_name": label(item['id'], item['title']), "aliases": [item['title']], "family": family["title"], "family_id": family["id"],
                            "supported": bool(group), "selection": group[0]["selection"] if group else None,
                            "status": group[0]["status"] if group else "unsupported", "scope": item.get("scope", "完整镜头组"),
                            "preview": "/api/studio/motion/media/" + preview if preview else None,
                            "demo": "/api/studio/motion/media/" + demo if demo else None,
                            "preview_basis": item.get("previewBasis", "上游风格示例，不能作为本期人物或证据素材"),
                            "requirements": item.get("requires", []), "groups": group})
+            if group:
+                from backlot.studio_template_registry import legacy_ref
+                styles[-1]['template_ref'] = legacy_ref(item['id'], layout, caps['groups'])
+                styles[-1]['runtime_label'] = 'ADu 原生镜头组'
+                styles[-1]['execution_modes'] = ['native']
+                if item['id']=='03-A' and layout=='portrait':
+                    styles[-1]['execution_modes'].append('components')
     from backlot.studio_motion_quick import groups as quick_groups
+    from backlot.studio_motiongit import library as motiongit_library
+    if not editor:styles.extend(motiongit_library(layout))
     styles.append({"id":"quick", "name":"轻量动画组合", "family":"基础动画", "family_id":"07", "supported":layout=="landscape",
                    "selection":"TPL", "status":"quick-start", "scope":"9个轻量组件；不代表完整工程的全部动作", "preview":"/api/studio/motion/media/assets/tutorials/templates.png",
                    "demo":None, "preview_basis":"上游9个基础动画组件说明图，不是完整工程样片", "requirements":["已有口播与原文","实际动作落点"], "groups":quick_groups(QUICK) if layout=="landscape" else []})
-    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout,
+    from backlot.studio_template_registry import pending_packages
+    return {"version": VERSION, "commit": COMMIT, "styles": styles, "layout": layout, "pending_packages": pending_packages(layout),
             "available_styles": caps["availableStyles"], "available_groups": caps["availableGroups"],
             "quick": [{"id": a, "name": b, "layout": "landscape", "status": "quick-start"} for a, b in QUICK],
             "tools": ["自动比较可用组", "内容与动作时钟检查", "当前分镜素材替换", "横竖屏排版", "准确字幕与双语字幕", "人脸构图", "背景音乐与动作音效", "工程与视频导出", "版本保留"],
@@ -287,10 +298,17 @@ def brief(studio, draft, directory):
             if at is not None and at != "": anchors[role] = {"at": number(at, "动作落点", 0, (end - cursor) / 60)}
         candidates=compatible_candidates(group,groups,slots) if value.get('selectionMode')=='compatible' and not group['id'].startswith('quick:') else {group['id']:{'slots':slots}}
         text_fields={f['id'] for candidate in candidates for f in groups[candidate]['fields'] if f['type'] in {'text','dynamicText','number'} and f['id'] in candidates[candidate]['slots']}
+        semantics = {"intent": group["intents"][0], "phases": group["phases"], "counts": {k: v["min"] for k,v in group["counts"].items()},
+                     "supportingRefs": {k:[ref] for k in text_fields}}
+        if value.get('nativeDirection'):
+            from backlot.studio_motion_director import compile_evidence
+            semantics, detail_units, _ = compile_evidence(segment['text'], group, segment.get('semantics'), identity[:16], text_cursor, slots)
+            units.pop()  # Native evidence partitions ownership into non-overlapping source spans.
+            units.extend(detail_units)
         timeline.append({"id": "segment-" + str(i+1), "text": segment["text"], "durationFrames": end-cursor,
-                         "intent": group["intents"][0], "phases": group["phases"], "counts": {k: v["min"] for k,v in group["counts"].items()},
-                         "anchors": anchors, "candidates": candidates, "ownershipRefs": [ref],
-                         "supportingRefs": {k:[ref] for k in text_fields}})
+                         **semantics,
+                         "anchors": anchors, "candidates": candidates, "ownershipRefs": semantics.get('ownershipRefs', [ref]),
+                         })
         cursor = end; text_cursor += len(segment["text"])
     if cursor != frames: raise WorkError("最后一个分镜须覆盖口播结尾，时间以实际视频为准")
     evidence = {"schema": "adu-content-evidence/1", "text": draft["text"], "textSha256": identity, "sourceKind": "user-confirmed-transcript", "units": units,
@@ -304,13 +322,23 @@ def brief(studio, draft, directory):
         if not a < b <= frames/60 + .02 or not isinstance(cue.get("text"), str) or not cue['text'].strip(): raise WorkError("字幕原文为空或时间超出实际口播")
         if a < previous_end: raise WorkError("字幕时间不能重叠或倒序，请按实际口播调整")
         if not isinstance(cue.get('en',''),str): raise WorkError('英文字幕需要文字格式')
-        normalized.append({"t0": a, "t1": min(b, frames/60), "zh": cue["text"], "en": cue.get('en','')})
+        # Paper-ball's original hidden caption helper reads sp even when the
+        # shared output-clock captions are visible. Empty means no karaoke;
+        # sentence cues must never be expanded into invented word timestamps.
+        normalized.append({"t0": a, "t1": min(b, frames/60), "zh": cue["text"], "en": cue.get('en',''), "sp": []})
         previous_end = b
     subtitle_file = directory / "subs.js"; subtitle_file.write_text("const SUBS=" + json.dumps(normalized, ensure_ascii=False) + ";\n", encoding="utf-8")
+    console=layout=='portrait' and value.get('style')=='04-A'
+    handoff=layout=='portrait' and any(s['group'].split(':')[-1].startswith('prepared-to-reuse') for s in segments)
     result = {"schema": "adu-auto-brief/1", "brand": "海客科技", "fps": 60, "layout": layout,
               "narrationDuration": frames/60, "music": music, "fontPolicy": "preferred", "segments": timeline, "contentEvidence": evidence,
               "stylePolicy": "coherent-first", "allowedStyles": sorted({id.split(':')[0] for s in timeline for id in s['candidates']}), "repairPolicy": {"mode": "off"},
-              "subtitlePreset": "standard", "subtitlePosition": {"bottomRatio": number(value.get("subtitleBottom", .18), "字幕底边", .05, .4), "leftRatio": .15, "rightRatio": .15}}
+              # Use the gaps around authored panels/footer labels. A wider
+              # single line avoids covering either neighboring element.
+              "subtitlePreset": "standard", "subtitlePosition": {
+                  "bottomRatio": number(value.get("subtitleBottom", .245 if console else .235 if handoff else .18), "字幕底边", .05, .4),
+                  "leftRatio": .08 if console or handoff else .15,
+                  "rightRatio": .08 if console or handoff else .15}}
     if value.get("texture"):
         result["grainTexture"] = str(studio.asset(value["texture"]["id"], draft["id"]))
     face = value.get("face") or {"mode": "auto"}
@@ -328,6 +356,9 @@ def brief(studio, draft, directory):
 
 
 def plan(studio, draft):
+    if draft.get('template_id')==TEMPLATE_ID and str(draft['input'].get('style','')).startswith('motiongit-'):
+        from backlot.studio_motiongit_editor import plan as editor_plan
+        return editor_plan(studio,draft)
     runtime()
     if draft["template_id"] != TEMPLATE_ID: raise WorkError("请选择动效口播")
     folder = (studio.projects_root / draft["id"] / "assets/motion-plans" / uuid4().hex).resolve()
@@ -342,34 +373,63 @@ def plan(studio, draft):
         command("auto-plan", folder / "brief.json", folder / "planning", pending=True, log=folder / "plan.log")
         saved = json.loads((folder / "planning/auto_plan.json").read_text(encoding="utf-8"))
     snapshot = {"id": folder.name, "revision": draft["revision"], "draft": draft, "video": str(video), "audio": str(audio) if audio else None,
-                "video_sha256": sha(video), "audio_sha256": sha(audio) if audio else None, "commit": COMMIT, "plan_sha256": sha(folder / "planning/auto_plan.json"), "human_review": "pending"}
+                "video_sha256": sha(video), "audio_sha256": sha(audio) if audio else None, "commit": COMMIT, "plan_sha256": sha(folder / "planning/auto_plan.json"),
+                "subtitles_sha256":sha(folder / 'subs.js'), "human_review": "pending"}
     atomic_private(folder / "snapshot.json", snapshot)
     return {"id": folder.name, "revision": draft["revision"], "report": saved["report"], "cost_micros": 0, "commit": COMMIT}
 
 
 def freeze(studio, draft, plan_id, confirmed):
+    if draft.get('template_id')==TEMPLATE_ID and str(draft['input'].get('style','')).startswith('motiongit-'):
+        from backlot.studio_motiongit_editor import freeze as editor_freeze
+        return editor_freeze(studio,draft,plan_id,confirmed)
     if confirmed is not True: raise WorkError("请先确认文案、素材和分镜含义")
     if not isinstance(plan_id, str) or not re.fullmatch(r"[a-f0-9]{32}", plan_id): raise WorkError("请先运行生成前检查")
     folder = studio.projects_root / draft["id"] / "assets/motion-plans" / plan_id
     if not (folder / "snapshot.json").is_file(): raise WorkError("检查计划不存在，请重新检查")
     snapshot = json.loads((folder / "snapshot.json").read_text())
     if snapshot["draft"] != draft or sha(folder / "planning/auto_plan.json") != snapshot["plan_sha256"]: raise WorkError("制作内容或计划已改变，请重新检查")
+    if snapshot.get('subtitles_sha256') and sha(folder / 'subs.js') != snapshot['subtitles_sha256']:
+        raise WorkError('冻结字幕已改变，请重新检查')
     saved = json.loads((folder / "planning/auto_plan.json").read_text())
     if not saved["report"]["ready"]: raise WorkError("分镜仍缺少绑定或受阻，请补齐后重新检查")
     if sha(Path(snapshot["video"])) != snapshot["video_sha256"] or (snapshot["audio"] and sha(Path(snapshot["audio"])) != snapshot["audio_sha256"]): raise WorkError("口播来源已改变，请重新检查")
     return {"draft": draft, "plan_id": plan_id, "plan_folder": str(folder), "snapshot": snapshot, "render_id": "studio-" + str(draft["revision"])}
 
 
-def run_motion(project_dir, request):
+def paper_caption_delivery(engineering):
+    """Expose the shared output-clock layer in a generated paper-ball project.
+
+    The frozen author stylesheet hides #ov; one native helper happens to show
+    captions, while its sibling's portrait reflow hides them. Keep all authored
+    files intact and use one explicit delivery overlay for either group.
+    """
+    engineering=Path(engineering);index=engineering/'index.html'
+    html=index.read_text(encoding='utf-8')
+    if 'subtitles.js' not in html or 'id="ov"' not in html or '</head>' not in html:
+        raise WorkError('纸面聚合缺少统一字幕挂载，原工程已保留')
+    name='haike-caption-delivery.css'
+    css=engineering/name
+    css.write_text('#stage > #ov{display:block!important;z-index:30}\n'
+                   '.pb-host [data-pb-node="subs"]{display:none!important}\n',encoding='utf-8')
+    link=f'<link rel="stylesheet" href="{name}">'
+    if link not in html:index.write_text(html.replace('</head>',link+'</head>'),encoding='utf-8')
+    return {'schema':'haike-caption-delivery/1','clock':'final-output','shared_layer':'#ov .native-subtitles',
+            'style_sha256':sha(css),'author_files':'unchanged','reason':'paper-ball legacy #ov display:none'}
+
+
+def run_motion(project_dir, request, *, on_progress=None):
     project_dir = Path(project_dir); studio = Studio(project_dir.parent)
     output = project_dir / "renders" / request["render_id"]
     output.mkdir(parents=True, exist_ok=True)
     try:
+        if on_progress: on_progress("核对冻结工程与原口播素材", 0, 5)
         # Freeze is authoritative; a newer editor draft does not change a queued render.
         checked = freeze(studio, request["draft"], request["plan_id"], True)
         if checked != request: raise WorkError("队列内容与冻结计划不一致，请重新提交")
         if (output / "motion-preview.mp4").is_file() and (output / "qa.json").is_file():
-            return {"status": "completed", "stage": "动效口播已合成，等待审核", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending"}}
+            from backlot.studio_motion_qa import cached_result
+            return {"status": "completed", "stage": "动效口播已合成，可播放和下载", "result": cached_result(output)}
         attempt = output / ("attempt-" + uuid4().hex[:10]); attempt.mkdir()
         folder = Path(request["plan_folder"]); video = Path(checked["snapshot"]["video"])
         if checked["snapshot"]["audio"]:
@@ -378,6 +438,7 @@ def run_motion(project_dir, request):
             args = [ffmpeg, "-v", "error", "-i", str(video), "-i", checked["snapshot"]["audio"], "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", str(aligned)]
             subprocess.run(args, check=True, capture_output=True, timeout=90); video = aligned
         engineering = attempt / "engineering"
+        if on_progress: on_progress("构建动效工程与准确字幕", 1, 5)
         saved=json.loads((folder / "planning/auto_plan.json").read_text())
         if saved['schema']=='haike-adu-quick-plan/1':
             from backlot.studio_motion_quick import build
@@ -388,14 +449,21 @@ def run_motion(project_dir, request):
             build(saved,video,engineering,folder/'subs.js',command,runtime)
         else:
             command("auto-build", folder / "planning/auto_plan.json", video, engineering, "--subs-js", folder / "subs.js", timeout=900, log=attempt / "build.log")
+        caption_delivery=paper_caption_delivery(engineering) if request['draft']['input'].get('style')=='02-B' else None
+        if on_progress: on_progress("生成并混合配乐与口播音轨", 2, 5)
         command("audio", engineering, timeout=600, log=attempt / "audio.log")
         command("mix", engineering, timeout=300, log=attempt / "mix.log")
         candidate = attempt / "motion-preview.mp4"
+        if on_progress: on_progress("渲染动效视频", 3, 5)
         command("render", engineering, candidate, "2", timeout=3600, log=attempt / "render.log")
+        if on_progress: on_progress("核验视频并打包可编辑工程", 4, 5)
         command("check", candidate, timeout=300, log=attempt / "check.log")
         info = media_probe(candidate); desired = json.loads((folder / "planning/auto_plan.json").read_text())["report"]["durationFrames"] / 60
         if not info["video"] or not info["audio"] or abs(info["duration"] - desired) > .05: raise WorkError("导出视频与口播时钟不一致，保留工程待处理")
         command("preview", engineering, candidate, attempt / "delivery-preview", timeout=90, log=attempt / "preview.log")
+        from backlot.studio_audio_delivery import normalize
+        audio_delivery=normalize(candidate,output / 'motion-preview.mp4')
+        info=media_probe(output / 'motion-preview.mp4')
         # A complete editable project: no private Key, queue database or supplier configuration.
         archive = output / "editable-project.zip"
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -405,11 +473,15 @@ def run_motion(project_dir, request):
                 z.write(runtime() / name, name)
             z.write(folder / "planning/auto_plan.json", "planning/auto_plan.json")
             z.write(folder / "brief.json", "planning/brief.json")
-        shutil.copy2(candidate, output / "motion-preview.mp4")
+            z.writestr('delivery-audio.json',json.dumps(audio_delivery,ensure_ascii=False,indent=2))
+        from backlot.studio_motion_qa import receipt
+        presentation = receipt(request['draft'], folder, output / 'motion-preview.mp4')
         atomic_private(output / "qa.json", {"engine": VERSION, "commit": COMMIT, "source": checked["snapshot"], "source_clock": "unmodified-narration", "output": info,
+                       "presentation": presentation,
                        "frames": round(desired*60), "caption_timing": "provided exact cues", "checks": ["upstream-plan-build-revalidation", "full-decode", "duration", "audio", "version-bound-preview"],
-                       "human_review": "pending", "engineering": str(engineering), "archive": str(archive), "no_paid_calls": True})
-        return {"status": "completed", "stage": "动效口播已合成，等待观看与审核", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending", "engineering_archive": str(archive)}}
+                       "audio_delivery":audio_delivery,"caption_delivery":caption_delivery,"human_review": "pending", "engineering": str(engineering), "archive": str(archive), "no_paid_calls": True})
+        if on_progress: on_progress("成片与工程核验完成，正在登记作品", 5, 5)
+        return {"status": "completed", "stage": "动效口播已合成，可播放和下载", "result": {"output_path": str(output / "motion-preview.mp4"), "qa_status": "pending", "engineering_archive": str(archive), **({'presentation':presentation} if presentation else {})}}
     except WorkError as exc:
         return {"status": "failed", "stage": str(exc), "error": {"message": str(exc), "type": "StudioMotion"}, "retryable": exc.code == "unavailable", "safe_resume_point": "studio_motion"}
     except Exception:

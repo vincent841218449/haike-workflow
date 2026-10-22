@@ -5,9 +5,10 @@ import io
 import json
 import math
 import wave
+from datetime import datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
 
-from . import adapters, commerce, providers
+from . import adapters, commerce, providers, voices
 from .auth import require_key
 from .domain import period_now
 from .store import Problem, audit, canonical, digest, later, now, owned, post, uid
@@ -71,6 +72,12 @@ def upload(store, user_id, kind, data):
 def clean_input(db, user_id, model, value, info=None):
     capability = (info or providers.MODELS[model])["capability"]
     value = dict(value)
+    if capability == "voice_clone":
+        return voices.clean_clone(db, user_id, value)
+    if capability == "image":
+        if set(value) != {"prompt"} or not isinstance(value.get("prompt"), str) or not 1 <= len(value["prompt"]) <= 4000:
+            raise Problem(422, "input_invalid", "插画接口仅接收1至4,000字的prompt，一次生成一张竖屏插画")
+        return value, {"input_tokens": len(value["prompt"].encode()) * 2 + 1024, "output_tokens": 32768}
     if capability == "chat":
         if set(value) - {"messages", "max_output_tokens"}:
             raise Problem(
@@ -85,6 +92,7 @@ def clean_input(db, user_id, model, value, info=None):
         ):
             raise Problem(422, "input_invalid", "对话参数不正确")
         images = 0
+        image_bytes = 0
         for message in messages:
             if (
                 not isinstance(message, dict)
@@ -95,7 +103,7 @@ def clean_input(db, user_id, model, value, info=None):
             content = message["content"]
             if isinstance(content, str):
                 continue
-            if not isinstance(content, list) or not 1 <= len(content) <= 10:
+            if not isinstance(content, list) or not 1 <= len(content) <= 32:
                 raise Problem(
                     422, "input_invalid", "支持文本，或 text/image_file 内容数组"
                 )
@@ -116,18 +124,19 @@ def clean_input(db, user_id, model, value, info=None):
                     raise Problem(
                         422, "input_invalid", "视觉消息需要当前账户上传的图片编号"
                     )
-                if not db.execute(
-                    "SELECT id FROM gateway_files WHERE id=? AND user_id=? AND kind='image'",
+                image = db.execute(
+                    "SELECT id,size FROM gateway_files WHERE id=? AND user_id=? AND kind='image'",
                     (part["file_id"], user_id),
-                ).fetchone():
+                ).fetchone()
+                if not image:
                     raise Problem(404, "file_missing", "图片不存在或不属于当前账户")
                 images += 1
-        if images > 4:
-            raise Problem(422, "input_invalid", "单次视觉调用最多 4 张图片")
+                image_bytes += image["size"]
+        if images > 12 or image_bytes > 6 * 1024 * 1024:
+            raise Problem(422, "input_invalid", "单次视觉调用最多12张代表帧、总计6MB")
         size = len(canonical(messages).encode())
-        if size > 60000:
-            raise Problem(422, "input_invalid", "对话文本过长")
-        # A conservative byte bound; settlement always uses the upstream token receipt.
+        # Bytes estimate the quote, not admissibility. Keep the full template/text;
+        # settlement always uses the upstream token receipt.
         return {"messages": messages, "max_output_tokens": maximum}, {
             "input_tokens": size * 2 + 1024 + images * 32768,
             "output_tokens": maximum,
@@ -136,7 +145,7 @@ def clean_input(db, user_id, model, value, info=None):
         text = value.get("text")
         maximum = 150 if model == "haike/tencent-tts" else 5000
         if (
-            set(value) != {"text"}
+            set(value) - ({"text", "voice_id"} if model in {"haike/cosyvoice", "haike/cosyvoice-system"} else {"text"})
             or not isinstance(text, str)
             or not text.strip()
             or len(text) > maximum
@@ -144,9 +153,17 @@ def clean_input(db, user_id, model, value, info=None):
             raise Problem(422, "input_invalid", f"请输入 1–{maximum} 个字符的配音文本")
         characters = (
             providers.bailian_tts_characters(text)
-            if model == "haike/cosyvoice"
+            if model in {"haike/cosyvoice", "haike/cosyvoice-system"}
             else len(text)
         )
+        if value.get("voice_id") is not None:
+            voice = voices.resolve(db, user_id, value["voice_id"], (info or providers.MODELS[model])["target_model"])
+            value["_voice"] = voice["provider_voice_id"]
+            value["_provider_scope"] = voice["provider_scope"]
+            if voice['provider_scope'] == 'official-bailian':
+                value.pop('_provider_scope', None)
+        elif model == 'haike/cosyvoice-system':
+            raise Problem(422, 'voice_required', '请选择阿里百炼系统音色')
         return value, {"characters": characters}
     if capability == "assets":
         if (
@@ -193,7 +210,24 @@ def create_quote(store, vault, user, model, inputs, project):
     if current["status"] != "available":
         raise Problem(409, "model_unavailable", "模型尚未开通或成本价格尚未确认")
     with store.write() as db:
+        if model == 'haike/cosyvoice-system':
+            voices.sync_system(db, vault)
         inputs, usage = clean_input(db, user["id"], model, inputs, info)
+        if info["provider"] == "bailian":
+            provider_scope = voices.scope(vault.load()["bailian"])
+            if inputs.get("_provider_scope") and inputs["_provider_scope"] != provider_scope:
+                raise Problem(409, "voice_provider_changed", "音色所属百炼配置已变化，请联系管理员核对")
+            if info["capability"] == "voice_clone":
+                if not getattr(vault, "public_origin", None):
+                    raise Problem(409, "voice_storage_unavailable", "克隆服务的录音读取地址尚未配置，请联系管理员")
+                inputs["_provider_scope"] = provider_scope
+            if model == 'haike/cosyvoice-system':
+                inputs['_provider_scope'] = provider_scope
+        if info.get("billing_mode") == "wallet_receipt":
+            config = vault.load()[info["provider"]]
+            limit = int(config["quote_cost_limit_micros"])
+            rate = int(config.get("quote_cost_per_audio_second_micros") or 0)
+            usage = {"supplier_micros": min(limit, rate * inputs["seconds"]) if rate else limit}
         price = providers.latest(db, model)
         _, amount = providers.calculate(model, json.loads(price["rule"]), usage, info)
         if amount > 10**12:
@@ -212,14 +246,20 @@ def create_quote(store, vault, user, model, inputs, project):
                     "base_url",
                     "region",
                     "text_model",
+                    "image_model",
                     "voice",
                     "workflow_id",
                     "workflow_profile",
+                    "billing_mode",
+                    "quote_cost_limit_micros",
+                    "quote_cost_per_audio_second_micros",
                 }
             },
         }
         if model not in providers.MODELS:
             snapshot["provider_config"]["text_model"] = info["target_model"]
+        if inputs.get("_voice"):
+            snapshot["provider_config"]["voice"] = inputs["_voice"]
         db.execute(
             "INSERT INTO gateway_quotes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
@@ -257,6 +297,28 @@ def quote_public(row):
     }
 
 
+def renew_quote(store, vault, user, quote_id):
+    """Extend only the acceptance clock, retaining the exact tariff/provider snapshot.
+
+    An accepted quote returns unchanged so callers recover the original intent.
+    Never clone a quote (quote_id is unique in jobs); never prolong beyond 24h.
+    """
+    with store.write() as db:
+        row = owned(db, "gateway_quotes", quote_id, user["id"])
+        if row["accepted_job_id"]:
+            return quote_public(row)
+        current = next((r for r in providers.catalogue(store, vault) if r["model"] == row["model"]), None)
+        if not current or current["status"] != "available":
+            raise Problem(409, "model_unavailable", "原模型尚未开通，不能续期")
+        deadline = datetime.fromisoformat(row["created_at"]) + timedelta(hours=24)
+        if datetime.fromisoformat(now()) >= deadline:
+            raise Problem(409, "quote_too_old", "原报价超过24小时，请重新确认制作费用，已完成产物保留")
+        expiry = min(datetime.fromisoformat(later(600)), deadline).isoformat(timespec="microseconds")
+        db.execute("UPDATE gateway_quotes SET expires_at=? WHERE id=?", (expiry, quote_id))
+        audit(db, user["id"], "renew_gateway_quote", quote_id)
+        return quote_public(db.execute("SELECT * FROM gateway_quotes WHERE id=?", (quote_id,)).fetchone())
+
+
 def billing_detail(snapshot, usage, job, admin=False):
     """Derive auditable line items from the immutable tariff, never today's price."""
     rule = snapshot["rule"]
@@ -281,7 +343,7 @@ def billing_detail(snapshot, usage, job, admin=False):
             "amount_micros": str(amount) if amount is not None else None,
         }
         if admin:
-            line["unit_cost_micros"] = rule["costs"][meter]
+            line["unit_cost_micros"] = None if providers.sponsored.enabled(rule) else rule["costs"][meter]
         lines.append(line)
         if subtotal is not None:
             exact_total += subtotal
@@ -295,6 +357,7 @@ def billing_detail(snapshot, usage, job, admin=False):
         else 0
     )
     return {
+        "billing_policy": "sponsored" if providers.sponsored.enabled(rule) else "markup",
         "multiplier": rule["multiplier"],
         "lines": lines,
         "fee_micros": rule["fee_micros"],
@@ -351,11 +414,11 @@ def public_job(db, job, admin=False):
         "charged_micros": str(job["charge"]),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
-        "upstream_id": job["upstream_id"],
+        "upstream_id": None if info["capability"] == "voice_clone" and not admin else job["upstream_id"],
         "result": json.loads(job["result_json"]) if job["result_json"] else None,
         "error": job["error"],
         "simulation": False,
-        "cost_status": "estimated",
+        "cost_status": "unknown" if providers.sponsored.enabled(snapshot["rule"]) else "receipt_confirmed" if job["status"] == "succeeded" and info.get("billing_mode") == "wallet_receipt" else "estimated",
         "media_artifact_available": bool(job["result_json"])
         and info["capability"] in {"tts", "avatar"},
     }
@@ -475,6 +538,11 @@ def accept(store, vault, user, quote_id, maximum, intent, idem):
         current = vault.models().get(quote["model"], {})
         if not config.get("enabled", False) or not current.get("enabled", True):
             raise Problem(409, "provider_disabled", "供应商已暂停调用")
+        inputs = json.loads(quote["input_json"])
+        if inputs.get("voice_id"):
+            voices.resolve(db, user["id"], inputs["voice_id"], info["target_model"], voices.scope(config))
+        if inputs.get("_provider_scope") and inputs["_provider_scope"] != voices.scope(config):
+            raise Problem(409, "voice_provider_changed", "音色所属百炼配置已变化，请重新核对")
         hold = quote["amount"]
         if maximum < hold:
             raise Problem(409, "maximum_low", "费用上限低于本次报价")
@@ -530,9 +598,12 @@ def accept(store, vault, user, quote_id, maximum, intent, idem):
                 now(),
             ),
         )
+        if providers.sponsored.enabled(snapshot["rule"]):
+            providers.sponsored.record(db, user["id"], job_id)
         db.execute(
             "UPDATE gateway_quotes SET accepted_job_id=? WHERE id=?", (job_id, quote_id)
         )
+        voices.bind_preview(db, user["id"], quote, job_id)
         db.execute(
             "INSERT INTO idempotency VALUES(?,?,?,?,?)",
             (user["id"], "job", idem, body_hash, job_id),
@@ -551,6 +622,8 @@ def finish(db, job, response):
     info = snapshot.get("model_info") or providers.MODELS[quote["model"]]
     usage = response.get("usage", {})
     failed = response.get("failed", False) or response.get("cancelled", False)
+    if info["capability"] == "voice_clone" and not failed:
+        voices.register_clone(db, job, quote, response)
     if not failed and set(usage) != set(info["meters"]):
         raise Problem(409, "receipt_incomplete", "供应商用量回执不完整，等待核对")
     cost, charge = (
@@ -649,6 +722,10 @@ def execute_one(store, adapter):
             )
 
     try:
+        if inputs["_model_info"]["capability"] == "voice_clone":
+            inputs["_clone_prefix"] = voices.clone_prefix(job["id"])
+            if not job["upstream_id"] and isinstance(adapter, adapters.Adapter):
+                inputs["_reference_url"] = voices.ticket(store, inputs["audio_file"], job["user_id"], getattr(adapter.vault, "public_origin", None))
         response = adapter.execute(model, inputs, checkpoint, job["upstream_id"])
         with store.write() as db:
             current = db.execute(

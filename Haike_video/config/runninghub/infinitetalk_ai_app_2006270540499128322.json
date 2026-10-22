@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "profile": "infinitetalk_stable_0527_ai_app_v1",
+  "app_id": "2006270540499128322",
+  "name": "Infinitetalk数字人动态稳定版-0527",
+  "base_url": "https://www.runninghub.cn",
+  "submit_path": "/openapi/v2/run/ai-app/2006270540499128322",
+  "query_path": "/openapi/v2/query",
+  "instance_type": "plus",
+  "long_edge": 1280,
+  "fps": 25,
+  "max_segment_frames": 1125,
+  "prompt": "人物在接受采访，身体保持静止，只有嘴部在讲话",
+  "shake": "0",
+  "zoom": "1",
+  "nodes": {"image": ["284", "image"], "long_edge": ["312", "value"], "audio": ["125", "audio"], "prompt": ["314", "prompt"], "shake": ["369", "value"], "zoom": ["370", "value"]},
+  "billing": "actual_provider_usage",
+  "official_docs": "https://www.runninghub.cn/call-api/api-detail/2006270540499128322?apiType=4",
+  "verified_docs_date": "2026-10-16",
+  "duration_note": "官方建议每段不超过50秒；本项目自动切成至多45秒并使用完整原配音拼接。"
+}

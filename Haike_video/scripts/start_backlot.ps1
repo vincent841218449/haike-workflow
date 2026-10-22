@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateRange(1024, 65535)]
-    [int]$Port = 14754,
+    [ValidateSet(4188)]
+    [int]$Port = 4188,
     [switch]$NoBrowser,
     [switch]$Restart,
     [switch]$SkipLocalTts
@@ -149,20 +149,7 @@ try {
         Write-Host '项目虚拟环境的原 Python 不可用，已使用验证通过的 Python 与现有依赖。' -ForegroundColor Yellow
     }
     if (-not (Test-BacklotHealth -BaseUrl $workbenchUrl) -and -not (Test-LocalPortBindable -TargetPort $Port)) {
-        if ($Restart) { throw "端口 $Port 无法绑定，未停止任何程序；请换一个端口。" }
-        $originalPort = $Port
-        $chosen = $false
-        foreach ($candidatePort in 14754..14854) {
-            $candidateUrl = "http://127.0.0.1:$candidatePort/"
-            if ((Test-BacklotHealth -BaseUrl $candidateUrl) -or (Test-LocalPortBindable -TargetPort $candidatePort)) {
-                $Port = $candidatePort
-                $workbenchUrl = $candidateUrl
-                $chosen = $true
-                break
-            }
-        }
-        if (-not $chosen) { throw '没有可用的工作台端口，请检查本机端口占用。' }
-        Write-Host "端口 $originalPort 被占用或受系统限制，改用 $Port。" -ForegroundColor Yellow
+        throw '工作台入口固定为4188。该端口已被其他程序占用，请释放后重试；未启动其他端口。'
     }
     $env:BACKLOT_PORT = "$Port"
     $ttsStarter = Join-Path $projectRoot 'scripts\start_local_tts.ps1'

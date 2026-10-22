@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import ssl
 import sys
 import threading
 from contextlib import contextmanager, nullcontext
@@ -14,6 +15,15 @@ from uuid import uuid4
 
 from backlot.work_catalog import WorkError, WorkCatalog
 _CALENDAR_LOCK = threading.RLock()
+
+
+def gateway_connection_message(error, fallback):
+    reason = getattr(error, "reason", error)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        issue = "已过期" if getattr(reason, "verify_code", None) == 10 else "校验失败"
+        return f"现有API服务的HTTPS证书{issue}，暂时无法连接。文案和素材仍可保存；请管理员恢复证书后继续制作。"
+    return fallback
+
 
 TEMPLATES = [
     {"id": "avatar-motion-adu-v1", "kind": "avatar", "name": "ADu 动效口播", "ratio": "9:16 / 16:9", "width": 1080, "height": 1920,
@@ -70,6 +80,7 @@ class Studio:
             CREATE TABLE IF NOT EXISTS studio_assets(id TEXT PRIMARY KEY, draft_id TEXT, name TEXT, kind TEXT, path TEXT);
             CREATE TABLE IF NOT EXISTS studio_calendar(id TEXT PRIMARY KEY, revision INTEGER, data TEXT);
             CREATE TABLE IF NOT EXISTS studio_quotes(id TEXT PRIMARY KEY, data TEXT);
+            CREATE TABLE IF NOT EXISTS studio_voice_operations(id TEXT PRIMARY KEY, identity TEXT, data TEXT);
             """)
 
     @contextmanager
@@ -93,7 +104,9 @@ class Studio:
     def client(self, config=None):
         c = config or self.configuration()
         if not c.get("api_key"): raise WorkError("请先在API设置填写统一海客Key")
-        return sdk_type()(c["base_url"], c["api_key"], self.private / "haike-api/intents")
+        remote = sdk_type()(c["base_url"], c["api_key"], self.private / "haike-api/intents")
+        from backlot.studio_system_voice import SystemVoiceClient
+        return SystemVoiceClient(self, remote)
 
     def connect(self, data):
         previous = self.configuration()
@@ -109,7 +122,8 @@ class Studio:
         except Exception:
             raise WorkError("连接失败：请核对网关地址、Key和服务状态；原配置保持不变") from None
         c["checked_at"] = timestamp(); atomic_private(self.config_path, c)
-        return {"settings": self.settings(), "summary": summary, "capabilities": capabilities}
+        from backlot.studio_asr import status
+        return {"settings": self.settings(), "summary": summary, "capabilities": capabilities, "local_asr": status(self)}
 
     def template(self, template_id):
         item = next((t for t in TEMPLATES if t["id"] == template_id), None)
@@ -139,10 +153,18 @@ class Studio:
                      "template_version": template["version"], "title": title, "text": text, "layout": layout,
                      "input": data.get("input") or {}, "updated_at": timestamp(), "status": "draft"}
             if not isinstance(value["input"], dict): raise WorkError("制作内容格式无效")
-            allowed = {"headlines", "details", "conclusion", "materials", "bgm"} if template["kind"] == "graphic" else {"soundMode", "voiceId", "rate", "subtitles", "audio", "portrait"}
+            allowed = {"headlines", "details", "conclusion", "materials", "bgm"} if template["kind"] == "graphic" else {"soundMode", "voiceId", "toneId", "rate", "subtitles", "audio", "portrait", "ai", "motion", "templatePolicy", "templateRef", "templateExecution", "music"}
+            if value["input"].get("templatePolicy", "auto") not in ("auto", "strict"): raise WorkError("模板策略无效")
+            if value["input"].get("templateExecution", "native") not in ("native", "components", "auto"):
+                raise WorkError("请选择原生镜头组或明确选择组件编排")
+            if value['input'].get('motion'):
+                value['input'].setdefault('templateExecution', 'native')
             if template["id"] == "avatar-motion-adu-v1":
-                allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode"}
+                allowed = {"source", "motionLayout", "style", "segments", "music", "captions", "face", "subtitleBottom", "texture", "selectionMode", "profile", "overlays"}
             if set(value["input"]) - allowed: raise WorkError("制作内容包含不支持的字段；API Key只能保存在API设置")
+            if template["kind"] == "avatar" and value["input"].get("soundMode") == "voice" and "rate" in value["input"]:
+                from backlot.studio_speech_rate import speech_rate
+                speech_rate(value["input"]["rate"])
             if len(json.dumps(value)) > (300000 if template["id"] == "avatar-motion-adu-v1" else 60000): raise WorkError("制作内容过大")
             db.execute("INSERT INTO studio_drafts VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,data=excluded.data",
                        (draft_id, revision, json.dumps(value, ensure_ascii=False)))
@@ -202,7 +224,7 @@ class Studio:
     def save_calendar(self, data, catalog=None, transaction=None):
         catalog = catalog or WorkCatalog(self.projects_root)
         work = catalog.get(str(data.get("work_id") or ""))
-        if not work.get("final_version_id"): raise WorkError("请先在作品中确认最终成片，再设置排期")
+        if not work.get("final_version_id"): raise WorkError("请先在创作任务中确认最终成片，再设置排期")
         try:
             when = datetime.fromisoformat(str(data.get("scheduled_at") or "").replace("Z", "+00:00"))
             if when.tzinfo is None or when <= datetime.now(timezone.utc): raise ValueError()

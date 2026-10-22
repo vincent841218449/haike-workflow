@@ -1359,7 +1359,7 @@ def create_app() -> FastAPI:
     async def redirect_removed_entries(request, call_next):
         destination = REMOVED_ENTRIES.get(request.url.path.rstrip("/"))
         if request.method == "GET" and destination:
-            return RedirectResponse(destination, status_code=307)
+            return RedirectResponse(destination + ('?' + request.url.query if request.url.query else ''), status_code=307)
         return await call_next(request)
     app.include_router(work_router)
     from backlot.studio_api import router as studio_router
@@ -1547,7 +1547,7 @@ def create_app() -> FastAPI:
                         str(job["parent_job_id"]),
                         {},
                     )
-                elif job["kind"] not in {"published_remix", "material_commentary"}:
+                elif job["kind"] not in {"published_remix", "material_commentary", "studio_avatar", "studio_graphic", "studio_motion"}:
                     raise ProductionQueueConflict("全片预览失败请重新建立任务，不能复用旧任务编号")
             operation = getattr(queue, action)
             result = await asyncio.to_thread(operation, job_id)

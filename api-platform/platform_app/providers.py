@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 
+from . import sponsored
 from .store import Problem, audit, canonical, now, uid
 
 
@@ -64,7 +65,7 @@ MODELS = {
     "haike/text": {
         "name": "文本与视觉 · GPT",
         "provider": "openai",
-        "target_model": "gpt-5.6-terra",
+        "target_model": "gpt-6-luna",
         "capability": "chat",
         "meters": {"input_tokens": 1000000, "output_tokens": 1000000},
     },
@@ -74,6 +75,20 @@ MODELS = {
         "target_model": "cosyvoice-v3.5-flash",
         "capability": "tts",
         "meters": {"characters": 10000},
+    },
+    "haike/cosyvoice-system": {
+        "name": "阿里百炼系统音色",
+        "provider": "bailian",
+        "target_model": "cosyvoice-v3-flash",
+        "capability": "tts",
+        "meters": {"characters": 10000},
+    },
+    "haike/voice-clone": {
+        "name": "CosyVoice 音色克隆",
+        "provider": "bailian",
+        "target_model": "cosyvoice-v3.5-flash",
+        "capability": "voice_clone",
+        "meters": {"requests": 1},
     },
     "haike/tencent-tts": {
         "name": "腾讯精品配音",
@@ -103,8 +118,16 @@ MODELS = {
         "capability": "assets",
         "meters": {"requests": 1},
     },
+    "haike/illustration": {
+        "name": "AI 插画 · GPT Image",
+        "provider": "openai",
+        "target_model": "gpt-image-2",
+        "capability": "image",
+        "meters": {"input_tokens": 1000000, "output_tokens": 1000000},
+    },
 }
 UNITS = {
+    "supplier_micros": "采购微元",
     "characters": "字符",
     "seconds": "秒",
     "input_tokens": "输入 Token",
@@ -113,6 +136,14 @@ UNITS = {
     "requests": "次",
 }
 SOURCES = {
+    "haike/cosyvoice-system": (
+        "1000000",
+        "https://help.aliyun.com/zh/model-studio/cosyvoice-v3-flash",
+    ),
+    "haike/voice-clone": (
+        "0",
+        "https://help.aliyun.com/zh/model-studio/voice-cloning-user-guide",
+    ),
     "haike/cosyvoice": (
         "800000",
         "https://help.aliyun.com/zh/model-studio/cosyvoice-v3-5-flash",
@@ -191,7 +222,12 @@ class Vault:
         }
 
     def models(self):
-        return {**MODELS, **self.load().get("_models", {})}
+        data = self.load()
+        models = {**MODELS, **data.get("_models", {})}
+        if data.get("runninghub", {}).get("billing_mode") == "wallet_receipt":
+            models["haike/avatar"] = {**MODELS["haike/avatar"], "meters": {"supplier_micros": 1000000},
+                                      "billing_mode": "wallet_receipt"}
+        return models
 
     def add_channel(self, channel_id, name, base_url, api_key):
         if not re.fullmatch(r"channel/[a-z0-9][a-z0-9-]{0,39}", channel_id):
@@ -252,8 +288,9 @@ class Vault:
         allowed = (
             (set(definitions[provider]) - {"secrets"})
             | set(definitions[provider]["secrets"])
-            | {"voice", "enabled", "text_model", "workflow_profile"}
+            | {"voice", "enabled", "text_model", "image_model", "workflow_profile"}
         )
+        if provider == "runninghub": allowed |= {"billing_mode", "quote_cost_limit_micros", "quote_cost_per_audio_second_micros"}
         if set(config) - allowed or any(
             type(v) is not bool if k == "enabled" else not isinstance(v, str)
             for k, v in config.items()
@@ -261,6 +298,13 @@ class Vault:
             raise Problem(422, "config_invalid", "配置字段不正确")
         if "base_url" in config:
             self.validate_url(config["base_url"])
+        if provider == "runninghub":
+            if config.get("billing_mode", "task") not in {"task", "wallet_receipt"}:
+                raise Problem(422, "config_invalid", "数字人计价方式无效")
+            if config.get("quote_cost_limit_micros") and not re.fullmatch(r"[1-9][0-9]{0,8}", config["quote_cost_limit_micros"]):
+                raise Problem(422, "config_invalid", "请填写任务报价的采购成本上限（整数微元，低于100元）")
+            if config.get("quote_cost_per_audio_second_micros") and not re.fullmatch(r"[1-9][0-9]{0,8}", config["quote_cost_per_audio_second_micros"]):
+                raise Problem(422, "config_invalid", "请填写按音频秒数预估的采购微元；实际结算仍以钱包回执为准")
         data = self.load()
         current = {
             a: b
@@ -333,7 +377,7 @@ def seed(store):
 
 def normalize(model, rule, info=None):
     info = info or MODELS.get(model)
-    if not info or set(rule) != {
+    if not info or set(rule) - {"billing_policy"} != {
         "costs",
         "multiplier",
         "fee_micros",
@@ -351,6 +395,15 @@ def normalize(model, rule, info=None):
         ):
             raise ValueError()
         if set(rule["costs"]) != set(info["meters"]) or rule["fee_micros"] != "0":
+            raise ValueError()
+        if info.get("billing_mode") == "wallet_receipt" and rule["costs"] != {"supplier_micros": "1000000"}:
+            raise ValueError()
+        if "billing_policy" in rule and not (
+            sponsored.enabled(rule) and info["capability"] == "chat"
+            and all(value == "0" for value in rule["costs"].values())
+        ):
+            raise ValueError()
+        if info["capability"] == "chat" and all(Decimal(value) == 0 for value in rule["costs"].values()) and not sponsored.enabled(rule):
             raise ValueError()
         for value in [*rule["costs"].values(), rule["fee_micros"]]:
             if (
@@ -384,6 +437,8 @@ def calculate(model, rule, usage, info=None):
         if type(value) is not int or not 0 <= value <= 10**10:
             raise Problem(422, "usage_invalid", "用量回执不正确")
         cost += Decimal(rule["costs"][meter]) * value / included
+    if sponsored.enabled(rule):
+        return None, 0  # Customer charge known; procurement price remains unknown.
     sale = cost * Decimal(rule["multiplier"]) + int(rule["fee_micros"])
     return int(cost.to_integral_value(rounding=ROUND_CEILING)), int(
         sale.to_integral_value(rounding=ROUND_CEILING)
@@ -396,6 +451,8 @@ def price_public(model, row, info=None):
     meters = info["meters"]
     primary = next(iter(meters))
     return {
+        "billing_policy": "sponsored" if rule and sponsored.enabled(rule) else "markup",
+        "trial_limits": {"user_daily": sponsored.USER_DAILY, "platform_daily": sponsored.GLOBAL_DAILY} if rule and sponsored.enabled(rule) else None,
         "version": row["version"] if row else 0,
         "unit": UNITS[primary],
         "included_units": meters[primary],
@@ -442,12 +499,16 @@ def catalogue(store, vault, admin=False):
         for model, info in vault.models().items():
             row = latest(db, model)
             provider = config.get(info["provider"], {})
+            # A changed meter needs a new tariff. Historical quotes keep their snapshot.
+            if row and set(json.loads(row["rule"])["costs"]) != set(info["meters"]): row = None
             configured = all(
                 provider.get(k)
                 for k in vault.definitions(config)[info["provider"]]["secrets"]
             )
             if model == "haike/cosyvoice":
                 configured = configured and bool(provider.get("voice"))
+            if info.get("billing_mode") == "wallet_receipt":
+                configured = configured and bool(re.fullmatch(r"[1-9][0-9]{0,8}", provider.get("quote_cost_limit_micros", "")))
             status = (
                 "available"
                 if row
@@ -463,7 +524,7 @@ def catalogue(store, vault, admin=False):
                 "model": model,
                 **price_public(model, row, info),
                 "status": status,
-                "description": "按公开售价结算；结果未知时冻结额度并等待核对",
+                "description": "平台赞助试用，用户收费为零，记录 Token；采购成本待核对，每账户/平台每日各限50次" if row and sponsored.enabled(json.loads(row["rule"])) else "按公开售价结算；结果未知时冻结额度并等待核对",
                 "simulation": False,
                 "credential_configured": bool(configured),
                 "media_artifact_available": info["capability"] in {"tts", "avatar"},

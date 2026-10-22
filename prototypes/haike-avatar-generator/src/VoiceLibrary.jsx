@@ -1,0 +1,216 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight, AudioLines, Check, CheckCircle2, Clock3, Headphones, Mic2, Pause, Pencil, Play, Plus, RefreshCw, Search, Upload } from 'lucide-react';
+import { api } from './studio-api.js';
+import { Button, Dialog, EmptyState, Field, Heading, Notice } from './ui.jsx';
+import { auditionPresentation, canSubmitFreeClone, filterVoices, operationState, referencePresentation, voiceLabel } from './voice-model.js';
+import './voices.css';
+import {SpeechRateControl} from './SpeechRateControl.jsx';
+import {applyAuditionRate, speechRate} from './speech-rate.js';
+
+const money = value => `¥${(Number(value || 0) / 1000000).toFixed(6).replace(/0+$/, '').replace(/\.$/, '.00')}`;
+const activeStates = new Set(['queued', 'running', 'submitting', 'polling', 'accepted']);
+let activePlayer = null;
+
+export function useVoiceLibrary(enabled = true) {
+  const [data, setData] = useState(null), [operations, setOperations] = useState([]);
+  const [error, setError] = useState(''), [loading, setLoading] = useState(true);
+  const ticket = useRef(0);
+  const reload = useCallback(async () => {
+    const current = ++ticket.current;
+    try {
+      const jobs = await api('/api/studio/voice-operations');
+      const library = await api('/api/studio/voices');
+      if (current !== ticket.current) return;
+      setData(library); setOperations(jobs.items); setError('');
+    } catch (e) {
+      if (current === ticket.current) setError(e.message);
+    } finally {
+      if (current === ticket.current) setLoading(false);
+    }
+  }, []);
+  useEffect(() => { if (enabled) reload(); return () => { ticket.current++; }; }, [reload, enabled]);
+  useEffect(() => {
+    if (!enabled || !operations.some(item => activeStates.has(item.job?.status) || item.job?.retryable)) return;
+    const timer = setInterval(reload, 3000);
+    return () => clearInterval(timer);
+  }, [operations, reload, enabled]);
+  return { data, operations, loading, error, reload };
+}
+
+function CloneForm({ ready, busy, onNext, onCancel, error, initialData }) {
+  const [name, setName] = useState(initialData?.name || ''), [language, setLanguage] = useState(initialData?.language || 'zh'), [tag, setTag] = useState(initialData?.tag || '');
+  const [file, setFile] = useState(initialData?.file || null), [url, setUrl] = useState(''), [consent, setConsent] = useState(initialData?.consent || false);
+  const [sample, setSample] = useState(initialData?.sample || null), [uploading, setUploading] = useState(false), [localError, setLocalError] = useState('');
+  const input = useRef(null), fileTicket = useRef(0);
+  const prepared = referencePresentation(sample), referenceSrc = sample?.reference_url || url;
+  useEffect(() => {
+    if (!file) { setUrl(''); return; }
+    const value = URL.createObjectURL(file); setUrl(value);
+    return () => URL.revokeObjectURL(value);
+  }, [file]);
+  async function choose(event) {
+    const selected = event.target.files?.[0]; event.target.value = '';
+    if (!selected) return;
+    const current = ++fileTicket.current;
+    setLocalError(''); setSample(null); setFile(null);
+    if (!/\.(wav|mp3|m4a)$/i.test(selected.name) || selected.size > 10 * 1024 * 1024) {
+      setLocalError('请选择10MB以内的WAV、MP3或M4A录音。'); return;
+    }
+    setFile(selected); setUploading(true);
+    try {
+      const response = await fetch(`/api/studio/voices/samples?filename=${encodeURIComponent(selected.name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: selected });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.detail || '录音上传失败，请重试。');
+      if (current === fileTicket.current) setSample(value);
+    } catch (e) { if (current === fileTicket.current) setLocalError(e.message); }
+    finally { if (current === fileTicket.current) setUploading(false); }
+  }
+  return <form className="voice-clone-form" onSubmit={e => { e.preventDefault(); if (!ready || !name.trim() || !sample || !consent || uploading || busy) return; onNext({ name: name.trim(), sample_id: sample.id, language, tags: tag.trim() ? [tag.trim()] : [], consent }, { name, language, tag, file, sample, consent }); }}>
+    <div className="voice-clone-intro"><span className="voice-mark"><Mic2 size={25}/></span><div><h3>把你的声音，变成可反复使用的音色</h3><p>创建专属音色 · 完成后仅保存在你的个人库</p></div></div>
+    <div className="voice-record-guide"><strong>上传清晰的单人朗读，长录音也可以</strong><p>推荐10–20秒，自然语速、无背景音乐。支持5秒–10分钟的WAV、MP3、M4A，最大10MB；超过60秒自动选取20秒片段。</p><blockquote>你好，欢迎来到我的频道。今天想和你分享一个新的想法，希望我的声音能让每一次表达，都更加自然、清晰、有温度。</blockquote></div>
+    <Field label="音色名称"><input autoFocus required maxLength={48} value={name} onChange={e => setName(e.target.value)} placeholder="例如：我的日常口播" disabled={busy}/></Field>
+    <div className="voice-form-row"><Field label="录音语言"><select value={language} onChange={e => setLanguage(e.target.value)} disabled={busy}><option value="zh">普通话</option><option value="yue">粤语</option><option value="en">英语</option></select></Field><Field label="用途标签（可选）"><input maxLength={12} value={tag} onChange={e => setTag(e.target.value)} placeholder="例如：品牌解说" disabled={busy}/></Field></div>
+    <div className={`voice-upload ${sample ? 'ready' : ''}`}><Upload size={23}/><div><strong>{file?.name || '上传参考录音'}</strong><small>{uploading ? '正在本地检查录音并准备片段…' : sample ? prepared.summary : '点击开始克隆后，才提交录音用于创建音色'}</small></div><Button type="button" disabled={busy || uploading} loading={uploading} onClick={() => input.current.click()}>{file ? '更换录音' : '选择文件'}</Button></div>
+    <input hidden ref={input} type="file" accept=".wav,.mp3,.m4a" onChange={choose} aria-label="克隆参考录音"/>
+    <Notice message={prepared.notice}/>
+    {referenceSrc && <div className="voice-reference"><span>{prepared.label}</span><audio key={referenceSrc} controls preload="metadata" src={referenceSrc}/></div>}
+    <label className="checkbox-row voice-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy}/>我拥有此声音素材的使用授权，同意将录音提交阿里百炼用于音色克隆。</label>
+    <Notice message={localError || error} error/>
+    <p className="helper">克隆和固定样例试听免费，完成后即可选用。视频配音费用在制作时确认。</p>
+    <div className="voice-form-actions"><Button type="button" onClick={onCancel} disabled={busy}>返回音色库</Button><Button type="submit" variant="primary" loading={busy} disabled={!ready || !name.trim() || !sample || !consent || uploading || busy}>开始克隆<ArrowRight size={16}/></Button></div>
+  </form>;
+}
+
+function VoiceGrid({ items, selectedId, playingId, onPlay, onChoose, onRename, busy }) {
+  return <div className="voice-grid">{items.map(voice => <article className={`voice-card ${selectedId === voice.id ? 'selected' : ''}`} key={voice.id}>
+    <header><span className="voice-mark"><Mic2 size={23}/></span><div><h3>{voice.name}</h3><p>{voiceLabel(voice)} · {voice.scope === 'personal' ? '仅你可见' : '系统音色'}</p></div>{selectedId === voice.id && <span className="voice-selected"><Check size={15}/>已选择</span>}{voice.scope === 'personal' && <button className="voice-edit" title="重命名音色" aria-label={`重命名${voice.name}`} disabled={busy} onClick={() => onRename(voice)}><Pencil size={15}/></button>}</header>
+    <div className="voice-tags">{(voice.tags.length ? voice.tags : ['日常口播']).map(tag => <span key={tag}>{tag}</span>)}</div>
+    <div className="voice-card-status">{voice.sample_status === 'succeeded' ? <Headphones size={14}/> : activeStates.has(voice.sample_status) ? <Clock3 size={14}/> : null}{auditionPresentation(voice).hint}</div>
+    <footer><Button disabled={busy || (voice.sample_status !== 'succeeded' && (voice.preview_ready === false || activeStates.has(voice.sample_status) || voice.status !== 'ready'))} onClick={() => onPlay(voice)} aria-label={`${auditionPresentation(voice, playingId === voice.id).label}${voice.name}`}>{playingId === voice.id ? <Pause size={16}/> : <Play size={16}/>} {auditionPresentation(voice, playingId === voice.id).label}</Button><Button variant={selectedId === voice.id ? 'primary' : undefined} disabled={busy || voice.status !== 'ready'} onClick={() => onChoose(voice)}>{selectedId === voice.id ? '选用此音色' : '选择音色'}<ArrowRight size={15}/></Button></footer>
+  </article>)}</div>;
+}
+
+export function VoiceLibrary({ picker = false, library, selectedId, onChoose, onClose, initialAudition, rate, onRateChange }) {
+  const ownLibrary = useVoiceLibrary(!library);
+  const current = library || ownLibrary;
+  const [scope, setScope] = useState('system'), [search, setSearch] = useState(''), [language, setLanguage] = useState('all');
+  const [view, setView] = useState('browse'), [operation, setOperation] = useState(null), [editing, setEditing] = useState(null), [newName, setNewName] = useState('');
+  const [cloneDraft, setCloneDraft] = useState(null);
+  const [pendingClone, setPendingClone] = useState(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  const [playingId, setPlayingId] = useState(''), [playerVoice, setPlayerVoice] = useState(null), [pendingPlay, setPendingPlay] = useState('');
+  const player = useRef(null), firstPlay = useRef(false);
+  const [localRate, setLocalRate] = useState(1);
+  const playbackRate = speechRate(rate === undefined ? localRate : rate);
+  const changeRate = onRateChange || setLocalRate;
+  const voices = current.data?.items || [], filtered = filterVoices(voices, { scope, search, language });
+  const systemCount = voices.filter(v => v.scope === 'system').length, personalCount = voices.filter(v => v.scope === 'personal').length;
+  const select = voice => onChoose ? onChoose(voice) : location.assign(`/avatar?tone=${encodeURIComponent(voice.id)}`);
+  const closeView = () => { setView('browse'); setError(''); };
+  useEffect(() => () => { if (activePlayer === player.current) activePlayer = null; player.current?.pause(); }, []);
+  async function play(voice) {
+    setError('');
+    if (playingId === voice.id && player.current && !player.current.paused) { player.current.pause(); setPlayingId(''); return; }
+    if (voice.sample_status === 'succeeded') {
+      if (activePlayer && activePlayer !== player.current) activePlayer.pause();
+      setPlayerVoice({ ...voice }); setPlayingId(voice.id);
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api(`/api/studio/voices/${voice.id}/audition`, {});
+      if (activeStates.has(result.status) || result.status === 'succeeded') {
+        setPendingPlay(voice.id); setMessage(result.status === 'succeeded' ? '' : '正在准备免费试听，完成后自动播放…');
+      } else { setPendingPlay(''); setMessage(operationState(result.status)); }
+      await current.reload();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => {
+    if (!playerVoice || !player.current) return;
+    const audio = player.current;
+    if (activePlayer && activePlayer !== audio) activePlayer.pause();
+    activePlayer = audio;
+    if (audio.error) audio.load();
+    applyAuditionRate(audio, playbackRate);
+    audio.play().catch(() => { setPlayingId(''); setMessage('试听已准备好，请点击播放器播放。'); });
+    return () => { audio.pause(); if (activePlayer === audio) activePlayer = null; };
+  }, [playerVoice]);
+  useEffect(() => { applyAuditionRate(player.current, playbackRate); }, [playbackRate, playerVoice]);
+  useEffect(() => {
+    if (!pendingPlay) return;
+    const ready = voices.find(v => v.id === pendingPlay && v.sample_status === 'succeeded');
+    if (ready) { setPendingPlay(''); setPlayerVoice(ready); setPlayingId(ready.id); setMessage('免费试听已准备好，音频已保存，可随时播放。'); }
+  }, [voices, pendingPlay]);
+  useEffect(() => {
+    if (!pendingClone) return;
+    const item = current.operations.find(v => v.id === pendingClone);
+    if (item?.job?.status === 'succeeded') {
+      setPendingClone(null); setMessage(`${item.name} 已加入个人音色库，可以选择用于口播。`);
+    } else if (item?.job?.status === 'failed') {
+      setPendingClone(null); setMessage(''); setError(item.job.message || operationState('failed'));
+    }
+  }, [current.operations, pendingClone]);
+  useEffect(() => {
+    if (!initialAudition || firstPlay.current || !current.data) return;
+    const voice = voices.find(v => v.id === initialAudition);
+    if (voice) { firstPlay.current = true; setScope(voice.scope); play(voice); }
+  }, [current.data, initialAudition]);
+  async function clone(data, remembered) {
+    setCloneDraft(remembered);
+    setBusy(true); setError('');
+    try {
+      const value = await api('/api/studio/voices/clone-quotes', data);
+      setOperation(value);
+      // The form already states the zero price and carries the voice consent.
+      // A changed clone quote must still use the explicit price confirmation.
+      if (canSubmitFreeClone(value)) {
+        await submitOperation(value);
+      } else setView('clone-confirm');
+    }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  async function confirm() {
+    setBusy(true); setError('');
+    try { await submitOperation(operation); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  async function submitOperation(value) {
+    await api(`/api/studio/voice-operations/${value.id}/confirm`, { confirmed: true });
+    setScope('personal'); setSearch(''); setLanguage('all'); setCloneDraft(null); setPendingClone(value.id); setMessage('正在克隆你的声音，可以继续浏览。完成后自动加入个人音色库。');
+    setView('browse'); await current.reload();
+  }
+  async function query(item) {
+    setBusy(true); setError('');
+    try { await api(`/api/studio/voice-operations/${item.id}/query`, {}); await current.reload(); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  async function rename(e) {
+    e.preventDefault(); setBusy(true); setError('');
+    try { await api(`/api/studio/voices/${editing.id}/rename`, { name: newName.trim() }); closeView(); await current.reload(); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  const browse = <>
+    <div className="voice-toolbar"><div className="voice-tabs" role="group" aria-label="音色来源">{[['system', '系统音色', systemCount], ['personal', '个人音色库', personalCount]].map(([id, name, count]) => <button key={id} aria-pressed={scope === id} className={scope === id ? 'active' : ''} onClick={() => { setScope(id); setSearch(''); }}>{name}<small>{count}</small></button>)}</div><Button variant="primary" disabled={!current.data?.clone_ready || busy} onClick={() => { setView('clone'); setError(''); }}><Plus size={17}/>克隆音色</Button></div>
+    <div className="voice-filter"><label className="voice-search"><Search size={18}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索音色名称或标签" aria-label="搜索音色"/></label><select value={language} onChange={e => setLanguage(e.target.value)} aria-label="音色语言"><option value="all">全部语言</option><option value="zh">普通话</option><option value="yue">粤语</option><option value="en">英语</option></select><Button variant="text" disabled={busy} onClick={current.reload} aria-label="刷新音色库"><RefreshCw size={16}/></Button></div>
+    <Notice message={current.error || error} error/><Notice message={message}/>
+    {current.data?.clone_hint && <Notice message={current.data.clone_hint}/>}
+    {current.data?.system_hint && <Notice message={current.data.system_hint}/>}
+    {!current.loading && !current.data && <EmptyState icon={AudioLines} title="音色库暂时无法连接" action={<Button href="/settings">检查 API 设置<ArrowRight size={16}/></Button>}>连接海客Key后，系统音色和你的个人音色会自动同步。</EmptyState>}
+    {current.loading ? <div className="voice-loading" role="status"><AudioLines size={25}/><p>正在读取你的音色库…</p></div> : current.data && (filtered.length ? <VoiceGrid busy={busy} items={filtered} selectedId={selectedId} playingId={playingId} onPlay={play} onChoose={select} onRename={voice => { setEditing(voice); setNewName(voice.name); setView('rename'); setError(''); }}/> : <EmptyState icon={Mic2} title={search || language !== 'all' ? '没有找到匹配的音色' : scope === 'personal' ? '让视频拥有你自己的声音' : '还没有可用的系统音色'} action={scope === 'personal' && !search && <Button disabled={!current.data.clone_ready} onClick={() => setView('clone')}><Plus size={16}/>克隆第一个音色</Button>}>{search || language !== 'all' ? '换一个关键词，或清除语言筛选后再试。' : scope === 'personal' ? '上传一段清晰录音，克隆后的音色只属于你的账户，可反复试听和用于口播。' : '管理员发布可用音色后，会显示在这里。'}</EmptyState>)}
+    {current.operations.filter(item => item.job?.status !== 'succeeded').length > 0 && <section className="voice-jobs" aria-live="polite"><h3>音色任务</h3>{current.operations.filter(item => item.job?.status !== 'succeeded').map(item => <article key={item.id}><Clock3 size={18}/><div><strong>{item.name} · {item.kind === 'clone' ? '音色克隆' : '生成试听'}</strong><p>{item.job?.message || operationState(item.job?.status)}</p></div><Button disabled={busy} onClick={() => query(item)}>刷新进度</Button></article>)}</section>}
+    {playerVoice && <div className="voice-player"><span className="voice-mark"><Headphones size={20}/></span><div><strong>{playerVoice.name}</strong><small>{playerVoice.sample_kind==='official'?'免费试听 · 自动使用本机缓存':'免费试听 · 已保存到本机'}</small></div><audio key={playerVoice.id} ref={player} controls preload="auto" src={playerVoice.sample_url} onLoadedMetadata={()=>applyAuditionRate(player.current, playbackRate)} onPlay={() => { if (activePlayer && activePlayer !== player.current) activePlayer.pause(); activePlayer = player.current; applyAuditionRate(player.current, playbackRate); setPlayingId(playerVoice.id); }} onPause={() => setPlayingId('')} onEnded={() => setPlayingId('')} onError={() => { setPlayingId(''); setError('原试听暂时无法播放，请再次点击“试听”恢复原音频，不会重新生成或收费。'); }}/><SpeechRateControl compact value={playbackRate} onChange={changeRate}/></div>}
+  </>;
+  const confirmation = <div className="voice-confirm"><span className="voice-mark"><CheckCircle2 size={27}/></span><h3>创建你的专属音色</h3><dl className="summary-list"><div><dt>音色</dt><dd>{operation?.name}</dd></div><div><dt>本次克隆费用上限</dt><dd className="voice-price">{money(operation?.quote?.max_charge_micros)}</dd></div><div><dt>存放位置</dt><dd>个人音色库 · 仅你可见</dd></div></dl><Notice message="固定样例试听免费，视频配音费用在制作时确认。"/><Notice message={error} error/><div className="voice-form-actions"><Button disabled={busy} onClick={() => setView('clone')}>返回修改</Button><Button variant="primary" loading={busy} onClick={confirm}>确认并克隆<ArrowRight size={16}/></Button></div></div>;
+  const renameForm = <form className="voice-clone-form" onSubmit={rename}><Field label="音色名称"><input autoFocus required maxLength={48} value={newName} onChange={e => setNewName(e.target.value)}/></Field><p className="helper">修改名称不会重新克隆，也不会改变已经提交的视频。</p><Notice message={error} error/><div className="voice-form-actions"><Button type="button" onClick={closeView}>取消</Button><Button type="submit" variant="primary" loading={busy} disabled={!newName.trim()}>保存名称</Button></div></form>;
+  const form = view === 'clone' ? <CloneForm ready={current.data?.clone_ready} busy={busy} onNext={clone} onCancel={closeView} error={error} initialData={cloneDraft}/> : view === 'rename' ? renameForm : confirmation;
+  const title = view === 'browse' ? '选择音色' : view === 'clone' ? '克隆音色' : view === 'rename' ? '重命名音色' : '确认音色操作';
+  if (picker) return <Dialog title={title} description={view === 'browse' ? current.data?.mode === 'gateway_default' ? '当前可选择服务已配置的默认配音，独立试听尚未启用。' : '试听系统音色和你的个人音色，选中后用于当前口播。' : undefined} wide={view === 'browse'} busy={busy} onClose={onClose}><div className="voice-library voice-picker">{view === 'browse' ? browse : form}</div></Dialog>;
+  return <><main className="workspace voice-workspace"><Heading title="资源库" helper="管理熟悉的声音，让每一次创作都更自然。"/><section className="surface voice-library"><div className="voice-library-heading"><span className="voice-mark"><AudioLines size={24}/></span><div><h2>音色库</h2><p>{current.data?.clone_route === 'local-personal-voice-clone' ? '系统音色随时选用，专属音色保存在本机，按你的海客账户隔离。' : '系统音色随时选用，专属音色跟随你的海客账户。'}</p></div><span className="voice-library-tip"><Headphones size={15}/>{current.data?.mode === 'gateway_default' ? '当前使用默认配音' : '免费试听 · 自动缓存'}</span></div>{browse}</section></main>{view !== 'browse' && <Dialog title={title} busy={busy} onClose={closeView}><div className="voice-library">{form}</div></Dialog>}</>;
+}
+
+export function Resources() { return <VoiceLibrary/>; }

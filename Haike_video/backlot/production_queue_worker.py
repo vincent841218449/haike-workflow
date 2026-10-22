@@ -13,7 +13,7 @@ from backlot.avatar_review_preview_pipeline import (
     read_avatar_review_preview_job,
     run_avatar_review_preview_job,
 )
-from backlot.production_queue import ProductionQueue, ProductionQueueConflict
+from backlot.production_queue import ProductionQueue, ProductionQueueConflict, ProductionQueueCancelled
 from backlot.work_catalog import WorkCatalog
 from backlot.workbench import (
     generate_full_preview_render,
@@ -60,15 +60,34 @@ class ProductionQueueWorker:
 
     def _run_studio_graphic(self, job):
         from backlot.studio_render import run_graphic
-        return run_graphic(self._project_dir(job), job["frozen_request"])
+        return run_graphic(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
 
     def _run_studio_avatar(self, job):
         from backlot.studio_avatar import run_avatar
-        return run_avatar(self._project_dir(job), job["frozen_request"])
+        request=job['frozen_request']
+        if job.get('safe_resume_point')=='studio_avatar_visual_review':
+            from backlot.studio_visual_recovery import ready
+            if not ready(self._project_dir(job),request):
+                return {'status':'awaiting_human','stage':'原配音、数字人或预览文件已改变，请恢复原文件；未提交生成',
+                        'error':{'code':'local_artifact_missing'},'safe_resume_point':'studio_avatar_visual_review'}
+            request={**request,'local_recomposition':True}
+        result=run_avatar(self._project_dir(job), request, on_progress=self._stage_reporter(job))
+        if request.get('local_recomposition') and result.get('status')!='completed':
+            result['safe_resume_point']='studio_avatar_visual_review'
+        return result
 
     def _run_studio_motion(self, job):
+        if job['frozen_request'].get('runtime')=='motiongit':
+            from backlot.studio_motiongit import run_job
+            return run_job(self._project_dir(job),job['frozen_request'],on_progress=self._stage_reporter(job))
         from backlot.studio_motion import run_motion
-        return run_motion(self._project_dir(job), job["frozen_request"])
+        return run_motion(self._project_dir(job), job["frozen_request"], on_progress=self._stage_reporter(job))
+
+    def _stage_reporter(self, job):
+        def report(stage, completed, total):
+            # The queue still needs to register the result after rendering/QA.
+            self.queue.update_stage(job["job_id"], self.worker_id, stage, completed=completed, total=total + 1)
+        return report
 
     def _project_dir(self, job: dict[str, Any]) -> Path:
         project_dir = (self.projects_root / str(job["project_id"])).resolve()
@@ -201,7 +220,21 @@ class ProductionQueueWorker:
     def inspect_parent(self, job: dict[str, Any]) -> dict[str, Any]:
         project_dir = self._project_dir(job)
         if job["kind"] in {"studio_graphic", "studio_avatar", "studio_motion"}:
+            if job['kind'] == 'studio_avatar' and job['frozen_request'].get('workflow_version', 1) >= 2:
+                # File existence cannot prove template identity or a complete
+                # export after a crash. Re-enter the frozen producer: its
+                # receipts validate caches without resubmitting paid stages.
+                return {'status':'queued', 'stage':'自动恢复原制作，复核原模板、产物与模型请求', 'safe_resume_point':'studio_avatar_visual_review' if job.get('safe_resume_point')=='studio_avatar_visual_review' else 'studio_avatar'}
+            if job['frozen_request'].get('runtime')=='motiongit' or (job['frozen_request'].get('template_ref') or {}).get('runtime')=='motiongit':
+                return {'status':'queued','stage':'自动核对原生工程、成片版本与输入摘要','safe_resume_point':job['kind']}
             filename = {"studio_graphic": "graphic-preview.mp4", "studio_avatar": "avatar-preview.mp4", "studio_motion": "motion-preview.mp4"}[job["kind"]]
+            if job["kind"] == "studio_avatar" and job["frozen_request"].get("draft", {}).get("input", {}).get("motion"):
+                filename = "motion-preview.mp4"
+                folder = project_dir / "renders" / job["frozen_request"]["render_id"]
+                fallback = folder / "composition-preflight.json"
+                if fallback.is_file():
+                    from backlot.work_catalog import read_json
+                    if read_json(fallback).get("mode") == "basic": filename = "avatar-preview.mp4"
             output = project_dir / "renders" / job["frozen_request"]["render_id"] / filename
             report = output.parent / "qa.json"
             if output.is_file() and report.is_file():
@@ -268,6 +301,7 @@ class ProductionQueueWorker:
 
     def run_once(self) -> dict[str, Any] | None:
         self.reconcile_expired()
+        self.queue.resume_provider_waits()
         job = self.queue.claim_next(self.worker_id, lease_seconds=self.lease_seconds)
         if job is None:
             return None
@@ -310,6 +344,9 @@ class ProductionQueueWorker:
                     # Preserve successful media; registration can be retried independently.
                     outcome["result"]["work_registration_error"] = str(exc)[:300]
             return self.queue.finish(job["job_id"], self.worker_id, **outcome)
+        except ProductionQueueCancelled:
+            return self.queue.finish(job['job_id'], self.worker_id, status='cancelled',
+                stage='制作已取消，已有产物和调用保留')
         except Exception as exc:  # noqa: BLE001 - queue records a durable, user-visible failure
             return self.queue.finish(
                 job["job_id"], self.worker_id,

@@ -15,6 +15,8 @@
 
 ## Windows 源码安装
 
+Mac 本机已迁入当前工作目录，启动、Git管理和迁移验证见 [Mac入口](README-MAC.md)。
+
 准备 64 位 Python 3.12、Node.js 22+、Git、uv 和兼容 MSVC 14.4x 的 Visual C++ x64 运行库，确保 `python`、`node`、`npm`、`uv` 在 PATH。安装需要联网获取 Python/npm 依赖、FFmpeg 和渲染浏览器。平台采集/发布另需系统 Chrome。原生 OCR/ASR 若报告 DLL 错误，按采集模块 native_runtime.py 的说明配置匹配的运行库；本源码不捆绑本机 DLL。
 
 ```powershell
@@ -25,7 +27,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1
 
 私有仓库需要已获授权的 GitHub 身份。安装脚本分别创建三个模块的虚拟环境，保留已有本地配置，不启动发布任务、不调用付费服务。默认不安装本地 Qwen3-TTS；明确需要时传 `-LocalTts install`，会额外下载数 GB 依赖/模型。百炼云端克隆不需要本地 TTS。
 
-基础运行环境安装后，双击「一键启动工作台.cmd」，默认端口 14754。发布面板独立启动：
+基础运行环境安装后，双击「一键启动工作台.cmd」，固定端口 4188。发布面板独立启动：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-publisher.ps1

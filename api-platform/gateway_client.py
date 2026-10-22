@@ -11,6 +11,12 @@ from urllib.parse import urlsplit
 from client import save_private
 
 
+class HaikeAPIError(ValueError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 class HaikeClient:
     def __init__(self, base_url, api_key, state_dir):
         parsed = urlsplit(base_url)
@@ -29,7 +35,7 @@ class HaikeClient:
         self.base_url, self.api_key = base_url.rstrip("/"), api_key
         self.state_dir = Path(state_dir)
 
-    def request(self, path, body=None, idem=None, raw=None):
+    def request(self, path, body=None, idem=None, raw=None, binary=False):
         headers = {"Authorization": "Bearer " + self.api_key}
         data = None
         if body is not None:
@@ -53,6 +59,11 @@ class HaikeClient:
         )
         try:
             with opener.open(request, timeout=30) as response:
+                if binary:
+                    data = response.read(5 * 1024 * 1024 + 1)
+                    if len(data) > 5 * 1024 * 1024:
+                        raise ValueError("试听文件超过5MB")
+                    return data
                 return json.load(response)
         except urllib.error.HTTPError as error:
             try:
@@ -60,7 +71,10 @@ class HaikeClient:
                 message = value.get("error", {}).get("message", "海客 API 请求失败")
             except ValueError:
                 message = "海客 API 请求失败"
-            raise ValueError(message) from None
+            raise HaikeAPIError(message, error.code) from None
+
+    def media(self, path):
+        return self.request(path, binary=True)
 
     def upload(self, path, kind):
         if kind not in {"audio", "image"}:

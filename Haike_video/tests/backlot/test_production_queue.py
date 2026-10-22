@@ -78,6 +78,82 @@ def test_submit_is_idempotent_and_public_payload_redacts_secrets(tmp_path: Path)
     assert private["frozen_request"] == {"confirmed": True, "nested": {"budget": 5}}
 
 
+def test_coin_billing_change_is_audited_and_never_requeues_an_unknown(tmp_path,monkeypatch):
+    queue,_=_queue(tmp_path)
+    old={'identity':'wallet','profile':{'app_id':'2006270540499128322'}}
+    coins={**old,'identity':'member','billing_mode':'rh_coins'}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+                     parent_job_id='draft-coins',frozen_request={'avatar_execution':old})
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='ambiguous',stage='第三段回执待核对',
+                 error={'code':'provider_reconciliation'},retryable=False)
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    current=queue.get(job['job_id']);revision=current['revision']
+    changed=queue.change_avatar_billing(job['job_id'],revision=revision,execution=coins,approval_ref='user-coins-once')
+    assert changed['status']=='ambiguous' and changed['stage']==current['stage']
+    assert changed['error']['code']=='provider_reconciliation'
+    assert queue.claim_next('worker-two') is None
+    private=queue.get(job['job_id'],include_private=True)['frozen_request']
+    assert private['avatar_execution']==old and private['avatar_billing_execution']==coins
+    assert len(private['avatar_billing_changes'])==1
+    again=queue.change_avatar_billing(job['job_id'],revision=revision,execution=coins,approval_ref='user-coins-once')
+    assert again['revision']==changed['revision']
+    with pytest.raises(ProductionQueueConflict):
+        queue.change_avatar_billing(job['job_id'],revision=changed['revision'],execution={**coins,'profile':{'app_id':'different'}},approval_ref='other')
+    with pytest.raises(ProductionQueueConflict):queue.retry(job['job_id'])
+
+
+def test_unknown_segment_reissue_is_exact_once_audited_and_does_not_edit_journal(tmp_path,monkeypatch):
+    import hashlib
+    queue,projects=_queue(tmp_path)
+    old={'route':'local-runninghub-ai-app','identity':'wallet','profile':{'app_id':'2006270540499128322'}}
+    coins={**old,'identity':'member','billing_mode':'rh_coins'}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+        parent_job_id='draft-once',frozen_request={'render_id':'one','avatar_execution':old,'avatar_billing_execution':coins})
+    folder=projects/'alpha/renders/one/avatar-app';folder.mkdir(parents=True)
+    state={'id':'localavatar-original','execution':old,'status':'submission_unknown',
+           'chunks':[{'index':5,'status':'submission_unknown','start_frame':1120,'end_frame':1676}]}
+    path=folder/'state.json';path.write_text(json.dumps(state));digest=hashlib.sha256(path.read_bytes()).hexdigest()
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='ambiguous',stage='第三段回执待核对',error={'code':'provider_reconciliation'})
+    monkeypatch.setattr('backlot.studio_avatar_app.verify_execution',lambda *args:None)
+    current=queue.get(job['job_id'])
+    kwargs={'revision':current['revision'],'chunk_index':5,'expected_state_sha256':digest,'approval_ref':'user-third-once'}
+    with pytest.raises(ProductionQueueConflict):
+        queue.reissue_unknown_avatar_segment(job['job_id'],**{**kwargs,'expected_state_sha256':'0'*64})
+    assert queue.get(job['job_id'])['revision']==current['revision']
+    changed=queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)
+    assert changed['status']=='queued' and json.loads(path.read_text())==state
+    private=queue.get(job['job_id'],include_private=True)['frozen_request']
+    assert private['avatar_submission_reissue']['execution']==coins and private['avatar_execution']==old
+    assert queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)['revision']==changed['revision']
+    with pytest.raises(ProductionQueueConflict):
+        queue.reissue_unknown_avatar_segment(job['job_id'],**{**kwargs,'approval_ref':'another'})
+    assert queue.claim_next('worker-two')['job_id']==job['job_id']
+    assert queue.reissue_unknown_avatar_segment(job['job_id'],**kwargs)['status']=='running'
+    assert queue.claim_next('worker-three') is None
+
+
+@pytest.mark.parametrize('code,old,allowed', [('805',True,True),('805',False,False),('401',True,False)])
+def test_retry_only_rechecks_confirmed_long_avatar_failure(tmp_path,code,old,allowed):
+    queue,projects=_queue(tmp_path)
+    execution={'route':'local-runninghub-ai-app','profile':{'app_id':'2006270540499128322'}}
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='codex',priority='normal',
+                     parent_job_id='draft-one',frozen_request={'render_id':'render-one','avatar_execution':execution})
+    folder=projects/'alpha/renders/render-one/avatar-app';folder.mkdir(parents=True)
+    from datetime import datetime,timezone
+    (folder/'state.json').write_text(json.dumps({'status':'failed','execution':execution,'chunks':[
+        {'index':0,'status':'failed','task_id':'original-task','error_code':code,'start_frame':0,'end_frame':1120,
+         'submitted_at':'2026-01-01T00:00:00+00:00' if old else datetime.now(timezone.utc).isoformat()}]}))
+    queue.claim_next('worker')
+    queue.finish(job['job_id'],'worker',status='failed',stage='供应商明确失败',error={'code':'invalid'},
+                 safe_resume_point='studio_avatar',retryable=False)
+    if allowed:
+        assert queue.retry(job['job_id'])['status']=='queued'
+    else:
+        with pytest.raises(ProductionQueueConflict): queue.retry(job['job_id'])
+
+
 def test_priority_then_fifo_and_single_global_execution_lease(tmp_path: Path) -> None:
     queue, _ = _queue(tmp_path)
     normal = _submit(queue, project_id="alpha", parent_job_id="RP-normal", priority="normal")

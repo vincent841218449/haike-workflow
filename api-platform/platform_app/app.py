@@ -24,6 +24,7 @@ from . import (
     gateway,
     pricing,
     providers,
+    voices,
 )
 from .exports import csv_response
 from .store import Problem, Store, audit, digest, now, owned
@@ -85,6 +86,10 @@ class Quote(Input):
     model: str = Field(max_length=80)
     input: dict
     project_ref: str = Field(default="", max_length=100)
+
+
+class QuoteRenew(Input):
+    confirmed: Literal[True]
 
 
 class Submit(Input):
@@ -162,6 +167,7 @@ def create_app(db_path=None, worker_enabled=True, testing=False, public_origin=N
     )
     app.state.store = store
     app.state.vault = vault
+    vault.public_origin = public_origin
     app.state.worker = None
     app.state.gateway_worker = None
     login_failures = {}
@@ -225,7 +231,10 @@ def create_app(db_path=None, worker_enabled=True, testing=False, public_origin=N
                     },
                     status_code=403,
                 )
-            if len(await request.body()) > (
+            # Quotes carry full template/context messages. Do not reintroduce a
+            # text byte ceiling through the generic request-body check.
+            quote_request = request.url.path.rstrip("/") == "/v2/quotes"
+            if not quote_request and len(await request.body()) > (
                 5 * 1024 * 1024 if request.url.path == "/v2/files" else 100000
             ):
                 return JSONResponse(
@@ -589,6 +598,38 @@ def create_app(db_path=None, worker_enabled=True, testing=False, public_origin=N
     def usage(user=Depends(api_user)):
         return {"items": combined_jobs(user)}
 
+    @app.get("/v2/voices")
+    def voice_catalogue(user=Depends(api_user)):
+        return voices.catalogue(store, vault, user)
+
+    @app.post("/v2/voices/clone-jobs/{job_id}/query")
+    def voice_clone_query(job_id: str, user=Depends(api_user)):
+        return voices.query_clone(store, vault, user, job_id)
+
+    @app.post("/v2/voices/{voice_id}/preview-quote")
+    def voice_preview_quote(voice_id: str, user=Depends(api_user)):
+        return voices.preview_quote(store, vault, user, voice_id)
+
+    @app.get("/v2/voices/{voice_id}/sample")
+    def voice_sample(voice_id: str, user=Depends(api_user)):
+        return FileResponse(voices.sample_path(store, user, voice_id), media_type="audio/wav")
+
+    @app.post("/v2/voices/{voice_id}/rename")
+    def voice_rename(voice_id: str, body: dict, user=Depends(api_user)):
+        if set(body) != {"name"}:
+            raise Problem(422, "voice_name_invalid", "请填写音色名称")
+        return voices.rename(store, user, voice_id, body["name"])
+
+    @app.get("/voice-reference/{token}.wav")
+    def voice_reference(token: str):
+        return FileResponse(voices.reference(store, token), media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/v1/voices")
+    def voice_import(body: dict, user=Depends(admin_user)):
+        if set(body) - {"name", "provider_voice_id", "tags"}:
+            raise Problem(422, "voice_import_invalid", "系统音色参数无效")
+        return voices.import_system(store, vault, body.get("name"), body.get("provider_voice_id"), body.get("tags"))
+
     @app.post("/v2/quotes")
     def quotes(body: Quote, user=Depends(api_user)):
         if not body.model.startswith("demo/"):
@@ -598,6 +639,10 @@ def create_app(db_path=None, worker_enabled=True, testing=False, public_origin=N
         return domain.create_quote(
             store, user, body.model, body.input, body.project_ref
         )
+
+    @app.post("/v2/quotes/{quote_id}/renew")
+    def renew_quote(quote_id: str, body: QuoteRenew, user=Depends(api_user)):
+        return gateway.renew_quote(store, vault, user, quote_id)
 
     @app.post("/v2/jobs")
     def jobs(body: Submit, user=Depends(api_user), idem=Depends(idem_key)):

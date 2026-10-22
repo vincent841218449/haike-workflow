@@ -4,17 +4,18 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from uuid import uuid4
+from typing import Literal
 
-from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response, RedirectResponse
 
-from backlot.studio import Studio, TEMPLATES
+from backlot.studio import Studio, TEMPLATES, gateway_connection_message
 from backlot.work_api import catalog, call
 from backlot.work_catalog import WorkError
 from backlot import work_publish
 
 router = APIRouter()
-REMOVED_ENTRIES = {"/audio": "/avatar", "/automation": "/calendar", "/material-library": "/graphic", "/material-library/manage": "/graphic", "/material-commentary": "/projects", "/published-clips": "/projects", "/works": "/projects", "/legacy/projects": "/projects"}
+REMOVED_ENTRIES = {"/audio": "/avatar", "/automation": "/calendar", "/material-library": "/graphic", "/material-library/manage": "/graphic", "/material-commentary": "/tasks", "/published-clips": "/tasks", "/works": "/tasks", "/legacy/projects": "/tasks"}
 
 
 def studio(request):
@@ -30,7 +31,7 @@ def mutation(request):
     if origin and origin != str(request.base_url).rstrip("/"):
         raise HTTPException(403, "请从本地海客工作台提交")
     content = request.headers.get("content-type", "")
-    if "application/json" not in content and request.url.path != "/api/studio/assets" and not request.url.path.endswith("/cover-upload"):
+    if "application/json" not in content and request.url.path not in {"/api/studio/assets", "/api/studio/voices/samples"} and not request.url.path.endswith("/cover-upload"):
         raise HTTPException(415, "请求需要JSON格式")
 
 
@@ -38,20 +39,156 @@ def mutation(request):
 @router.get("/avatar", response_class=HTMLResponse)
 @router.get("/calendar", response_class=HTMLResponse)
 @router.get("/settings", response_class=HTMLResponse)
-@router.get("/projects", response_class=HTMLResponse)
+@router.get("/resources", response_class=HTMLResponse)
+@router.get("/tasks", response_class=HTMLResponse)
 def page():
     path = Path(__file__).parent / "ui/avatar-generator/index.html"
     return HTMLResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@router.get('/projects')
+def retired_projects(request: Request):
+    return RedirectResponse('/tasks' + ('?' + request.url.query if request.url.query else ''), status_code=307)
 
 
 @router.get("/api/studio/templates")
 def templates(): return {"templates": TEMPLATES}
 
 
+@router.get("/api/studio/tasks")
+def creation_tasks(request: Request,
+                   status: Literal["all", "active", "queued", "needs_action", "failed", "completed", "scheduled", "cancelled"] = "all",
+                   type: Literal["all", "graphic", "avatar", "motion"] = "all",
+                   limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0, le=1000000)):
+    from backlot.server import _ensure_production_queue
+    from backlot.studio_tasks import list_tasks
+    return call(list_tasks, studio(request), _ensure_production_queue(request.app),
+                status=status, task_type=type, limit=limit, offset=offset)
+
+
+@router.get("/api/studio/tasks/{job_id}")
+def creation_task(job_id: str, request: Request):
+    from backlot.server import _ensure_production_queue
+    from backlot.studio_tasks import detail
+    from backlot.production_queue import ProductionQueueError
+    try:
+        return detail(studio(request), _ensure_production_queue(request.app), job_id)
+    except ProductionQueueError as exc:
+        raise HTTPException(404, "未找到这条创作任务") from exc
+
+
+@router.post('/api/studio/tasks/{job_id}/continue')
+def continue_video(job_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    if set(data) != {'confirmed', 'revision'} or data.get('confirmed') is not True:
+        raise HTTPException(422, '请确认继续原视频制作')
+    from backlot.server import _ensure_production_queue
+    from backlot.production_queue import ProductionQueueConflict, ProductionQueueError
+    from backlot.studio_avatar import key_identity
+    queue = _ensure_production_queue(request.app)
+    try:
+        job = queue.get(job_id, include_private=True)
+        if job.get('frozen_request', {}).get('key_identity') != key_identity(studio(request)):
+            raise HTTPException(409, '请恢复原API账户连接后继续制作')
+        return queue.continue_actual_usage(job_id, data.get('revision'))
+    except ProductionQueueConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ProductionQueueError as exc:
+        raise HTTPException(404, '未找到这条创作任务') from exc
+
+
+@router.get("/api/studio/voices")
+async def voice_library(request: Request):
+    from backlot import studio_voices, studio_voice_samples
+    value = await asyncio.to_thread(call, studio_voices.catalogue, studio(request))
+    studio_voice_samples.prefetch(studio(request), value.get('items', []))
+    return value
+
+
+@router.get("/api/studio/voices/{voice_id}/sample")
+async def voice_sample(voice_id: str, request: Request):
+    from backlot import studio_voices, studio_voice_samples
+    path = await asyncio.to_thread(call, studio_voices.sample, studio(request), voice_id)
+    official = studio_voice_samples.preset(voice_id) is not None
+    headers = {'Cache-Control': 'public, max-age=31536000, immutable' if official else 'private, no-store'}
+    response = FileResponse(path, media_type='audio/mpeg' if path.suffix == '.mp3' else 'audio/wav',
+                            stat_result=path.stat(), headers=headers)
+    if official and request.headers.get('if-none-match') == response.headers['etag']:
+        return Response(status_code=304, headers={**headers, 'ETag': response.headers['etag']})
+    return response
+
+
+@router.post("/api/studio/voices/samples")
+async def voice_upload(request: Request, filename: str):
+    mutation(request)
+    from backlot import studio_voices
+    content = await request.body()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "录音不能超过10MB")
+    return await asyncio.to_thread(call, studio_voices.upload_sample, studio(request), filename, content)
+
+
+@router.post("/api/studio/voices/clone-quotes")
+async def voice_clone_quote(request: Request, data: dict = Body(...)):
+    mutation(request)
+    from backlot import studio_voices
+    return await asyncio.to_thread(call, studio_voices.quote_clone, studio(request), data)
+
+
+@router.get("/api/studio/voices/references/{sample_id}")
+async def voice_reference(sample_id: str, request: Request):
+    from backlot import studio_personal_voice
+    path = await asyncio.to_thread(call, studio_personal_voice.reference, studio(request), sample_id)
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, no-store"})
+
+
+@router.post("/api/studio/voices/preview-quotes")
+async def voice_preview_quote(request: Request, data: dict = Body(...)):
+    mutation(request)
+    from backlot import studio_voices
+    return await asyncio.to_thread(call, studio_voices.quote_preview, studio(request), data.get("voice_id"))
+
+
+@router.post("/api/studio/voices/{voice_id}/audition")
+async def voice_audition(voice_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    if data:
+        raise HTTPException(400, "试听使用固定样例，无需填写文案或费用")
+    from backlot import studio_voice_audition
+    return await asyncio.to_thread(call, studio_voice_audition.prepare, studio(request), voice_id)
+
+
+@router.get("/api/studio/voice-operations")
+async def voice_operations(request: Request):
+    from backlot import studio_voices
+    return {"items": await asyncio.to_thread(call, studio_voices.operations, studio(request))}
+
+
+@router.post("/api/studio/voice-operations/{operation_id}/confirm")
+async def voice_confirm(operation_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    from backlot import studio_voices
+    return await asyncio.to_thread(call, studio_voices.confirm, studio(request), operation_id, data.get("confirmed"))
+
+
+@router.post("/api/studio/voice-operations/{operation_id}/query")
+async def voice_query(operation_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    from backlot import studio_voices
+    return await asyncio.to_thread(call, studio_voices.query, studio(request), operation_id)
+
+
+@router.post("/api/studio/voices/{voice_id}/rename")
+async def voice_rename(voice_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    from backlot import studio_voices
+    return await asyncio.to_thread(call, studio_voices.rename, studio(request), voice_id, data.get("name"))
+
+
 @router.get("/api/studio/motion/catalog")
-async def motion_catalog(layout: str = "portrait"):
+async def motion_catalog(layout: str = "portrait", editor: bool = False):
     from backlot.studio_motion import library
-    return await asyncio.to_thread(call, library, layout)
+    return await asyncio.to_thread(call, library, layout, editor)
 
 
 @router.get("/api/studio/motion/media/{name:path}")
@@ -70,6 +207,25 @@ def motion_guide(name: str):
 def motion_sources(request: Request):
     from backlot.studio_motion import motion_sources
     return {"items": call(motion_sources, studio(request))}
+
+
+@router.get('/api/studio/motiongit/contract/{style}')
+async def motiongit_contract(style: str):
+    from backlot.studio_motiongit_editor import contract
+    return await asyncio.to_thread(call,contract,style)
+
+
+@router.get('/api/studio/motiongit/sample/{style}/{kind}')
+def motiongit_sample(style: str,kind: str):
+    from backlot.studio_motiongit import sample_file
+    return FileResponse(call(sample_file,style,kind),headers={'Cache-Control':'no-cache'})
+
+
+@router.get('/api/studio/drafts/{draft_id}/motiongit-preview/{plan_id}/{index}')
+def motiongit_preview(draft_id: str,plan_id: str,index: int,request: Request):
+    s=studio(request);call(s.draft,draft_id)
+    from backlot.studio_motiongit_editor import preview_file
+    return FileResponse(call(preview_file,s,draft_id,plan_id,index),media_type='image/png')
 
 
 @router.get("/api/studio/drafts/{draft_id}/motion-source")
@@ -119,11 +275,135 @@ def motion_project(draft_id: str, revision: int, request: Request):
     if revision < 1: raise HTTPException(404, "工程不存在")
     path = s.projects_root / draft_id / "renders" / ("studio-" + str(revision)) / "editable-project.zip"
     if not path.is_file() or path.is_symlink(): raise HTTPException(404, "工程尚未生成")
-    return FileResponse(path, filename="海客动效口播-可编辑工程.zip")
+    return FileResponse(path, filename="editable-project.zip")
 
 
 @router.get("/api/studio/settings")
 def settings(request: Request): return call(studio(request).settings)
+
+
+@router.get('/api/studio/avatar/provider')
+def avatar_provider(request: Request):
+    from backlot.studio_avatar_app import public_status
+    return call(public_status,studio(request))
+
+
+@router.get("/api/studio/ai/status")
+def ai_status(request: Request):
+    from backlot.studio_storyboard import status
+    return call(status, studio(request))
+
+
+@router.post("/api/studio/drafts/{draft_id}/ai-preview")
+async def ai_preview(draft_id: str, request: Request, data: dict = Body(...)):
+    mutation(request); s = studio(request); d = call(s.draft,draft_id)
+    if data != {"revision":d["revision"],"confirmed":True}: raise HTTPException(409,"草稿已改变，请重新保存后确认AI理解")
+    from backlot.studio_storyboard import preview
+    return await asyncio.to_thread(call,preview,s,d)
+
+
+@router.get("/api/studio/drafts/{draft_id}/ai-preview")
+def ai_preview_saved(draft_id: str, request: Request):
+    import json
+    s=studio(request); d=call(s.draft,draft_id)
+    path=s.projects_root/draft_id/"assets/ai-preview"/str(d["revision"])/"preview.json"
+    return {"plan":json.loads(path.read_text()) if path.is_file() else None}
+
+
+@router.get("/api/studio/drafts/{draft_id}/storyboard")
+def storyboard(draft_id: str, request: Request, revision: int | None = None):
+    import json
+    s = studio(request); d = call(s.draft, draft_id)
+    if revision is not None and not 1 <= revision <= d["revision"]: raise HTTPException(422,"分镜版本无效")
+    path = s.projects_root / draft_id / "renders" / ("studio-" + str(revision or d["revision"])) / "storyboard.json"
+    return {"plan": json.loads(path.read_text()) if path.is_file() else None}
+
+
+@router.get("/api/studio/drafts/{draft_id}/avatar-job")
+def avatar_job(draft_id: str, request: Request):
+    call(studio(request).draft, draft_id)
+    from backlot.server import _ensure_production_queue
+    queue = _ensure_production_queue(request.app)
+    result = call(queue.list, project_id=draft_id, limit=200)
+    jobs = [j for j in result["tasks"] if j["kind"] == "studio_avatar"]
+    latest = max(jobs, key=lambda j:j['created_at']) if jobs else None
+    if latest:
+        from backlot.studio_tasks import task_view
+        private = queue.get(latest['job_id'], include_private=True)
+        latest['max_charge_micros'] = private.get('frozen_request',{}).get('max_charge_micros')
+        frozen = (private.get('frozen_request') or {}).get('draft') or {}
+        view=task_view(studio(request),private)
+        if view.get('audio_issue') and (frozen.get('input', {}).get('audio') or {}).get('id'):
+            latest['input_issue'] = {'code':view['error_code'], 'audio_id':frozen['input']['audio']['id'], 'text':frozen['text']}
+            latest.update(status=view['status'],raw_status=view['raw_status'],stage=view['stage'])
+    return {"job": latest}
+
+
+@router.post("/api/studio/ai/jobs/{job_id}/skip-douyin")
+def skip_douyin(job_id: str, request: Request, data: dict = Body(...)):
+    mutation(request)
+    if data != {"confirmed": True}: raise HTTPException(422, "请明确确认跳过抖音")
+    from backlot.server import _ensure_production_queue
+    from backlot.studio import atomic_private, timestamp
+    q = _ensure_production_queue(request.app); job = call(q.get, job_id, include_private=True)
+    if job["kind"] != "studio_avatar" or job["status"] not in {"failed", "awaiting_human"}: raise HTTPException(409, "只能恢复暂停的口播任务")
+    d = job["frozen_request"]["draft"]
+    path = studio(request).projects_root / d["id"] / "renders" / ("studio-" + str(d["revision"])) / "source-decisions.json"
+    atomic_private(path, {"skip_douyin": True, "confirmed_at": timestamp(), "reason": "用户明确跳过抖音，恢复原任务"})
+    return call(q.retry, job_id)
+
+
+@router.post("/api/studio/ai/douyin/login")
+async def douyin_login(request: Request, data: dict = Body(...)):
+    mutation(request)
+    if data != {"confirmed": True}: raise HTTPException(422,"请确认打开抖音登录窗口")
+    from backlot.studio_storyboard import login_prepare
+    return await asyncio.to_thread(call,login_prepare,studio(request))
+
+
+@router.post("/api/studio/ai/douyin/login-confirmed")
+def douyin_login_confirmed(request: Request, data: dict = Body(...)):
+    mutation(request)
+    if data != {"confirmed": True}: raise HTTPException(422,"请完成抖音登录后再确认")
+    from backlot.studio_storyboard import configuration, status
+    from backlot.studio import atomic_private
+    s=studio(request); c=configuration(s); c["douyin_login_confirmed"]=True
+    atomic_private(s.private / "studio-ai/relay.json",c)
+    return call(status,s)
+
+
+@router.get("/api/studio/ai/jobs/{job_id}/douyin-candidates")
+def douyin_candidates(job_id: str, request: Request):
+    import json
+    from backlot.server import _ensure_production_queue
+    q=_ensure_production_queue(request.app); job=call(q.get,job_id,include_private=True)
+    if job["kind"]!="studio_avatar": raise HTTPException(422,"请选择口播任务")
+    d=job["frozen_request"]["draft"]
+    folder=studio(request).projects_root/d["id"]/"renders"/("studio-"+str(d["revision"]))/"ai-requests"
+    items=list({x['id']:x for p in sorted(folder.glob("scene-*-candidates.json")) for x in json.loads(p.read_text()).get("items",[])}.values())
+    return {"items":items}
+
+
+@router.post("/api/studio/ai/jobs/{job_id}/authorize-douyin")
+def authorize_douyin(job_id: str, request: Request, data: dict = Body(...)):
+    import json
+    from backlot.studio import atomic_private, timestamp
+    mutation(request)
+    if set(data) not in ({"video_id","rights_confirmed"}, {"video_ids","rights_confirmed"}) or data["rights_confirmed"] is not True:
+        raise HTTPException(422,"请确认拥有所选视频的使用权")
+    selected = data.get("video_ids", [data.get("video_id")])
+    if not isinstance(selected,list) or not 1 <= len(selected) <= 10 or any(not isinstance(v,str) for v in selected) or len(set(selected)) != len(selected):
+        raise HTTPException(422,"请选择1至10份不重复的候选素材")
+    candidates=douyin_candidates(job_id,request)["items"]
+    if set(selected) - {c["id"] for c in candidates}: raise HTTPException(422,"视频不在本次候选中")
+    from backlot.server import _ensure_production_queue
+    q=_ensure_production_queue(request.app);job=call(q.get,job_id,include_private=True)
+    if job["status"] not in {"failed", "awaiting_human"}: raise HTTPException(409,"只能恢复暂停的任务")
+    d=job["frozen_request"]["draft"];path=studio(request).projects_root/d["id"]/"renders"/("studio-"+str(d["revision"]))/"source-decisions.json"
+    value=json.loads(path.read_text()) if path.exists() else {}
+    value.update(authorized_video_ids=sorted(set(value.get("authorized_video_ids",[])+selected)),confirmed_at=timestamp(),selection_mode="ai-reviewed")
+    atomic_private(path,value)
+    return call(q.retry,job_id)
 
 
 @router.post("/api/studio/settings")
@@ -139,8 +419,15 @@ async def account(request: Request):
     def read():
         try:
             sdk = studio(request).client()
-            return {"summary": sdk.request("/account/summary"), "capabilities": sdk.request("/capabilities")}
-        except Exception: raise WorkError("无法读取账户，请到API设置检查连接") from None
+            from backlot.studio_asr import status
+            from backlot.studio_avatar_app import public_status
+            avatar=public_status(studio(request));capabilities=sdk.request('/capabilities')
+            if avatar['enabled']:
+                capabilities={**capabilities,'items':[v for v in capabilities.get('items',[]) if (v.get('model') or v.get('id'))!='haike/avatar']}
+                if avatar['ready']:capabilities['items'].append({'id':'haike/avatar','model':'haike/avatar','name':avatar['name'],'capability':'avatar','status':'available','billing_source':'local-provider'})
+            return {"summary": sdk.request("/account/summary"), "capabilities": capabilities, "local_asr": status(studio(request)), 'local_avatar':avatar}
+        except Exception as error:
+            raise WorkError(gateway_connection_message(error, "无法读取账户，请到API设置检查连接"), "unavailable") from None
     return await asyncio.to_thread(call, read)
 
 
@@ -185,7 +472,8 @@ def generate(draft_id: str, request: Request, data: dict = Body(...)):
     s = studio(request); d = call(s.draft, draft_id)
     if data.get("revision") != d["revision"]: raise HTTPException(409, "制作内容已更新，请重新确认")
     template = call(s.template, d["template_id"])
-    if data.get("confirmed") is not True: raise HTTPException(422, "请确认本次制作及费用上限")
+    if data.get("confirmed") is not True: raise HTTPException(422, "请确认本次视频制作")
+    if data.get('billing_policy') not in (None, 'actual_usage'): raise HTTPException(422, '制作计费方式无效')
     kind = template["kind"]
     if template["id"] == "avatar-motion-adu-v1":
         from backlot.studio_motion import freeze
@@ -196,15 +484,27 @@ def generate(draft_id: str, request: Request, data: dict = Body(...)):
         frozen = {"draft": d, "render_id": "studio-" + str(d["revision"])}
     else:
         from backlot.studio_avatar import frozen_request
-        frozen = call(frozen_request, s, d, data.get("quote_id"), data.get("max_charge_micros"))
+        # Old browser payloads may still carry a numeric budget. Every new
+        # creation uses actual usage; existing idempotent jobs stay frozen below.
+        frozen = call(frozen_request, s, d, data.get("quote_id"))
     from backlot.server import _ensure_production_queue
     render_id = "studio-" + str(d["revision"])
     project_dir = s.projects_root / draft_id
     if not (project_dir / "project.json").exists():
         from lib.checkpoint import init_project
         init_project(draft_id, title=d["title"], pipeline_type="animated-explainer", pipeline_dir=s.projects_root)
-    return call(_ensure_production_queue(request.app).submit, project_id=draft_id, kind="studio_" + kind, source="workbench", priority="normal",
-                parent_job_id=render_id, idempotency_key=f"studio:{draft_id}:{d['revision']}", frozen_request=frozen)
+    queue = _ensure_production_queue(request.app)
+    idem = f"studio:{draft_id}:{d['revision']}"
+    existing = queue.find_by_idempotency_key(idem)
+    if existing: return existing
+    previous = data.get('resume_task')
+    if previous:
+        if kind != 'avatar': raise HTTPException(422, '当前恢复入口只支持数字人口播')
+        from backlot.studio_creation import continue_request
+        frozen = call(continue_request, s, queue, frozen, previous)
+    result = call(queue.submit, project_id=draft_id, kind="studio_" + kind, source="workbench", priority="normal",
+                parent_job_id=render_id, idempotency_key=idem, frozen_request=frozen)
+    return result
 
 
 @router.post("/api/studio/drafts/{draft_id}/quote")

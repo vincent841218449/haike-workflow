@@ -1,0 +1,40 @@
+# Mac本地工作目录
+
+2026-10-14已完成迁移。当前Codex工作目录同时承载可编辑源码、Git历史和本地运行环境。工作台与发布面板从本目录启动，原源码和原安装目录保留用于回退。
+
+## 打开与关闭
+
+- 数字人口播：[http://127.0.0.1:4188/avatar](http://127.0.0.1:4188/avatar)
+- 创作任务：[http://127.0.0.1:4188/tasks](http://127.0.0.1:4188/tasks)，查看阶段、进度、失败原因及成片。
+- 资源库：[http://127.0.0.1:4188/resources](http://127.0.0.1:4188/resources)。本机7个系统音色和个人音色克隆已接通；上传5秒–10分钟、10MB内本人录音，超过60秒自动选20秒片段并可试听，确认一次即可克隆。完成后可选用于口播；固定样例试听免费，点击即自动准备并播放，后续复用缓存，无费用弹窗。视频配音按制作报价。详见[音色接入与本地费用](docs/PRODUCT_VOICE_LIBRARY.md)，未部署云端。
+- 发布面板：[http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- 双击根目录`一键启动工作台-Mac.command`启动；已有的本目录服务会复用。
+- 双击`停止工作台-Mac.command`停止本目录管理的服务。
+- 双击`检查工作台-Mac.command`进行Mac运行环境体检。
+
+工作台固定使用4188；该端口被其他服务占用时明确报错，不再跳到其他端口。实际地址记录于忽略的`.portable/services.json`。原目录入口可能重新启动旧副本，日常使用本目录入口。
+
+```sh
+./Haike_video/.venv/bin/python portable/macos.py start --publisher --no-browser
+./Haike_video/.venv/bin/python portable/macos.py diagnose
+./Haike_video/.venv/bin/python portable/macos.py stop
+```
+
+## 源码与Git
+
+沿用私有仓库[vincent841218449/haike-workflow](https://github.com/vincent841218449/haike-workflow)，保留完整提交历史、原分支和标签。当前整合分支为`feat/unified-creation-tasks`；迁移、音色库与赞助GPT改动已合并保留。main/dev保持原有流程，见[Git管理](docs/GIT_WORKFLOW.md)。
+
+前端修改后在本目录构建，再停止并启动服务：
+
+```sh
+./Haike_video/.venv/bin/python scripts/build-studio.py
+./Haike_video/.venv/bin/python scripts/check.py
+```
+
+Git保存源码、测试、模板和文档。密钥、数据库、素材、成片、依赖和模型保存在被忽略的本机目录，需另外备份。普通Git克隆不含这些文件；新机器须配置运行环境并另行导入私有资料。
+
+## 验证与迁移记录
+
+前端构建、源码检查、56项回归、Mac运行环境体检、跨模块38项和两个反例检查通过。Playwright确认口播页面、模板弹窗和作品列表正常；服务身份指向本目录，本地字幕模型就绪。迁移提交已推送至origin，提交凭据扫描通过。
+
+数据来源、依赖位置、历史记录保留方式和实际验证范围见[迁移记录](docs/MAC_WORKSPACE_MIGRATION.md)。本次没有执行付费生成或真实发布。

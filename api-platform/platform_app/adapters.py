@@ -1,11 +1,15 @@
 """No automatic paid retries. Only allow-listed provider protocols receive credentials."""
 
 import base64
+import ipaddress
 import json
 import math
+import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+from http.client import HTTPSConnection
 
 
 class Rejected(Exception):
@@ -81,6 +85,38 @@ def safe_url(value):
     return value
 
 
+def download_bailian_audio(value):
+    """Cache the original audition once. No credentials or redirects on media GETs."""
+    parsed = urllib.parse.urlsplit(str(value or ""))
+    host = parsed.hostname or ""
+    import re
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in {None, 443} or not re.fullmatch(r"dashscope-result-[a-z0-9-]+\.oss-[a-z0-9-]+\.aliyuncs\.com", host):
+        from .store import Problem
+        raise Problem(409, "sample_download_unavailable", "原试听暂时无法下载，请重试读取原结果")
+    addresses = [ipaddress.ip_address(r[4][0]) for r in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)]
+    if not addresses or not all(a.is_global for a in addresses):
+        raise Uncertain()
+    class Pinned(HTTPSConnection):
+        def connect(self):
+            raw = socket.create_connection((str(addresses[0]), 443), timeout=30)
+            try:
+                self.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+            except BaseException:
+                raw.close()
+                raise
+    connection = Pinned(host, timeout=30)
+    try:
+        path = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        connection.request("GET", path, headers={"User-Agent": "HaikeVoiceLibrary/1"})
+        response = connection.getresponse()
+        data = response.read(5 * 1024 * 1024 + 1)
+        if response.status != 200 or not data.startswith(b"RIFF") or len(data) > 5 * 1024 * 1024:
+            raise Uncertain()
+        return data
+    finally:
+        connection.close()
+
+
 class Adapter:
     def __init__(self, vault, file_dir):
         self.vault, self.file_dir = vault, file_dir
@@ -91,10 +127,32 @@ class Adapter:
         info = inputs.get("_model_info") or MODELS[model]
         provider = info["provider"]
         config = dict(self.vault.load()[provider])
+        if provider == "bailian" and inputs.get("_provider_scope"):
+            from .voices import scope
+            if scope(config) != inputs["_provider_scope"]:
+                raise Rejected()
         if not upstream_id and not config.get("enabled", False):
             raise Rejected()
         config.update(inputs.get("_provider_config", {}))
         if provider == "openai" or provider.startswith("channel/"):
+            if info["capability"] == "image":
+                result = http(
+                    config["base_url"].rstrip("/") + "/images/generations",
+                    {"Authorization": "Bearer " + config["api_key"], "Content-Type": "application/json"},
+                    {"model": config.get("image_model", info["target_model"]), "prompt": inputs["prompt"],
+                     "n": 1, "size": "1024x1536", "quality": "medium"},
+                )
+                usage = result.get("usage", {})
+                images = result.get("data", [])
+                if not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict):
+                    raise Uncertain()
+                item = images[0]
+                media = {"image_base64": item["b64_json"]} if isinstance(item.get("b64_json"), str) else {"image_url": safe_url(item.get("url"))}
+                media.update(generated=True, source=config.get("image_model", info["target_model"]), size="1024x1536", quality="medium")
+                if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("input_tokens", "output_tokens")):
+                    raise ReceiptMissing(str(result.get("id", "")), media)
+                return {"usage": {k: usage[k] for k in ("input_tokens", "output_tokens")}, "result": media,
+                        "upstream_id": str(result.get("id", result.get("created", "")))}
             messages = json.loads(json.dumps(inputs["messages"]))
             for message in messages:
                 if isinstance(message["content"], list):
@@ -122,7 +180,7 @@ class Adapter:
                     "Content-Type": "application/json",
                 },
                 {
-                    "model": config.get("text_model", "gpt-5.6-terra"),
+                    "model": config.get("text_model", info["target_model"]),
                     "messages": messages,
                     "max_completion_tokens": inputs["max_output_tokens"],
                     "stream": False,
@@ -157,12 +215,33 @@ class Adapter:
                 "upstream_id": str(result.get("id", "")),
             }
         if provider == "bailian":
+            if info["capability"] == "voice_clone":
+                headers = {"Authorization": "Bearer " + config["api_key"], "Content-Type": "application/json"}
+                endpoint = config["base_url"].rstrip("/") + "/services/audio/tts/customization"
+                if not upstream_id:
+                    result = http(endpoint, headers, {"model": "voice-enrollment", "input": {
+                        "action": "create_voice", "target_model": info["target_model"],
+                        "prefix": inputs["_clone_prefix"], "url": inputs["_reference_url"]}})
+                    upstream_id = result.get("output", {}).get("voice_id")
+                    if not isinstance(upstream_id, str) or not upstream_id.startswith(info["target_model"] + "-"):
+                        raise Uncertain()
+                    checkpoint(upstream_id)
+                result = http(endpoint, headers, {"model": "voice-enrollment", "input": {"action": "query_voice", "voice_id": upstream_id}})
+                output = result.get("output", {})
+                if output.get("target_model") and output["target_model"] != info["target_model"]:
+                    raise Uncertain()
+                status = str(output.get("status", "")).upper()
+                if status in {"FAILED", "UNDEPLOYED"}:
+                    return {"failed": True, "upstream_id": upstream_id}
+                if status != "OK":
+                    return {"pending": True, "upstream_id": upstream_id}
+                return {"usage": {"requests": 1}, "result": {"provider_voice_id": upstream_id}, "upstream_id": upstream_id}
             from dashscope.audio.http_tts.http_speech_synthesizer import (
                 HttpSpeechSynthesizer,
             )
 
             result = HttpSpeechSynthesizer.call(
-                model="cosyvoice-v3.5-flash",
+                model=info["target_model"],
                 text=inputs["text"],
                 voice=config["voice"],
                 audio_format="wav",
@@ -273,7 +352,7 @@ class Adapter:
             path = "/videos/search" if inputs["media"] == "videos" else "/v1/search"
             response = http(
                 "https://api.pexels.com" + path + "?" + query,
-                {"Authorization": config["api_key"]},
+                {"Authorization": config["api_key"], "User-Agent": "HaikeVideo/1.0", "Accept": "application/json"},
             )
             records = response.get(
                 "videos" if inputs["media"] == "videos" else "photos", []
@@ -387,10 +466,16 @@ class Adapter:
             ]
             if not videos:
                 raise Uncertain()
+            receipt = None
+            if info.get("billing_mode") == "wallet_receipt":
+                from .runninghub_billing import receipt_cost
+                try: receipt = receipt_cost(data.get("usage"))
+                except (ValueError, TypeError):
+                    raise ReceiptMissing(upstream_id, {"video_url": safe_url(videos[0])}) from None
             return {
-                "usage": {"tasks": 1},
-                "result": {"video_url": safe_url(videos[0])},
+                "usage": {"supplier_micros": int(receipt["cost_micros"])} if receipt else {"tasks": 1},
+                "result": {"video_url": safe_url(videos[0]), **({"supplier_billing": receipt} if receipt else {})},
                 "upstream_id": upstream_id,
-                "meter_basis": "每个成功工作流任务；供应商实际费用待核对",
+                "meter_basis": "RunningHub实际钱包人民币回执 × 1.5；报价余额释放" if receipt else "每个成功工作流任务；供应商实际费用待核对",
             }
         raise Rejected()

@@ -14,7 +14,7 @@ function rateMoney(value) {
 function billingTable(j) {
   const b = j.billing;
   if (!b) return "";
-  return '<section class="admin-section bill-lines"><h3>费用明细 · 采购成本 × ' + esc(b.multiplier) + '</h3>' +
+  return '<section class="admin-section bill-lines"><h3>费用明细 · ' + (b.billing_policy === 'sponsored' ? '平台赞助试用 · 用户收费 ¥0，采购成本待核对' : '采购成本 × ' + esc(b.multiplier)) + '</h3>' +
     table(["计费项", "实际用量", "固定售价 / 每份", "金额"], b.lines.map(r =>
       '<tr><td>' + esc(r.unit) + '</td><td>' + (r.quantity === null ? "—" : esc(r.quantity)) + '</td><td>' + rateMoney(r.unit_price_micros) + ' / ' + esc(r.included_units) + ' ' + esc(r.unit) + '</td><td>' + (r.amount_micros === null ? "待结算 / 未收费" : money(r.amount_micros, true)) + '</td></tr>')) +
     '<p class="tiny muted">' + esc(b.rounding) + '</p><div class="details-grid"><div><small>合计舍入调整</small>' + money(b.rounding_adjustment_micros, true) +
@@ -73,6 +73,7 @@ const providerFieldLabels = {
   workflow_profile: "工作流配置", base_url: "平台 API 地址",
 };
 function connectionPrices(model) {
+  if (model.billing_policy === 'sponsored') return '<div class="notice"><strong>平台赞助试用 · 用户收费 ¥0</strong><p>记录实际输入、输出 Token；采购成本待核对，每账户/平台每日各限50次。</p></div>';
   if (!model.rule) return '<div class="notice"><strong>价格待确认</strong><p>这个模型尚未填写采购单价，保存平台密钥后仍需设置价格才能开通。售价按采购成本 × 1.5 计算。</p><button type="button" data-action="commerce-tariff" data-id="' + esc(model.model) + '">设置对应价格</button></div>';
   return '<section class="connection-prices"><h3>对应价格 · v' + model.version + '</h3>' +
     table(["计费项", "采购单价", "调用售价"], model.rates.map(r => '<tr><td>每 ' + r.included_units.toLocaleString() + ' ' + esc(r.unit) + '</td><td>' +
@@ -148,7 +149,7 @@ async function commercePage(page) {
         (p.config.enabled ? "开启" : "关闭") + '</td><td>' + esc(p.verification) + '</td><td><button data-action="commerce-provider" data-id="' + esc(p.id) + '">配置</button></td></tr>')) + '</section>' +
       '<section class="card admin-section"><div class="card-head"><h2>模型成本与售价</h2><button data-action="commerce-new-model">＋ 接入模型</button></div>' + table(["模型", "采购成本 / 每份", "用户售价 / 每份", "系数 / 版本", "状态", "操作"], models.items.map(m =>
         '<tr><td>' + esc(m.name) + '<small class="mono">' + esc(m.model) + '</small><small>上游：' + esc(m.provider) + ' / ' + esc(m.target_model) + '</small></td><td>' +
-        (m.rule ? Object.keys(m.meters).map(k => money(m.rule.costs[k], true) + ' / ' + m.meters[k] + ' ' + esc(m.rates.find(r => r.meter === k).unit)).join("<br>") : "待提供采购价") +
+        (m.billing_policy === 'sponsored' ? '待核对 · 平台承担试用成本' : m.rule ? Object.keys(m.meters).map(k => money(m.rule.costs[k], true) + ' / ' + m.meters[k] + ' ' + esc(m.rates.find(r => r.meter === k).unit)).join("<br>") : "待提供采购价") +
         '</td><td>' + (m.version ? m.rates.map(r => rateMoney(r.price_micros) + ' / ' + r.included_units + ' ' + esc(r.unit)).join("<br>") : "未发布") +
         '</td><td>' + esc(m.rule?.multiplier || "1.5") + ' × · v' + m.version + '</td><td>' + esc(serviceStatus[m.status]) + '</td><td><button data-action="commerce-tariff" data-id="' + esc(m.model) + '">设置成本 / 售价</button>' + (!['haike/text','haike/cosyvoice','haike/tencent-tts','haike/tencent-asr','haike/avatar','haike/assets'].includes(m.model) ? '<button data-action="commerce-model-route" data-id="' + esc(m.model) + '">路由 / 开关</button>' : '') + '</td></tr>')) +
       '</section><div class="notice">公开标价作为估算成本；实际采购成本需要与供应商账单核对。中转站与 RunningHub 价格必须按你的采购渠道填写。Pexels 素材检索免费，保留来源信息。</div>';
@@ -156,9 +157,10 @@ async function commercePage(page) {
   const jobs = (await api("/admin/v1/gateway-jobs")).items;
   const revenue = jobs.reduce((a, j) => a + BigInt(j.charged_micros), 0n);
   const cost = jobs.reduce((a, j) => a + BigInt(j.estimated_cost_micros || "0"), 0n);
+  const unknownCost = jobs.filter(j => j.estimated_cost_micros === null).length;
   return heading("运营账单", "查看用户调用、收入、估算采购成本及待核对任务。", '<a href="/admin/v1/gateway-jobs/export"><button>↓ 导出运营明细 CSV</button></a>') +
     '<div class="stats"><div class="stat accent"><div class="stat-label">已结算收入 · 最近500条</div><div class="stat-value">' + money(revenue) + '</div></div><div class="stat"><div class="stat-label">成功任务估算成本</div><div class="stat-value">' + money(cost) +
-    '</div><div class="stat-note">失败 / 未知任务供应商成本尚待核对</div></div><div class="stat"><div class="stat-label">成功任务估算毛利</div><div class="stat-value">' + money(revenue - cost) +
+    '</div><div class="stat-note">' + unknownCost + ' 条采购成本待核对，含赞助试用</div></div><div class="stat"><div class="stat-label">成功任务估算毛利</div><div class="stat-value">' + (unknownCost ? '待核对' : money(revenue - cost)) +
     '</div><div class="stat-note">未扣税费、运营费，非最终净利润</div></div></div><section class="card">' +
     table(["时间 / 任务", "客户", "模型 / 项目", "状态", "客户实扣", "估算成本", "估算毛利", "核对"], jobs.map(j =>
       '<tr><td>' + date(j.created_at) + '<small class="mono">' + esc(j.id.slice(-12)) + '</small></td><td>' + esc(j.account_name) + '<small>' + esc(j.account_email) + '</small></td><td>' + esc(j.model_name) + '<small>' + esc(j.project_ref) + '</small></td><td>' + badge(j.status) +
@@ -197,27 +199,29 @@ async function commerceAction(button) {
   if (action === "commerce-provider") {
     const p = commerceState.providers.find(p => p.id === id);
     modal('<h2>' + esc(p.name) + '</h2><form id="commerce-provider" method="post" data-id="' + esc(id) + '">' +
-      Object.keys(p.config).filter(k => k !== "enabled").map(k => field(k, k, p.config[k])).join("") +
+      Object.keys(p.config).filter(k => k !== "enabled" && !(id === "runninghub" && ["billing_mode", "quote_cost_limit_micros", "quote_cost_per_audio_second_micros"].includes(k))).map(k => field(k, k, p.config[k])).join("") +
       p.secret_fields.map(k => field(k + "（留空保留）", k, "", 'type="password" autocomplete="off" maxlength="500"')).join("") +
       (id === "bailian" && !("voice" in p.config) ? field("复刻音色 ID", "voice") : "") +
+      (id === "runninghub" ? '<label>数字人计价方式<select name="billing_mode"><option value="task">保留原固定任务档位</option><option value="wallet_receipt"' + (p.config.billing_mode === "wallet_receipt" ? ' selected' : '') + '>实际 API 钱包回执 × 1.5</option></select></label>' + field("任务报价采购上限（整数微元，1元=1000000）", "quote_cost_limit_micros", p.config.quote_cost_limit_micros || "") + field("每秒音频采购预估（整数微元，可留空预留全额）", "quote_cost_per_audio_second_micros", p.config.quote_cost_per_audio_second_micros || "") + '<p class="tiny muted">预估只决定冻结上限，成功按供应商实扣 × 1.5 结算并释放余款。供应商超出报价的成本由平台承担；变更计量方式需发布新费率。</p>' : "") +
       '<label>供应商调用开关<select name="enabled"><option value="false">关闭</option><option value="true"' + (p.config.enabled ? " selected" : "") + '>开启</option></select></label>' + submitButton + '</form><p class="tiny muted">开启后，具备已发布价格的模型会接受真实调用。</p>');
   }
   if (action === "commerce-tariff") {
     commerceState.tariffPage = state.page;
     const m = commerceState.models.find(m => m.model === id);
     modal('<h2>' + esc(m.name) + ' · 新价格</h2><form id="commerce-tariff" data-id="' + esc(id) + '">' +
-      Object.keys(m.meters).map(k => field('采购成本（元 / ' + m.meters[k] + ' ' + m.rates.find(r => r.meter === k).unit + '）', k, m.rule ? (Number(m.rule.costs[k]) / 1000000).toString() : "", 'required inputmode="decimal"')).join("") +
+      (m.capability === 'chat' ? '<label><input type="checkbox" name="sponsored"' + (m.billing_policy === 'sponsored' ? ' checked' : '') + '>平台赞助试用：用户收费为零，采购成本待核对，账户/平台每日各限50次</label>' : '') +
+      Object.keys(m.meters).map(k => field('采购成本（元 / ' + m.meters[k] + ' ' + m.rates.find(r => r.meter === k).unit + '）', k, m.rule && m.billing_policy !== 'sponsored' ? (Number(m.rule.costs[k]) / 1000000).toString() : "", 'inputmode="decimal"')).join("") +
       field("成本加价系数（固定）", "multiplier", "1.5", 'readonly') +
       field("附加服务费（固定为零）", "fee", "0", 'readonly') +
       field("成本来源 / 采购凭证", "source", m.rule?.source || "", 'required maxlength="300"') +
       field("成本说明", "basis", m.rule?.cost_basis || "采购单价待核对", 'required maxlength="300"') +
-      '<label><input type="checkbox" name="confirmed" required>已核对成本与计量单位</label><div class="row"><button type="button" data-action="commerce-preview-price">预览售价与毛利</button><button type="submit" class="primary">发布新价格</button></div></form><div id="commerce-price-preview"></div>');
+      '<label><input type="checkbox" name="confirmed" required>已核对计价方案；赞助试用费用由平台承担</label><div class="row"><button type="button" data-action="commerce-preview-price">预览售价与毛利</button><button type="submit" class="primary">发布新价格</button></div></form><div id="commerce-price-preview"></div>');
   }
   if (action === "commerce-preview-price") {
     const form = $("commerce-tariff"), m = commerceState.models.find(m => m.model === form.dataset.id);
     const usage = Object.fromEntries(Object.entries(m.meters));
     const r = await api("/admin/v1/gateway-prices/preview", {method: "POST", body: {...tariffBody(form), usage}});
-    $("commerce-price-preview").textContent = "每个计费项各取一份：成本 " + money(r.cost_micros, true) + " → 售价 " + money(r.sale_micros, true) + "；毛利 " + money(r.profit_micros, true) + "；毛利率 " + (Number(r.gross_margin) * 100).toFixed(2) + "%";
+    $("commerce-price-preview").textContent = r.cost_micros === null ? '平台赞助试用：用户收费 ¥0；采购成本与毛利待核对；按实际Token记录账单，每账户/平台每日各限50次。' : "每个计费项各取一份：成本 " + money(r.cost_micros, true) + " → 售价 " + money(r.sale_micros, true) + "；毛利 " + money(r.profit_micros, true) + "；毛利率 " + (Number(r.gross_margin) * 100).toFixed(2) + "%";
   }
   if (action === "commerce-submit") {
     const request = commerceState.pendingRequest;
@@ -240,7 +244,7 @@ async function commerceAction(button) {
 }
 function tariffBody(form) {
   const f = form.elements, m = commerceState.models.find(m => m.model === form.dataset.id);
-  return {model: m.model, rule: {costs: Object.fromEntries(Object.keys(m.meters).map(k => [k, micros(f[k].value)])),
+  return {model: m.model, rule: {...(f.sponsored?.checked ? {billing_policy:'sponsored'} : {}), costs: Object.fromEntries(Object.keys(m.meters).map(k => [k, f.sponsored?.checked ? '0' : micros(f[k].value)])),
     multiplier: f.multiplier.value, fee_micros: micros(f.fee.value), source: f.source.value,
     cost_basis: f.basis.value, confirmed: f.confirmed.checked}};
 }

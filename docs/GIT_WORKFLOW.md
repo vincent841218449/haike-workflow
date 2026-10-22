@@ -4,7 +4,7 @@
 
 | 目录 | 管理对象 |
 |---|---|
-| `Haike_video/` | 14754视频工作台、原生队列、图文与数字人口播、动效适配 |
+| `Haike_video/` | 4188视频工作台、原生队列、图文与数字人口播、动效适配 |
 | `prototypes/haike-avatar-generator/` | 工作台React界面源码及前端测试 |
 | `api-platform/` | 收费中转站、账户、充值、兑换码、定价、账单、云端部署模板 |
 | `creatorhub/` | 发布、账号连接及调度 |
@@ -41,7 +41,7 @@ python scripts/check.py
 python scripts/build-studio.py
 ```
 
-使用Python3.12、Node22+。`build-studio.py`从锁文件安装前端依赖并将编译结果放入本checkout的工作台；生成的静态目录不进入Git。Windows完整环境继续使用 `scripts/setup.ps1`，已包含该构建步骤。Mac运行副本位于另一个安装目录，开发源码构建不会自动覆盖它；验收后按明确目标同步源码、重建静态界面并重启对应服务。
+使用Python3.12、Node22+。`build-studio.py`从锁文件安装前端依赖并将编译结果放入本checkout的工作台；生成的静态目录不进入Git。Windows完整环境继续使用 `scripts/setup.ps1`，已包含该构建步骤。2026-10-14起，本机Mac运行环境和源码合并到当前Codex工作目录；构建后重启本目录服务即可，详见根 `README-MAC.md`。迁移分支`chore/avatar-workspace-migration`基于当时的工作分支保留完整历史，先单独保存已有源码改动，再提交迁移改动；main/dev保持原有集成流程。
 
 收费中转站独立进入 `api-platform` 执行 `uv sync --frozen` 和 `uv run --frozen pytest -q`。生产更新从确定的提交导出该目录，按 `api-platform/deploy/README.md` 建立新版本目录再切换；私有数据保留在 `/var/lib/haike-api-platform`。Git提交不会自动改变当前云端服务。
 

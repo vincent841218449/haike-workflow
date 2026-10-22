@@ -31,6 +31,32 @@ def _submit(queue: ProductionQueue, project_id: str, parent_job_id: str, kind: s
     )
 
 
+def test_crash_after_automatic_basic_render_recovers_actual_fallback_file(tmp_path):
+    queue, projects = _setup(tmp_path)
+    job = queue.submit(project_id='alpha',kind='studio_avatar',source='workbench',priority='normal',parent_job_id='r',
+        frozen_request={'render_id':'r','draft':{'input':{'motion':{'style':'04-A'}}}})
+    folder = projects/'alpha/renders/r';folder.mkdir(parents=True)
+    (folder/'composition-preflight.json').write_text('{"mode":"basic"}')
+    (folder/'qa.json').write_text('{}');(folder/'avatar-preview.mp4').write_bytes(b'checked-video')
+    worker = ProductionQueueWorker(queue,projects)
+    result = worker.inspect_parent(queue.get(job['job_id'],include_private=True))
+    assert result['status']=='completed' and result['result']['output_path'].endswith('avatar-preview.mp4')
+
+
+def test_new_avatar_crash_revalidates_frozen_job_before_adopting_files(tmp_path):
+    queue,projects=_setup(tmp_path)
+    job=queue.submit(project_id='alpha',kind='studio_avatar',source='workbench',priority='normal',parent_job_id='original',
+        frozen_request={'workflow_version':5,'render_id':'original','draft':{'input':{'motion':{'style':'03-A'}}}})
+    folder=projects/'alpha/renders/original';folder.mkdir(parents=True)
+    (folder/'qa.json').write_text('{}')
+    (folder/'motion-preview.mp4').write_bytes(b'interrupted-or-foreign-output')
+    worker=ProductionQueueWorker(queue,projects)
+    outcome=worker.inspect_parent(queue.get(job['job_id'],include_private=True))
+    assert outcome['status']=='queued'
+    assert 'result' not in outcome
+    assert queue.get(job['job_id'],include_private=True)['frozen_request']['render_id']=='original'
+
+
 def test_worker_dispatches_only_registered_kind_and_continues_after_failure(tmp_path: Path) -> None:
     queue, projects = _setup(tmp_path)
     first = _submit(queue, "alpha", "RP-fail", "review_preview")
@@ -56,6 +82,21 @@ def test_worker_dispatches_only_registered_kind_and_continues_after_failure(tmp_
     assert calls == ["RP-fail", "ARP-ok"]
     assert queue.get(first["job_id"])["status"] == "failed"
     assert queue.get(second["job_id"])["result"] == {"preview": "fake.mp4"}
+
+
+def test_cancellation_stops_at_progress_before_another_paid_stage(tmp_path):
+    queue,projects=_setup(tmp_path)
+    job=_submit(queue,'alpha','cancel-before-avatar','studio_avatar')
+    paid=[]
+    worker=ProductionQueueWorker(queue,projects,worker_id='test-cancel-worker')
+    def run(current):
+        queue.cancel(current['job_id'])
+        worker._stage_reporter(current)('准备下一笔数字人请求',1,5)
+        paid.append('must not submit')
+        return {'status':'completed','stage':'should never finish'}
+    worker.handlers={'studio_avatar':run}
+    assert worker.run_once()['status']=='cancelled'
+    assert paid==[] and queue.get(job['job_id'])['status']=='cancelled'
 
 
 def test_worker_maps_waiting_and_ambiguous_without_retrying(tmp_path: Path) -> None:

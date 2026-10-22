@@ -38,12 +38,16 @@
 .global-nav-link[data-route="/automation"] { --nav-icon: url("/ui/brand/icons/workflow.svg"); }
 .global-nav-link[data-route="/published-clips"] { --nav-icon: url("/ui/brand/icons/film.svg"); }
 .global-nav-link[data-route="/material-library"] { --nav-icon: url("/ui/brand/icons/library.svg"); }
+.global-nav-link[data-route="/resources"] { --nav-icon: url("/ui/brand/icons/library.svg"); }
+.global-nav-link[data-route="/tasks"] { --nav-icon: url("/ui/brand/icons/clock.svg"); }
 .global-nav-link[data-route="/material-commentary"] { --nav-icon: url("/ui/brand/icons/scan-text.svg"); }
 .global-nav-link[data-route="/graphic"] { --nav-icon: url("/ui/brand/icons/scan-text.svg"); }
 .global-nav-link[data-route="/avatar"] { --nav-icon: url("/ui/brand/icons/film.svg"); }
 .global-nav-link[data-route="/projects"] { --nav-icon: url("/ui/brand/icons/clapperboard.svg"); }
 .global-nav-link[data-route="/calendar"] { --nav-icon: url("/ui/brand/icons/calendar-days.svg"); }
 .global-nav-link[data-route="/settings"] { --nav-icon: url("/ui/brand/icons/key-round.svg"); }
+
+:root:root body.haike-global-layout .haike-navigation .global-nav-link[aria-current="page"] {background:#fff2e7;border-color:#f4d7bf;border-left-color:#ed5b25;color:#b95224;border-radius:12px}
 
 .library-app-frame .library-shell { width: min(100%,1560px); margin: 0 auto; }
 .audio-app-frame .audio-app { width: min(1280px,calc(100% - 56px)); margin: 0 auto; }
