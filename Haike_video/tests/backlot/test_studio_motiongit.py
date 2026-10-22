@@ -248,7 +248,7 @@ def test_visual_review_distinguishes_presenter_cards_and_preserves_legacy_reject
         return {'choices':[{'message':{'content':'{"approved":true,"issues":[]}'}}]}
     monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
     assert m.visual_review(None,{'text':'原文'},instance)['approved']
-    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v8-'+old['preview_sha256'][:16]
+    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v9-'+old['preview_sha256'][:16]
     context=json.loads(calls[0][1]['messages'][1]['content'][0]['text'])['layout_contract']
     assert context['media_roles']==['presenter'] and context['footage_segments']==[]
     assert '人物卡' in calls[0][1]['messages'][0]['content']
@@ -293,6 +293,42 @@ def test_sample_review_respects_caption_boundaries_gaps_and_unknown_times(name,e
     value=m.preview_sample(timeline,name)
     assert (None if value['active_captions'] is None else [c['text'] for c in value['active_captions']])==expected
     assert value['phase']==phase
+
+
+def test_readability_review_uses_stable_frames_and_keeps_transition_evidence(tmp_path,monkeypatch):
+    from PIL import Image
+    instance=tmp_path/'instance';project=instance/'project';(project/'preview').mkdir(parents=True)
+    (instance/'plan').mkdir();stills={}
+    for name,color in [('preview/t_0.000.png','black'),('preview/t_2.500.png','white')]:
+        path=project/name;Image.new('RGB',(10,10),color).save(path);stills[name]=sha(path)
+    atomic_private(project/'preview.json',{'stills':stills,'reviewed':False})
+    atomic_private(project/'params.json',{'timeline':{'segments':[{'t0':0,'t1':5,'control':'title'}]}})
+    atomic_private(instance/'plan/report.json',{'mediaBindings':[]})
+    def review(self,stage,payload):
+        samples=[json.loads(x['text']) for x in payload['messages'][1]['content'][1:] if x['type']=='text']
+        approved=[s['time'] for s in samples]==[2.5]
+        return {'choices':[{'message':{'content':json.dumps({'approved':approved,'issues':[] if approved else ['淡入首帧误判持续黑屏']})}}]}
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
+    result=m.visual_review(None,{'text':'原文'},instance)
+    assert result['approved']
+    assert result['transition_stills']==['preview/t_0.000.png']
+    (project/'preview/t_0.000.png').write_bytes(b'changed transition evidence')
+    with pytest.raises(WorkError,match='预览图片来源改变'):
+        m.visual_review(None,{'text':'原文'},instance)
+
+
+def test_readability_review_cannot_drop_a_scene_with_only_transition_samples(tmp_path,monkeypatch):
+    from PIL import Image
+    instance=tmp_path/'instance';project=instance/'project';(project/'preview').mkdir(parents=True)
+    (instance/'plan').mkdir();stills={}
+    for name in ['preview/t_2.500.png','preview/t_5.100.png']:
+        path=project/name;Image.new('RGB',(10,10),'white').save(path);stills[name]=sha(path)
+    atomic_private(project/'preview.json',{'stills':stills,'reviewed':False})
+    atomic_private(project/'params.json',{'timeline':{'segments':[{'t0':0,'t1':5},{'t0':5,'t1':10}]}})
+    atomic_private(instance/'plan/report.json',{'mediaBindings':[]})
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',lambda *a:pytest.fail('Incomplete scene coverage must stop before calling the judge'))
+    with pytest.raises(WorkError,match='缺少镜头稳定帧'):
+        m.visual_review(None,{'text':'原文'},instance)
 
 
 def test_automatic_card_excerpt_does_not_cut_a_number_or_a_negated_clause():
