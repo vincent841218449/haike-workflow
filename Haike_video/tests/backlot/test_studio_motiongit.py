@@ -248,11 +248,12 @@ def test_visual_review_distinguishes_presenter_cards_and_preserves_legacy_reject
         return {'choices':[{'message':{'content':'{"approved":true,"issues":[]}'}}]}
     monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
     assert m.visual_review(None,{'text':'原文'},instance)['approved']
-    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v6-'+old['preview_sha256'][:16]
+    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v8-'+old['preview_sha256'][:16]
     context=json.loads(calls[0][1]['messages'][1]['content'][0]['text'])['layout_contract']
     assert context['media_roles']==['presenter'] and context['footage_segments']==[]
     assert '人物卡' in calls[0][1]['messages'][0]['content']
     assert '不做原稿语言纠错' in calls[0][1]['messages'][0]['content']
+    assert '不做OCR逐字比对' in calls[0][1]['messages'][0]['content']
     assert json.loads(next(instance.glob('visual-review-legacy-*.json')).read_text())==old
     m.visual_review(None,{'text':'原文'},instance)
     assert len(calls)==1
@@ -265,7 +266,7 @@ def test_sample_review_gets_the_caption_at_that_frame_instead_of_the_whole_sente
     frame=project/'preview/t_2.500.png';Image.new('RGB',(10,10),'navy').save(frame)
     atomic_private(project/'preview.json',{'stills':{'preview/t_2.500.png':sha(frame)},'reviewed':False})
     atomic_private(project/'params.json',{'timeline':{'layout':'portrait','duration':5,
-        'segments':[{'t0':0,'t1':5,'control':'quote','cues':[0]}],
+        'segments':[{'t0':0,'t1':5,'control':'quote','cues':[0],'props':{'text':'去年大年三十，你在哪？'}}],
         'captions':[{'s':0,'e':2,'text':'去年大年三十，'},{'s':2,'e':4,'text':'你在哪？'}]}})
     atomic_private(instance/'plan/report.json',{'mediaBindings':[]})
     seen=[]
@@ -278,6 +279,7 @@ def test_sample_review_gets_the_caption_at_that_frame_instead_of_the_whole_sente
     monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
     assert m.visual_review(None,{'text':'去年大年三十，你在哪？'},instance)['approved']
     assert seen[0]['time']==2.5 and seen[0]['phase']=='middle'
+    assert seen[0]['scene']=={'start':0,'end':5,'display':{'text':'去年大年三十，你在哪？'}}
 
 
 @pytest.mark.parametrize('name,expected,phase',[
