@@ -248,7 +248,7 @@ def test_visual_review_distinguishes_presenter_cards_and_preserves_legacy_reject
         return {'choices':[{'message':{'content':'{"approved":true,"issues":[]}'}}]}
     monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
     assert m.visual_review(None,{'text':'原文'},instance)['approved']
-    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v5-'+old['preview_sha256'][:16]
+    assert len(calls)==1 and calls[0][0]=='motiongit-visual-review-v6-'+old['preview_sha256'][:16]
     context=json.loads(calls[0][1]['messages'][1]['content'][0]['text'])['layout_contract']
     assert context['media_roles']==['presenter'] and context['footage_segments']==[]
     assert '人物卡' in calls[0][1]['messages'][0]['content']
@@ -256,6 +256,41 @@ def test_visual_review_distinguishes_presenter_cards_and_preserves_legacy_reject
     assert json.loads(next(instance.glob('visual-review-legacy-*.json')).read_text())==old
     m.visual_review(None,{'text':'原文'},instance)
     assert len(calls)==1
+
+
+def test_sample_review_gets_the_caption_at_that_frame_instead_of_the_whole_sentence(tmp_path,monkeypatch):
+    from PIL import Image
+    instance=tmp_path/'instance';project=instance/'project';(project/'preview').mkdir(parents=True)
+    (instance/'plan').mkdir()
+    frame=project/'preview/t_2.500.png';Image.new('RGB',(10,10),'navy').save(frame)
+    atomic_private(project/'preview.json',{'stills':{'preview/t_2.500.png':sha(frame)},'reviewed':False})
+    atomic_private(project/'params.json',{'timeline':{'layout':'portrait','duration':5,
+        'segments':[{'t0':0,'t1':5,'control':'quote','cues':[0]}],
+        'captions':[{'s':0,'e':2,'text':'去年大年三十，'},{'s':2,'e':4,'text':'你在哪？'}]}})
+    atomic_private(instance/'plan/report.json',{'mediaBindings':[]})
+    seen=[]
+    def review(self,stage,payload):
+        try:sample=json.loads(payload['messages'][1]['content'][1]['text'])
+        except ValueError:sample={}
+        seen.append(sample)
+        approved=sample.get('active_captions')==[{'s':2,'e':4,'text':'你在哪？'}]
+        return {'choices':[{'message':{'content':json.dumps({'approved':approved,'issues':[] if approved else ['单帧误认为全文缺失']},ensure_ascii=False)}}]}
+    monkeypatch.setattr('backlot.studio_storyboard.TrialRelay.call',review)
+    assert m.visual_review(None,{'text':'去年大年三十，你在哪？'},instance)['approved']
+    assert seen[0]['time']==2.5 and seen[0]['phase']=='middle'
+
+
+@pytest.mark.parametrize('name,expected,phase',[
+    ('preview/t_0.000.png',['甲'],'transition'),
+    ('host-preview/t_2.000.png',['乙'],'middle'),
+    ('previews/t_4.500.png',[],'middle'),
+    ('frame.png',None,'unknown')])
+def test_sample_review_respects_caption_boundaries_gaps_and_unknown_times(name,expected,phase):
+    timeline={'segments':[{'t0':0,'t1':6,'cues':[0]}],
+              'captions':[{'s':0,'e':2,'text':'甲'},{'s':2,'e':4,'text':'乙'}]}
+    value=m.preview_sample(timeline,name)
+    assert (None if value['active_captions'] is None else [c['text'] for c in value['active_captions']])==expected
+    assert value['phase']==phase
 
 
 def test_automatic_card_excerpt_does_not_cut_a_number_or_a_negated_clause():
